@@ -1,26 +1,32 @@
 import type { SessionRecord } from "../types";
 
+export interface SessionEventRecord {
+  sessionId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+}
+
 /**
- * Repository interface for session persistence.
+ * Repository interface for Session Engine persistence.
  *
- * This is a standard test seam (dependency inversion for unit testing),
- * not an architectural decision — it does not change product scope,
- * canonical state ownership, or introduce a new external service. The
- * approved stack (Supabase) is implemented in supabaseSessionRepository.ts;
- * inMemorySessionRepository.ts exists only to support automated tests per
- * CLAUDE.md's testing requirement, and is never used outside of __tests__.
+ * The repository exposes conceptual persistence operations rather than
+ * individual database writes. This ensures callers cannot accidentally
+ * persist a session without its required initial event.
  */
 export interface SessionRepository {
   /**
-   * Insert a new session row. Must enforce room_code uniqueness among
-   * active (state !== 'SESSION_COMPLETE') sessions at the persistence
-   * layer and throw RoomCodeCollisionError on collision.
+   * Persist a new session and its initial event as one atomic operation.
+   *
+   * Implementations must:
+   * - commit both records or neither record;
+   * - enforce active room-code uniqueness;
+   * - throw RoomCodeCollisionError only when room_code collides.
    */
-  insertSession(record: SessionRecord): Promise<void>;
+  createSession(
+    record: SessionRecord,
+    initialEvent: SessionEventRecord
+  ): Promise<void>;
 
-  /** Used only by tests/validation to confirm a record round-trips. */
+  /** Used by tests and validation to confirm a record round-trips. */
   getSessionById(sessionId: string): Promise<SessionRecord | null>;
-
-  /** Append-only event log write, per Session Engine's event log requirement. */
-  insertEvent(sessionId: string, eventType: string, payload: Record<string, unknown>): Promise<void>;
 }

@@ -1,15 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
 import type { SessionRecord } from "../types";
 import { RoomCodeCollisionError } from "../types";
-import type { SessionRepository } from "./sessionRepository";
+import type {
+  SessionEventRecord,
+  SessionRepository,
+} from "./sessionRepository";
 
 /**
  * Supabase-backed implementation of SessionRepository.
- * This is the production adapter for the approved stack. Room-code
- * uniqueness is enforced by the partial unique index defined in
- * 0001_create_sessions.sql — this class detects that specific
- * constraint violation and translates it into RoomCodeCollisionError.
+ *
+ * Session creation uses the create_session_atomically PostgreSQL function,
+ * ensuring the session row and initial event are committed together or
+ * rolled back together.
  */
 export class SupabaseSessionRepository implements SessionRepository {
   private client: SupabaseClient;
@@ -18,26 +22,35 @@ export class SupabaseSessionRepository implements SessionRepository {
     this.client = createClient(supabaseUrl, supabaseServiceKey);
   }
 
-  async insertSession(record: SessionRecord): Promise<void> {
-    const { error } = await this.client.from("sessions").insert({
-      session_id: record.sessionId,
-      room_code: record.roomCode,
-      host_token: record.hostToken,
-      state: record.state,
-      state_version: record.stateVersion,
-      pause_reason: record.pauseReason,
-      created_at: record.createdAt,
-      updated_at: record.updatedAt,
+  async createSession(
+    record: SessionRecord,
+    initialEvent: SessionEventRecord
+  ): Promise<void> {
+    const { error } = await this.client.rpc("create_session_atomically", {
+      p_session_id: record.sessionId,
+      p_room_code: record.roomCode,
+      p_host_token: record.hostToken,
+      p_state: record.state,
+      p_state_version: record.stateVersion,
+      p_pause_reason: record.pauseReason,
+      p_created_at: record.createdAt,
+      p_updated_at: record.updatedAt,
+      p_event_type: initialEvent.eventType,
+      p_event_payload: initialEvent.payload,
     });
 
     if (error) {
-      // Postgres unique_violation
-      if (error.code === "23505") {
-        throw new RoomCodeCollisionError();
-      }
-      throw error;
-    }
+  if (
+    error.code === "23505" &&
+    error.message.includes("sessions_room_code_active_unique")
+  ) {
+    throw new RoomCodeCollisionError();
   }
+
+  throw error;
+}
+    }
+  
 
   async getSessionById(sessionId: string): Promise<SessionRecord | null> {
     const { data, error } = await this.client
@@ -59,18 +72,5 @@ export class SupabaseSessionRepository implements SessionRepository {
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };
-  }
-
-  async insertEvent(
-    sessionId: string,
-    eventType: string,
-    payload: Record<string, unknown>
-  ): Promise<void> {
-    const { error } = await this.client.from("session_events").insert({
-      session_id: sessionId,
-      event_type: eventType,
-      payload,
-    });
-    if (error) throw error;
   }
 }

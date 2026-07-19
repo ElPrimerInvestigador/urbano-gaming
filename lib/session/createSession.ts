@@ -38,10 +38,13 @@ export async function createSession(
     };
 
     try {
-      await repo.insertSession(record);
-      await repo.insertEvent(record.sessionId, "SESSION_CREATED", {
-        roomCode: record.roomCode,
-      });
+      await repo.createSession(record, {
+  sessionId: record.sessionId,
+  eventType: "SESSION_CREATED",
+  payload: {
+    roomCode: record.roomCode,
+  },
+});
 
       return {
         sessionId: record.sessionId,

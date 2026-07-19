@@ -1,6 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+
 import { createSession } from "../lib/session/createSession";
 import { InMemorySessionRepository } from "../lib/session/db/inMemorySessionRepository";
+import { RoomCodeCollisionError } from "../lib/session/types";
 
 describe("CREATE_SESSION", () => {
   it("creates a session with all required fields correctly populated", async () => {
@@ -14,14 +16,16 @@ describe("CREATE_SESSION", () => {
     expect(result.stateVersion).toBe(1);
 
     const stored = await repo.getSessionById(result.sessionId);
+
     expect(stored).not.toBeNull();
-    expect(stored!.pauseReason).toBeNull();
-    expect(stored!.createdAt).toBe(stored!.updatedAt);
+    expect(stored?.pauseReason).toBeNull();
+    expect(stored?.createdAt).toBe(stored?.updatedAt);
   });
 
   it("does not use visually confusable characters in the room code", async () => {
     const repo = new InMemorySessionRepository();
     const result = await createSession(repo);
+
     expect(result.roomCode).not.toMatch(/[0O1IL]/);
   });
 
@@ -29,69 +33,111 @@ describe("CREATE_SESSION", () => {
     const repo = new InMemorySessionRepository();
     const result = await createSession(repo);
     const events = repo._getEventsForSession(result.sessionId);
-    expect(events.length).toBe(1);
+
+    expect(events).toHaveLength(1);
     expect(events[0].eventType).toBe("SESSION_CREATED");
+    expect(events[0].sessionId).toBe(result.sessionId);
+    expect(events[0].payload).toEqual({
+      roomCode: result.roomCode,
+    });
   });
 
   it("produces two distinct, non-colliding sessions on concurrent creation", async () => {
     const repo = new InMemorySessionRepository();
-    const [a, b] = await Promise.all([createSession(repo), createSession(repo)]);
 
-    expect(a.sessionId).not.toBe(b.sessionId);
-    expect(a.hostToken).not.toBe(b.hostToken);
-    // room codes are randomly generated; collision is possible but rare —
-    // this assertion protects against the retry path silently failing to
-    // distinguish two sessions if it did collide.
-    if (a.roomCode === b.roomCode) {
-      throw new Error(
-        "Room code collision was not resolved by the retry mechanism."
-      );
-    }
+    const [first, second] = await Promise.all([
+      createSession(repo),
+      createSession(repo),
+    ]);
+
+    expect(first.sessionId).not.toBe(second.sessionId);
+    expect(first.hostToken).not.toBe(second.hostToken);
+    expect(first.roomCode).not.toBe(second.roomCode);
   });
 
-  it("rejects a colliding room code and regenerates rather than creating a duplicate active code", async () => {
-    // Force a deterministic collision scenario by pre-seeding the repo
-    // with a session whose room code we then simulate colliding against.
+  it("rejects a duplicate active room code", async () => {
     const repo = new InMemorySessionRepository();
     const first = await createSession(repo);
 
-    // Directly attempt a raw insert with the same room code to confirm
-    // the repository layer itself rejects it (this is what the Supabase
-    // partial unique index enforces in production).
+    const duplicateSessionId =
+      "11111111-1111-1111-1111-111111111111";
+    const now = new Date().toISOString();
+
     await expect(
-      repo.insertSession({
-        sessionId: "11111111-1111-1111-1111-111111111111",
-        roomCode: first.roomCode,
-        hostToken: "test-token-collision",
-        state: "LOBBY_OPEN",
-        stateVersion: 1,
-        pauseReason: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
-    ).rejects.toThrow("Room code collision");
+      repo.createSession(
+        {
+          sessionId: duplicateSessionId,
+          roomCode: first.roomCode,
+          hostToken: "host-token-collision-fixture",
+          state: "LOBBY_OPEN",
+          stateVersion: 1,
+          pauseReason: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          sessionId: duplicateSessionId,
+          eventType: "SESSION_CREATED",
+          payload: {
+            roomCode: first.roomCode,
+          },
+        }
+      )
+    ).rejects.toBeInstanceOf(RoomCodeCollisionError);
+
+    const storedDuplicate = await repo.getSessionById(duplicateSessionId);
+    const duplicateEvents = repo._getEventsForSession(duplicateSessionId);
+
+    expect(storedDuplicate).toBeNull();
+    expect(duplicateEvents).toHaveLength(0);
   });
 
-  it("allows room code reuse once the original session is SESSION_COMPLETE (accepted assumption)", async () => {
+  it("allows room code reuse once the original session is SESSION_COMPLETE", async () => {
     const repo = new InMemorySessionRepository();
     const first = await createSession(repo);
 
-    // Simulate the accepted lifecycle rule — there is no COMPLETE_SESSION
-    // command in this vertical slice's scope, so this uses a dedicated
-    // test-only helper rather than reaching into repository internals.
     repo._forceComplete(first.sessionId);
 
+    const reusedSessionId =
+      "22222222-2222-2222-2222-222222222222";
+    const now = new Date().toISOString();
+
     await expect(
-      repo.insertSession({
-        sessionId: "22222222-2222-2222-2222-222222222222",
+      repo.createSession(
+        {
+          sessionId: reusedSessionId,
+          roomCode: first.roomCode,
+          hostToken: "host-token-reuse-fixture",
+          state: "LOBBY_OPEN",
+          stateVersion: 1,
+          pauseReason: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          sessionId: reusedSessionId,
+          eventType: "SESSION_CREATED",
+          payload: {
+            roomCode: first.roomCode,
+          },
+        }
+      )
+    ).resolves.toBeUndefined();
+
+    const stored = await repo.getSessionById(reusedSessionId);
+    const events = repo._getEventsForSession(reusedSessionId);
+
+    expect(stored).not.toBeNull();
+    expect(stored?.roomCode).toBe(first.roomCode);
+    expect(stored?.state).toBe("LOBBY_OPEN");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({
+      sessionId: reusedSessionId,
+      eventType: "SESSION_CREATED",
+      payload: {
         roomCode: first.roomCode,
-        hostToken: "test-token-reuse",
-        state: "LOBBY_OPEN",
-        stateVersion: 1,
-        pauseReason: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
-    ).resolves.not.toThrow();
+      },
+    });
   });
 });
