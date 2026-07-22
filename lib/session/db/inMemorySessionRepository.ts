@@ -1,9 +1,16 @@
 import type { SessionRecord } from "../types";
-import { RoomCodeCollisionError, DisplayNameTakenError, SessionNotFoundError, LobbyNotOpenError } from "../types";
+import {
+  RoomCodeCollisionError,
+  DisplayNameTakenError,
+  SessionNotFoundError,
+  LobbyNotOpenError,
+  HostTokenMismatchError,
+} from "../types";
 import type {
   SessionEventRecord,
   ParticipantRecord,
   ParticipantJoinedEventRecord,
+  LobbyLockedEventRecord,
   SessionRepository,
 } from "./sessionRepository";
 
@@ -127,6 +134,53 @@ export class InMemorySessionRepository implements SessionRepository {
     return this.sessions.get(sessionId) ?? null;
   }
 
+  async lockLobby(
+    sessionId: string,
+    hostToken: string,
+    event: LobbyLockedEventRecord
+  ): Promise<{ state: SessionRecord["state"]; stateVersion: number }> {
+    // Authoritative host-token and session-state re-check, independent of
+    // any earlier application-layer lookup. Mirrors
+    // lock_lobby_atomically's row-locked re-check in the real database
+    // function.
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    if (session.hostToken !== hostToken) {
+      throw new HostTokenMismatchError();
+    }
+
+    if (session.state !== "LOBBY_OPEN") {
+      throw new LobbyNotOpenError(session.state);
+    }
+
+    if (event.sessionId !== sessionId) {
+      throw new Error(
+        "Lock event sessionId must match the session being locked."
+      );
+    }
+
+    const updated: SessionRecord = {
+      ...session,
+      state: "LOBBY_LOCKED",
+      stateVersion: session.stateVersion + 1,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.sessions.set(sessionId, updated);
+
+    this.events.push({
+      sessionId: event.sessionId,
+      eventType: event.eventType,
+      payload: { ...event.payload },
+    });
+
+    return { state: updated.state, stateVersion: updated.stateVersion };
+  }
+
   /** Test-only helper, not part of the repository interface. */
   _getEventsForSession(sessionId: string) {
     return this.events.filter((event) => event.sessionId === sessionId);
@@ -157,7 +211,7 @@ export class InMemorySessionRepository implements SessionRepository {
     }
   }
 
-  /** Test-only helper to simulate a lobby lock, ahead of LOCK_LOBBY's implementation. */
+  /** Test-only helper to force a session into an arbitrary state directly. */
   _forceState(sessionId: string, state: SessionRecord["state"]) {
     const session = this.sessions.get(sessionId);
 

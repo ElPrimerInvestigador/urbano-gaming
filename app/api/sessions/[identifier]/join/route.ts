@@ -10,7 +10,12 @@ import {
 } from "@/lib/session/types";
 
 /**
- * POST /api/sessions/[roomCode]/join — JOIN_SESSION
+ * POST /api/sessions/[identifier]/join — JOIN_SESSION
+ *
+ * The dynamic segment is named [identifier] (not [roomCode]) because
+ * Next.js requires one shared slug name across all routes at the same
+ * path position — /api/sessions/[identifier]/lock also occupies it.
+ * For this route, the value is the room code.
  *
  * Route is thin by design, mirroring /api/sessions: transport concerns
  * only. All logic lives in joinSession(), which is transport-agnostic
@@ -18,8 +23,10 @@ import {
  */
 export async function POST(
   request: Request,
-  { params }: { params: { roomCode: string } }
+  { params }: { params: { identifier: string } }
 ) {
+  const roomCode = params.identifier;
+
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -51,7 +58,7 @@ export async function POST(
   const repo = new SupabaseSessionRepository(supabaseUrl, supabaseServiceKey);
 
   try {
-    const result = await joinSession(repo, params.roomCode, displayName);
+    const result = await joinSession(repo, roomCode, displayName);
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
     if (err instanceof SessionNotFoundError) {

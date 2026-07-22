@@ -1,17 +1,19 @@
 import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { SessionRecord } from "../types";
+import type { SessionRecord, SessionState } from "../types";
 import {
   RoomCodeCollisionError,
   DisplayNameTakenError,
   SessionNotFoundError,
   LobbyNotOpenError,
+  HostTokenMismatchError,
 } from "../types";
 import type {
   SessionEventRecord,
   ParticipantRecord,
   ParticipantJoinedEventRecord,
+  LobbyLockedEventRecord,
   SessionRepository,
 } from "./sessionRepository";
 
@@ -22,10 +24,25 @@ import type {
  * ensuring the session row and initial event are committed together or
  * rolled back together. joinParticipant follows the identical pattern via
  * a join_participant_atomically function — see
- * supabase/migrations/0004_join_participant_atomically.sql. This mirrors
- * the existing createSession/create_session_atomically pairing rather
- * than introducing a new persistence approach.
+ * supabase/migrations/0004_join_participant_atomically.sql. lockLobby
+ * follows the same pattern again via lock_lobby_atomically — see
+ * supabase/migrations/0005_lock_lobby_atomically.sql. This mirrors the
+ * existing pairing rather than introducing a new persistence approach.
  */
+
+/**
+ * Both lock_lobby_atomically and join_participant_atomically raise their
+ * not-open exception with the same embedded shape ("... session is in
+ * <STATE> state, not LOBBY_OPEN"). Extracting it here lets both
+ * translation sites construct LobbyNotOpenError with the actual state,
+ * matching the detail already available from the in-memory repository
+ * and the domain-layer fast-path check.
+ */
+function extractStateFromNotOpenMessage(message: string): SessionState | undefined {
+  const match = message.match(/session is in (\w+) state/);
+  return match ? (match[1] as SessionState) : undefined;
+}
+
 export class SupabaseSessionRepository implements SessionRepository {
   private client: SupabaseClient;
 
@@ -91,7 +108,7 @@ export class SupabaseSessionRepository implements SessionRepository {
         typeof error.message === "string" &&
         error.message.includes("SESSION_NOT_JOINABLE")
       ) {
-        throw new LobbyNotOpenError();
+        throw new LobbyNotOpenError(extractStateFromNotOpenMessage(error.message));
       }
 
       if (
@@ -151,6 +168,54 @@ export class SupabaseSessionRepository implements SessionRepository {
       pauseReason: data.pause_reason,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
+    };
+  }
+
+  async lockLobby(
+    sessionId: string,
+    hostToken: string,
+    event: LobbyLockedEventRecord
+  ): Promise<{ state: SessionState; stateVersion: number }> {
+    const { data, error } = await this.client.rpc("lock_lobby_atomically", {
+      p_session_id: sessionId,
+      p_host_token: hostToken,
+      p_event_type: event.eventType,
+      p_event_payload: event.payload,
+    });
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("HOST_TOKEN_MISMATCH")
+      ) {
+        throw new HostTokenMismatchError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("LOBBY_NOT_OPEN")
+      ) {
+        throw new LobbyNotOpenError(extractStateFromNotOpenMessage(error.message));
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      state: row.state as SessionState,
+      stateVersion: row.state_version,
     };
   }
 }

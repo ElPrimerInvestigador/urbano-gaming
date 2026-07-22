@@ -36,6 +36,15 @@ export interface CreateSessionResult {
   stateVersion: number;
 }
 
+/**
+ * Result of a successful LOCK_LOBBY.
+ */
+export interface LockLobbyResult {
+  sessionId: string;
+  state: SessionState;
+  stateVersion: number;
+}
+
 /** Raised when a generated room code collides with an active session. */
 export class RoomCodeCollisionError extends Error {
   constructor() {
@@ -55,23 +64,42 @@ export interface JoinSessionResult {
   displayName: string;
 }
 
-/** Raised when JOIN_SESSION targets a room code with no active session. */
+/**
+ * Raised when a command targets a session that does not exist (by room
+ * code or by session id, depending on the caller). Shared across
+ * JOIN_SESSION and LOCK_LOBBY.
+ */
 export class SessionNotFoundError extends Error {
   constructor() {
-    super("No active session found for the given room code.");
+    super("No active session found.");
     this.name = "SessionNotFoundError";
   }
 }
 
-/** Raised when JOIN_SESSION targets a session not in LOBBY_OPEN. */
+/**
+ * Raised when a command requires the session to be LOBBY_OPEN and it is
+ * not. Shared across JOIN_SESSION and LOCK_LOBBY — the message is
+ * intentionally action-neutral rather than naming a specific command.
+ */
 export class LobbyNotOpenError extends Error {
   constructor(currentState?: SessionState) {
     super(
       currentState
-        ? `Cannot join: session is in ${currentState}, not LOBBY_OPEN.`
-        : "Cannot join: session is no longer LOBBY_OPEN."
+        ? `Session is in ${currentState}, not LOBBY_OPEN.`
+        : "Session is no longer LOBBY_OPEN."
     );
     this.name = "LobbyNotOpenError";
+  }
+}
+
+/**
+ * Raised when LOCK_LOBBY's supplied host token does not match the
+ * session's stored host token.
+ */
+export class HostTokenMismatchError extends Error {
+  constructor() {
+    super("Host token does not match this session.");
+    this.name = "HostTokenMismatchError";
   }
 }
 

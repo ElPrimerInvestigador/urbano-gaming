@@ -1,4 +1,4 @@
-import type { SessionRecord } from "../types";
+import type { SessionRecord, SessionState } from "../types";
 
 export interface SessionEventRecord {
   sessionId: string;
@@ -21,6 +21,11 @@ export interface ParticipantJoinedEventRecord extends SessionEventRecord {
     participantId: string;
     displayName: string;
   };
+}
+
+export interface LobbyLockedEventRecord extends SessionEventRecord {
+  eventType: "LOBBY_LOCKED";
+  payload: Record<string, never>;
 }
 
 /**
@@ -67,4 +72,25 @@ export interface SessionRepository {
 
   /** Used by tests and validation to confirm a session round-trips. */
   getSessionById(sessionId: string): Promise<SessionRecord | null>;
+
+  /**
+   * Atomically re-verify the supplied host token and that the session is
+   * LOBBY_OPEN, then transition it to LOBBY_LOCKED, increment
+   * state_version, and persist the LOBBY_LOCKED event — as one atomic
+   * operation, mirroring joinParticipant's authoritative re-check.
+   *
+   * Implementations must:
+   * - commit the state transition and its event, or neither;
+   * - re-verify the host token and session state inside the atomic
+   *   operation itself, not merely trust an earlier caller-side check;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw HostTokenMismatchError only on a host-token mismatch;
+   * - throw LobbyNotOpenError only when the session is not LOBBY_OPEN;
+   * - return the authoritative post-transition state and state_version.
+   */
+  lockLobby(
+    sessionId: string,
+    hostToken: string,
+    event: LobbyLockedEventRecord
+  ): Promise<{ state: SessionState; stateVersion: number }>;
 }
