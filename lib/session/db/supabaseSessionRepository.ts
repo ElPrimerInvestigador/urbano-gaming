@@ -2,9 +2,16 @@ import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import type { SessionRecord } from "../types";
-import { RoomCodeCollisionError } from "../types";
+import {
+  RoomCodeCollisionError,
+  DisplayNameTakenError,
+  SessionNotFoundError,
+  LobbyNotOpenError,
+} from "../types";
 import type {
   SessionEventRecord,
+  ParticipantRecord,
+  ParticipantJoinedEventRecord,
   SessionRepository,
 } from "./sessionRepository";
 
@@ -13,7 +20,11 @@ import type {
  *
  * Session creation uses the create_session_atomically PostgreSQL function,
  * ensuring the session row and initial event are committed together or
- * rolled back together.
+ * rolled back together. joinParticipant follows the identical pattern via
+ * a join_participant_atomically function — see
+ * supabase/migrations/0004_join_participant_atomically.sql. This mirrors
+ * the existing createSession/create_session_atomically pairing rather
+ * than introducing a new persistence approach.
  */
 export class SupabaseSessionRepository implements SessionRepository {
   private client: SupabaseClient;
@@ -40,17 +51,86 @@ export class SupabaseSessionRepository implements SessionRepository {
     });
 
     if (error) {
-  if (
-    error.code === "23505" &&
-    error.message.includes("sessions_room_code_active_unique")
-  ) {
-    throw new RoomCodeCollisionError();
+      if (
+        error.code === "23505" &&
+        error.message.includes("sessions_room_code_active_unique")
+      ) {
+        throw new RoomCodeCollisionError();
+      }
+
+      throw error;
+    }
   }
 
-  throw error;
-}
+  async joinParticipant(
+    record: ParticipantRecord,
+    joinedEvent: ParticipantJoinedEventRecord
+  ): Promise<void> {
+    const { error } = await this.client.rpc("join_participant_atomically", {
+      p_participant_id: record.participantId,
+      p_session_id: record.sessionId,
+      p_display_name: record.displayName,
+      p_normalized_display_name: record.normalizedDisplayName,
+      p_participant_token: record.participantToken,
+      p_joined_at: record.joinedAt,
+      p_event_type: joinedEvent.eventType,
+      p_event_payload: joinedEvent.payload,
+    });
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_JOINABLE")
+      ) {
+        throw new LobbyNotOpenError();
+      }
+
+      if (
+        error.code === "23505" &&
+        error.message.includes(
+          "participants_session_display_name_unique"
+        )
+      ) {
+        throw new DisplayNameTakenError();
+      }
+
+      throw error;
     }
-  
+  }
+
+  async getActiveSessionByRoomCode(
+    roomCode: string
+  ): Promise<SessionRecord | null> {
+    const { data, error } = await this.client
+      .from("sessions")
+      .select("*")
+      .eq("room_code", roomCode)
+      .neq("state", "SESSION_COMPLETE")
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      sessionId: data.session_id,
+      roomCode: data.room_code,
+      hostToken: data.host_token,
+      state: data.state,
+      stateVersion: data.state_version,
+      pauseReason: data.pause_reason,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
 
   async getSessionById(sessionId: string): Promise<SessionRecord | null> {
     const { data, error } = await this.client

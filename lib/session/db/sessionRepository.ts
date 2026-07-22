@@ -6,12 +6,29 @@ export interface SessionEventRecord {
   payload: Record<string, unknown>;
 }
 
+export interface ParticipantRecord {
+  participantId: string;
+  sessionId: string;
+  displayName: string;
+  normalizedDisplayName: string;
+  participantToken: string;
+  joinedAt: string;
+}
+
+export interface ParticipantJoinedEventRecord extends SessionEventRecord {
+  eventType: "PARTICIPANT_JOINED";
+  payload: {
+    participantId: string;
+    displayName: string;
+  };
+}
+
 /**
  * Repository interface for Session Engine persistence.
  *
  * The repository exposes conceptual persistence operations rather than
  * individual database writes. This ensures callers cannot accidentally
- * persist a session without its required initial event.
+ * persist an aggregate without its required event.
  */
 export interface SessionRepository {
   /**
@@ -27,6 +44,27 @@ export interface SessionRepository {
     initialEvent: SessionEventRecord
   ): Promise<void>;
 
-  /** Used by tests and validation to confirm a record round-trips. */
+  /**
+   * Persist a participant and its PARTICIPANT_JOINED event atomically.
+   *
+   * Implementations must:
+   * - commit both records or neither record;
+   * - enforce session-scoped normalized display-name uniqueness;
+   * - translate only the display-name uniqueness violation into the
+   *   corresponding domain error.
+   */
+  joinParticipant(
+    record: ParticipantRecord,
+    joinedEvent: ParticipantJoinedEventRecord
+  ): Promise<void>;
+
+  /**
+   * Resolve a room code to its active (non-SESSION_COMPLETE) session.
+   * Required by JOIN_SESSION to validate the target session exists and
+   * is joinable before persisting a participant.
+   */
+  getActiveSessionByRoomCode(roomCode: string): Promise<SessionRecord | null>;
+
+  /** Used by tests and validation to confirm a session round-trips. */
   getSessionById(sessionId: string): Promise<SessionRecord | null>;
 }
