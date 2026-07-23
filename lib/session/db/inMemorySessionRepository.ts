@@ -5,12 +5,14 @@ import {
   SessionNotFoundError,
   LobbyNotOpenError,
   HostTokenMismatchError,
+  SessionAlreadyCompleteError,
 } from "../types";
 import type {
   SessionEventRecord,
   ParticipantRecord,
   ParticipantJoinedEventRecord,
   LobbyLockedEventRecord,
+  SessionCompletedEventRecord,
   SessionRepository,
 } from "./sessionRepository";
 
@@ -189,6 +191,53 @@ export class InMemorySessionRepository implements SessionRepository {
       .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
   }
 
+  async completeSession(
+    sessionId: string,
+    hostToken: string,
+    event: SessionCompletedEventRecord
+  ): Promise<{ state: SessionRecord["state"]; stateVersion: number }> {
+    // Authoritative host-token and session-state re-check, independent of
+    // any earlier application-layer lookup. Mirrors
+    // complete_session_atomically's row-locked re-check in the real
+    // database function.
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    if (session.hostToken !== hostToken) {
+      throw new HostTokenMismatchError();
+    }
+
+    if (session.state === "SESSION_COMPLETE") {
+      throw new SessionAlreadyCompleteError();
+    }
+
+    if (event.sessionId !== sessionId) {
+      throw new Error(
+        "Completion event sessionId must match the session being completed."
+      );
+    }
+
+    const updated: SessionRecord = {
+      ...session,
+      state: "SESSION_COMPLETE",
+      stateVersion: session.stateVersion + 1,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.sessions.set(sessionId, updated);
+
+    this.events.push({
+      sessionId: event.sessionId,
+      eventType: event.eventType,
+      payload: { ...event.payload },
+    });
+
+    return { state: updated.state, stateVersion: updated.stateVersion };
+  }
+
   /** Test-only helper, not part of the repository interface. */
   _getEventsForSession(sessionId: string) {
     return this.events.filter((event) => event.sessionId === sessionId);
@@ -205,8 +254,10 @@ export class InMemorySessionRepository implements SessionRepository {
   }
 
   /**
-   * Test-only helper to simulate a session reaching SESSION_COMPLETE.
-   * No COMPLETE_SESSION command exists in this vertical slice.
+   * Test-only helper to jump a session directly to SESSION_COMPLETE
+   * without going through completeSession()'s host-token check —
+   * useful for tests that only need a completed session as setup, not
+   * as the behavior under test.
    */
   _forceComplete(sessionId: string) {
     const session = this.sessions.get(sessionId);

@@ -28,6 +28,11 @@ export interface LobbyLockedEventRecord extends SessionEventRecord {
   payload: Record<string, never>;
 }
 
+export interface SessionCompletedEventRecord extends SessionEventRecord {
+  eventType: "SESSION_COMPLETED";
+  payload: Record<string, never>;
+}
+
 /**
  * Repository interface for Session Engine persistence.
  *
@@ -109,4 +114,31 @@ export interface SessionRepository {
    * else) is an implementation detail, not part of this contract.
    */
   getParticipantsForSession(sessionId: string): Promise<ParticipantRecord[]>;
+
+  /**
+   * Atomically re-verify the supplied host token and that the session is
+   * not already SESSION_COMPLETE, then transition it to SESSION_COMPLETE,
+   * increment state_version, and persist the SESSION_COMPLETED event —
+   * as one atomic operation, mirroring lockLobby's authoritative
+   * re-check.
+   *
+   * Per Interpretation 2 (administrative termination): this is callable
+   * from any state except SESSION_COMPLETE itself — there is no single
+   * required source state the way LOCK_LOBBY requires LOBBY_OPEN.
+   *
+   * Implementations must:
+   * - commit the state transition and its event, or neither;
+   * - re-verify the host token and session state inside the atomic
+   *   operation itself, not merely trust an earlier caller-side check;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw HostTokenMismatchError only on a host-token mismatch;
+   * - throw SessionAlreadyCompleteError only when the session is already
+   *   SESSION_COMPLETE;
+   * - return the authoritative post-transition state and state_version.
+   */
+  completeSession(
+    sessionId: string,
+    hostToken: string,
+    event: SessionCompletedEventRecord
+  ): Promise<{ state: SessionState; stateVersion: number }>;
 }

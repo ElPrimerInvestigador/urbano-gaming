@@ -45,6 +45,15 @@ export interface LockLobbyResult {
   stateVersion: number;
 }
 
+/**
+ * Result of a successful COMPLETE_SESSION.
+ */
+export interface CompleteSessionResult {
+  sessionId: string;
+  state: SessionState;
+  stateVersion: number;
+}
+
 /** A participant as exposed by GET_SESSION — no token, no join timestamp. */
 export interface ParticipantSummary {
   participantId: string;
@@ -128,6 +137,19 @@ export class SessionAccessDeniedError extends Error {
   constructor() {
     super("This token does not grant access to this session.");
     this.name = "SessionAccessDeniedError";
+  }
+}
+
+/**
+ * Raised when COMPLETE_SESSION targets a session that is already
+ * SESSION_COMPLETE. Per Interpretation 2 (administrative termination),
+ * this is the only state COMPLETE_SESSION rejects — every other state
+ * is a valid source state.
+ */
+export class SessionAlreadyCompleteError extends Error {
+  constructor() {
+    super("Session is already complete.");
+    this.name = "SessionAlreadyCompleteError";
   }
 }
 

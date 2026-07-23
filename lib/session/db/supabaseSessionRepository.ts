@@ -8,12 +8,14 @@ import {
   SessionNotFoundError,
   LobbyNotOpenError,
   HostTokenMismatchError,
+  SessionAlreadyCompleteError,
 } from "../types";
 import type {
   SessionEventRecord,
   ParticipantRecord,
   ParticipantJoinedEventRecord,
   LobbyLockedEventRecord,
+  SessionCompletedEventRecord,
   SessionRepository,
 } from "./sessionRepository";
 
@@ -26,8 +28,11 @@ import type {
  * a join_participant_atomically function — see
  * supabase/migrations/0004_join_participant_atomically.sql. lockLobby
  * follows the same pattern again via lock_lobby_atomically — see
- * supabase/migrations/0005_lock_lobby_atomically.sql. This mirrors the
- * existing pairing rather than introducing a new persistence approach.
+ * supabase/migrations/0005_lock_lobby_atomically.sql. completeSession
+ * follows the same pattern again via complete_session_atomically — see
+ * supabase/migrations/0006_complete_session_atomically.sql. This
+ * mirrors the existing pairing rather than introducing a new
+ * persistence approach.
  */
 
 /**
@@ -244,5 +249,56 @@ export class SupabaseSessionRepository implements SessionRepository {
       participantToken: row.participant_token,
       joinedAt: row.joined_at,
     }));
+  }
+
+  async completeSession(
+    sessionId: string,
+    hostToken: string,
+    event: SessionCompletedEventRecord
+  ): Promise<{ state: SessionState; stateVersion: number }> {
+    const { data, error } = await this.client.rpc(
+      "complete_session_atomically",
+      {
+        p_session_id: sessionId,
+        p_host_token: hostToken,
+        p_event_type: event.eventType,
+        p_event_payload: event.payload,
+      }
+    );
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("HOST_TOKEN_MISMATCH")
+      ) {
+        throw new HostTokenMismatchError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_ALREADY_COMPLETE")
+      ) {
+        throw new SessionAlreadyCompleteError();
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      state: row.state as SessionState,
+      stateVersion: row.state_version,
+    };
   }
 }
