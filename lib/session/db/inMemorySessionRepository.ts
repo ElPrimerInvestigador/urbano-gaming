@@ -181,6 +181,14 @@ export class InMemorySessionRepository implements SessionRepository {
     return { state: updated.state, stateVersion: updated.stateVersion };
   }
 
+  async getParticipantsForSession(
+    sessionId: string
+  ): Promise<ParticipantRecord[]> {
+    return [...this.participants.values()]
+      .filter((participant) => participant.sessionId === sessionId)
+      .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
+  }
+
   /** Test-only helper, not part of the repository interface. */
   _getEventsForSession(sessionId: string) {
     return this.events.filter((event) => event.sessionId === sessionId);

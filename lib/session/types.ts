@@ -45,6 +45,23 @@ export interface LockLobbyResult {
   stateVersion: number;
 }
 
+/** A participant as exposed by GET_SESSION — no token, no join timestamp. */
+export interface ParticipantSummary {
+  participantId: string;
+  displayName: string;
+}
+
+/**
+ * Result of a successful GET_SESSION. Never includes hostToken or any
+ * participantToken.
+ */
+export interface GetSessionResult {
+  sessionId: string;
+  state: SessionState;
+  stateVersion: number;
+  participants: ParticipantSummary[];
+}
+
 /** Raised when a generated room code collides with an active session. */
 export class RoomCodeCollisionError extends Error {
   constructor() {
@@ -100,6 +117,17 @@ export class HostTokenMismatchError extends Error {
   constructor() {
     super("Host token does not match this session.");
     this.name = "HostTokenMismatchError";
+  }
+}
+
+/**
+ * Raised when GET_SESSION's supplied bearer token matches neither the
+ * session's host token nor any participant's token for that session.
+ */
+export class SessionAccessDeniedError extends Error {
+  constructor() {
+    super("This token does not grant access to this session.");
+    this.name = "SessionAccessDeniedError";
   }
 }
 

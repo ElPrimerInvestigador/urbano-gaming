@@ -93,4 +93,20 @@ export interface SessionRepository {
     hostToken: string,
     event: LobbyLockedEventRecord
   ): Promise<{ state: SessionState; stateVersion: number }>;
+
+  /**
+   * List all participants for a session, ordered by joinedAt ascending.
+   * Not filtered by session state — GET_SESSION must be able to read a
+   * session's participant list regardless of its current state.
+   *
+   * Tie-break contract: if multiple participants share the same
+   * joinedAt timestamp, their relative order is intentionally
+   * unspecified and must not be relied upon by consumers. The
+   * guarantee implementations must uphold is determinism — repeated
+   * calls against the same underlying data return the same order every
+   * time. How a given implementation achieves that (a secondary sort
+   * key, an incidental property of its storage model, or anything
+   * else) is an implementation detail, not part of this contract.
+   */
+  getParticipantsForSession(sessionId: string): Promise<ParticipantRecord[]>;
 }

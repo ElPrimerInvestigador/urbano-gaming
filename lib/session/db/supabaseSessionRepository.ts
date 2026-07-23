@@ -218,4 +218,31 @@ export class SupabaseSessionRepository implements SessionRepository {
       stateVersion: row.state_version,
     };
   }
+
+  async getParticipantsForSession(
+    sessionId: string
+  ): Promise<ParticipantRecord[]> {
+    // Secondary sort on participant_id: Postgres does not guarantee a
+    // stable tie-break order on joined_at alone, and two joins can land
+    // within the same millisecond (see JOIN_SESSION's concurrent-join
+    // tests). Without an explicit tiebreaker, repeated calls against the
+    // same data are not guaranteed to return the same order.
+    const { data, error } = await this.client
+      .from("participants")
+      .select("*")
+      .eq("session_id", sessionId)
+      .order("joined_at", { ascending: true })
+      .order("participant_id", { ascending: true });
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      participantId: row.participant_id,
+      sessionId: row.session_id,
+      displayName: row.display_name,
+      normalizedDisplayName: row.normalized_display_name,
+      participantToken: row.participant_token,
+      joinedAt: row.joined_at,
+    }));
+  }
 }
