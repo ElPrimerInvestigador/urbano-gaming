@@ -69,6 +69,7 @@ test("rejects a colliding room code at the repository layer", async () => {
         state: "LOBBY_OPEN",
         stateVersion: 1,
         pauseReason: null,
+        currentPromptId: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       }),
@@ -89,6 +90,7 @@ test("allows room code reuse once the original session is SESSION_COMPLETE", asy
       state: "LOBBY_OPEN",
       stateVersion: 1,
       pauseReason: null,
+      currentPromptId: null,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     })

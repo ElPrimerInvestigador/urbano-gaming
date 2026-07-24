@@ -1,9 +1,11 @@
+import { randomUUID } from "crypto";
 import type { SessionRecord } from "../types";
 import {
   RoomCodeCollisionError,
   DisplayNameTakenError,
   SessionNotFoundError,
   LobbyNotOpenError,
+  LobbyNotLockedError,
   HostTokenMismatchError,
   SessionAlreadyCompleteError,
 } from "../types";
@@ -13,8 +15,18 @@ import type {
   ParticipantJoinedEventRecord,
   LobbyLockedEventRecord,
   SessionCompletedEventRecord,
+  PromptRecord,
   SessionRepository,
 } from "./sessionRepository";
+
+/**
+ * Engineering seed prompt — placeholder content whose only purpose is
+ * validating the START_SESSION pipeline (transition, persistence,
+ * GET_SESSION integration). Not production copy; replace freely without
+ * any architectural impact.
+ */
+const ENGINEERING_SEED_PROMPT_TEXT =
+  "[ENGINEERING SEED PROMPT — placeholder, not production copy] What's one thing you're looking forward to this week?";
 
 /**
  * In-memory test double.
@@ -33,6 +45,22 @@ export class InMemorySessionRepository implements SessionRepository {
   private participants = new Map<string, ParticipantRecord>();
 
   private events: Array<SessionEventRecord> = [];
+
+  /**
+   * Seeded with exactly one prompt at construction, mirroring the
+   * production migration's single-row seed. current_prompt_id is an
+   * explicit MVP optimization, not a commitment to the long-term
+   * gameplay model.
+   */
+  private prompts = new Map<string, PromptRecord>([
+    (() => {
+      const promptId = randomUUID();
+      return [
+        promptId,
+        { promptId, text: ENGINEERING_SEED_PROMPT_TEXT },
+      ] as const;
+    })(),
+  ]);
 
   async createSession(
     record: SessionRecord,
@@ -236,6 +264,65 @@ export class InMemorySessionRepository implements SessionRepository {
     });
 
     return { state: updated.state, stateVersion: updated.stateVersion };
+  }
+
+  async getPromptById(promptId: string): Promise<PromptRecord | null> {
+    return this.prompts.get(promptId) ?? null;
+  }
+
+  async startSession(
+    sessionId: string,
+    hostToken: string
+  ): Promise<{
+    state: SessionRecord["state"];
+    stateVersion: number;
+    currentPromptId: string;
+  }> {
+    // Authoritative host-token and session-state re-check, independent of
+    // any earlier application-layer lookup. Mirrors
+    // start_session_atomically's row-locked re-check in the real
+    // database function.
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    if (session.hostToken !== hostToken) {
+      throw new HostTokenMismatchError();
+    }
+
+    if (session.state !== "LOBBY_LOCKED") {
+      throw new LobbyNotLockedError(session.state);
+    }
+
+    // Prompt selection swap point: today, exactly one prompt exists, so
+    // this is trivially deterministic. A future selection strategy
+    // (random, round-robin, exclude-already-used) replaces only this
+    // line — no change to anything above or below it.
+    const [selectedPrompt] = this.prompts.values();
+
+    const updated: SessionRecord = {
+      ...session,
+      state: "PROMPT_ACTIVE",
+      currentPromptId: selectedPrompt.promptId,
+      stateVersion: session.stateVersion + 1,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.sessions.set(sessionId, updated);
+
+    this.events.push({
+      sessionId,
+      eventType: "SESSION_STARTED",
+      payload: { promptId: selectedPrompt.promptId },
+    });
+
+    return {
+      state: updated.state,
+      stateVersion: updated.stateVersion,
+      currentPromptId: selectedPrompt.promptId,
+    };
   }
 
   /** Test-only helper, not part of the repository interface. */

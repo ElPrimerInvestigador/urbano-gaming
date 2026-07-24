@@ -7,6 +7,7 @@ import {
   DisplayNameTakenError,
   SessionNotFoundError,
   LobbyNotOpenError,
+  LobbyNotLockedError,
   HostTokenMismatchError,
   SessionAlreadyCompleteError,
 } from "../types";
@@ -16,6 +17,7 @@ import type {
   ParticipantJoinedEventRecord,
   LobbyLockedEventRecord,
   SessionCompletedEventRecord,
+  PromptRecord,
   SessionRepository,
 } from "./sessionRepository";
 
@@ -30,20 +32,23 @@ import type {
  * follows the same pattern again via lock_lobby_atomically — see
  * supabase/migrations/0005_lock_lobby_atomically.sql. completeSession
  * follows the same pattern again via complete_session_atomically — see
- * supabase/migrations/0006_complete_session_atomically.sql. This
- * mirrors the existing pairing rather than introducing a new
- * persistence approach.
+ * supabase/migrations/0006_complete_session_atomically.sql. startSession
+ * follows the same pattern again via start_session_atomically — see
+ * supabase/migrations/0008_start_session_atomically.sql. This mirrors
+ * the existing pairing rather than introducing a new persistence
+ * approach.
  */
 
 /**
- * Both lock_lobby_atomically and join_participant_atomically raise their
- * not-open exception with the same embedded shape ("... session is in
- * <STATE> state, not LOBBY_OPEN"). Extracting it here lets both
- * translation sites construct LobbyNotOpenError with the actual state,
- * matching the detail already available from the in-memory repository
- * and the domain-layer fast-path check.
+ * lock_lobby_atomically, join_participant_atomically, and
+ * start_session_atomically each raise their wrong-state exception with
+ * the same embedded shape ("... session is in <STATE> state, not
+ * <REQUIRED_STATE>"). Extracting it here lets every translation site
+ * construct its specific error (LobbyNotOpenError, LobbyNotLockedError)
+ * with the actual state, matching the detail already available from the
+ * in-memory repository and the domain-layer fast-path checks.
  */
-function extractStateFromNotOpenMessage(message: string): SessionState | undefined {
+function extractStateFromGuardMessage(message: string): SessionState | undefined {
   const match = message.match(/session is in (\w+) state/);
   return match ? (match[1] as SessionState) : undefined;
 }
@@ -113,7 +118,7 @@ export class SupabaseSessionRepository implements SessionRepository {
         typeof error.message === "string" &&
         error.message.includes("SESSION_NOT_JOINABLE")
       ) {
-        throw new LobbyNotOpenError(extractStateFromNotOpenMessage(error.message));
+        throw new LobbyNotOpenError(extractStateFromGuardMessage(error.message));
       }
 
       if (
@@ -149,6 +154,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       state: data.state,
       stateVersion: data.state_version,
       pauseReason: data.pause_reason,
+      currentPromptId: data.current_prompt_id,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };
@@ -171,6 +177,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       state: data.state,
       stateVersion: data.state_version,
       pauseReason: data.pause_reason,
+      currentPromptId: data.current_prompt_id,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };
@@ -210,7 +217,7 @@ export class SupabaseSessionRepository implements SessionRepository {
         typeof error.message === "string" &&
         error.message.includes("LOBBY_NOT_OPEN")
       ) {
-        throw new LobbyNotOpenError(extractStateFromNotOpenMessage(error.message));
+        throw new LobbyNotOpenError(extractStateFromGuardMessage(error.message));
       }
 
       throw error;
@@ -299,6 +306,72 @@ export class SupabaseSessionRepository implements SessionRepository {
     return {
       state: row.state as SessionState,
       stateVersion: row.state_version,
+    };
+  }
+
+  async getPromptById(promptId: string): Promise<PromptRecord | null> {
+    const { data, error } = await this.client
+      .from("prompts")
+      .select("*")
+      .eq("prompt_id", promptId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      promptId: data.prompt_id,
+      text: data.text,
+    };
+  }
+
+  async startSession(
+    sessionId: string,
+    hostToken: string
+  ): Promise<{
+    state: SessionState;
+    stateVersion: number;
+    currentPromptId: string;
+  }> {
+    const { data, error } = await this.client.rpc("start_session_atomically", {
+      p_session_id: sessionId,
+      p_host_token: hostToken,
+    });
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("HOST_TOKEN_MISMATCH")
+      ) {
+        throw new HostTokenMismatchError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("LOBBY_NOT_LOCKED")
+      ) {
+        throw new LobbyNotLockedError(extractStateFromGuardMessage(error.message));
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      state: row.state as SessionState,
+      stateVersion: row.state_version,
+      currentPromptId: row.current_prompt_id,
     };
   }
 }

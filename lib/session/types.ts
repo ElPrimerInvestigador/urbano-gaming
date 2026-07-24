@@ -24,6 +24,12 @@ export interface SessionRecord {
   state: SessionState;
   stateVersion: number;
   pauseReason: PauseReason;
+  /**
+   * Explicit MVP optimization, not a commitment to the long-term
+   * gameplay model — a future "rounds" concept may eventually own
+   * prompt selection instead of the session row directly.
+   */
+  currentPromptId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,10 +60,26 @@ export interface CompleteSessionResult {
   stateVersion: number;
 }
 
+/**
+ * Result of a successful START_SESSION.
+ */
+export interface StartSessionResult {
+  sessionId: string;
+  state: SessionState;
+  stateVersion: number;
+  currentPromptId: string;
+}
+
 /** A participant as exposed by GET_SESSION — no token, no join timestamp. */
 export interface ParticipantSummary {
   participantId: string;
   displayName: string;
+}
+
+/** A prompt as exposed by GET_SESSION. */
+export interface PromptSummary {
+  promptId: string;
+  text: string;
 }
 
 /**
@@ -69,6 +91,7 @@ export interface GetSessionResult {
   state: SessionState;
   stateVersion: number;
   participants: ParticipantSummary[];
+  currentPrompt: PromptSummary | null;
 }
 
 /** Raised when a generated room code collides with an active session. */
@@ -115,6 +138,23 @@ export class LobbyNotOpenError extends Error {
         : "Session is no longer LOBBY_OPEN."
     );
     this.name = "LobbyNotOpenError";
+  }
+}
+
+/**
+ * Raised when a command requires the session to be LOBBY_LOCKED and it
+ * is not. Distinct from LobbyNotOpenError, which means the opposite
+ * requirement (needs OPEN, isn't) — this means the session hasn't been
+ * locked yet, or has already moved past LOBBY_LOCKED.
+ */
+export class LobbyNotLockedError extends Error {
+  constructor(currentState?: SessionState) {
+    super(
+      currentState
+        ? `Session is in ${currentState}, not LOBBY_LOCKED.`
+        : "Session is no longer LOBBY_LOCKED."
+    );
+    this.name = "LobbyNotLockedError";
   }
 }
 

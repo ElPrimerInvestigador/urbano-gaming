@@ -93,6 +93,16 @@ describe("GET_SESSION", () => {
     ).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 
+  it("returns currentPrompt as null before a session has started", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+    await lockLobby(repo, session.sessionId, session.hostToken);
+
+    const result = await getSession(repo, session.sessionId, session.hostToken);
+
+    expect(result.currentPrompt).toBeNull();
+  });
+
   it("reflects state changes after LOCK_LOBBY", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);

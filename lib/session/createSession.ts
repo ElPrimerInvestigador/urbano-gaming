@@ -33,6 +33,7 @@ export async function createSession(
       state: "LOBBY_OPEN",
       stateVersion: 1,
       pauseReason: null,
+      currentPromptId: null,
       createdAt: now,
       updatedAt: now,
     };

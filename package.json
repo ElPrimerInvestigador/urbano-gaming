@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run __tests__/createSession.test.ts __tests__/joinSession.test.ts __tests__/lockLobby.test.ts __tests__/getSession.test.ts __tests__/completeSession.test.ts",
+    "test": "vitest run __tests__/createSession.test.ts __tests__/joinSession.test.ts __tests__/lockLobby.test.ts __tests__/getSession.test.ts __tests__/completeSession.test.ts __tests__/startSession.test.ts",
     "test:contract": "vitest run __tests__/supabaseSessionRepository.contract.test.ts",
     "test:manual": "tsx --test __tests__/manual/*.test.mjs"
   },

@@ -36,6 +36,10 @@ export async function getSession(
     throw new SessionAccessDeniedError();
   }
 
+  const currentPrompt = session.currentPromptId
+    ? await repo.getPromptById(session.currentPromptId)
+    : null;
+
   return {
     sessionId: session.sessionId,
     state: session.state,
@@ -44,5 +48,8 @@ export async function getSession(
       participantId: participant.participantId,
       displayName: participant.displayName,
     })),
+    currentPrompt: currentPrompt
+      ? { promptId: currentPrompt.promptId, text: currentPrompt.text }
+      : null,
   };
 }

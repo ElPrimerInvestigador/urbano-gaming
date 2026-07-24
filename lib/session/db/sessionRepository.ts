@@ -33,6 +33,11 @@ export interface SessionCompletedEventRecord extends SessionEventRecord {
   payload: Record<string, never>;
 }
 
+export interface PromptRecord {
+  promptId: string;
+  text: string;
+}
+
 /**
  * Repository interface for Session Engine persistence.
  *
@@ -141,4 +146,52 @@ export interface SessionRepository {
     hostToken: string,
     event: SessionCompletedEventRecord
   ): Promise<{ state: SessionState; stateVersion: number }>;
+
+  /**
+   * Look up a single prompt by id. Returns null if it doesn't exist.
+   * Used by GET_SESSION to hydrate currentPrompt.
+   */
+  getPromptById(promptId: string): Promise<PromptRecord | null>;
+
+  /**
+   * Atomically re-verify the supplied host token and that the session is
+   * LOBBY_LOCKED, select a prompt, and transition the session to
+   * PROMPT_ACTIVE, increment state_version, set current_prompt_id, and
+   * persist the SESSION_STARTED event (with the selected promptId in its
+   * payload) — as one atomic operation.
+   *
+   * Unlike lockLobby/completeSession, this method does not take an event
+   * argument: the event payload depends on which prompt gets selected,
+   * and prompt selection happens inside this atomic operation itself
+   * (not beforehand in the domain layer) so that a future, richer
+   * selection strategy — random, round-robin, exclude-already-used —
+   * can be introduced later without opening a race between two
+   * concurrent starts. Today, with exactly one prompt seeded, selection
+   * is trivially deterministic; only the selection step itself would
+   * need to change later, not this method's shape.
+   *
+   * current_prompt_id is an explicit MVP optimization, not a
+   * commitment to the long-term gameplay model — a future "rounds"
+   * concept may eventually own prompt selection instead of the session
+   * row directly.
+   *
+   * Implementations must:
+   * - commit the state transition and its event, or neither;
+   * - re-verify the host token and session state inside the atomic
+   *   operation itself, not merely trust an earlier caller-side check;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw HostTokenMismatchError only on a host-token mismatch;
+   * - throw LobbyNotLockedError only when the session is not
+   *   LOBBY_LOCKED;
+   * - return the authoritative post-transition state, state_version,
+   *   and the selected currentPromptId.
+   */
+  startSession(
+    sessionId: string,
+    hostToken: string
+  ): Promise<{
+    state: SessionState;
+    stateVersion: number;
+    currentPromptId: string;
+  }>;
 }
