@@ -40,6 +40,37 @@ export async function getSession(
     ? await repo.getPromptById(session.currentPromptId)
     : null;
 
+  let submittedCount: number | null = null;
+  let eligibleParticipantCount: number | null = null;
+  let submissions: GetSessionResult["submissions"] = null;
+
+  if (session.state === "PROMPT_ACTIVE" || session.state === "SUBMISSIONS_CLOSED") {
+    const allSubmissions = await repo.getSubmissionsForSession(sessionId);
+    const relevantSubmissions = session.currentPromptId
+      ? allSubmissions.filter((s) => s.promptId === session.currentPromptId)
+      : [];
+    submittedCount = relevantSubmissions.length;
+    eligibleParticipantCount = participants.length;
+  } else if (session.state === "RESULT_REVEAL") {
+    // Deliberately not extended to SESSION_COMPLETE the way currentPrompt
+    // is: whether a completed session ever actually passed through
+    // RESULT_REVEAL (vs. an early admin termination) isn't cheaply
+    // knowable from SessionRecord alone, and showing responses the host
+    // never explicitly revealed would be the wrong default to guess.
+    const allSubmissions = await repo.getSubmissionsForSession(sessionId);
+    const relevantSubmissions = session.currentPromptId
+      ? allSubmissions.filter((s) => s.promptId === session.currentPromptId)
+      : [];
+    const displayNameByParticipantId = new Map(
+      participants.map((p) => [p.participantId, p.displayName])
+    );
+    submissions = relevantSubmissions.map((s) => ({
+      participantId: s.participantId,
+      displayName: displayNameByParticipantId.get(s.participantId) ?? "",
+      text: s.text,
+    }));
+  }
+
   return {
     sessionId: session.sessionId,
     state: session.state,
@@ -51,5 +82,8 @@ export async function getSession(
     currentPrompt: currentPrompt
       ? { promptId: currentPrompt.promptId, text: currentPrompt.text }
       : null,
+    submittedCount,
+    eligibleParticipantCount,
+    submissions,
   };
 }

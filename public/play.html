@@ -1,0 +1,221 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Level 33 — playable loop (MVP test harness)</title>
+<style>
+  body { font-family: monospace; max-width: 900px; margin: 20px auto; padding: 0 12px; }
+  section { border: 1px solid #999; padding: 10px; margin-bottom: 14px; }
+  h2 { margin-top: 0; }
+  input, textarea, button { font-family: monospace; font-size: 14px; margin: 3px 0; }
+  input, textarea { width: 100%; box-sizing: border-box; }
+  button { padding: 4px 10px; margin-right: 6px; }
+  pre { background: #f0f0f0; padding: 8px; overflow-x: auto; white-space: pre-wrap; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+</style>
+</head>
+<body>
+<h1>Level 33 — playable loop</h1>
+<p>Minimal test harness. Not a product UI — exists only to exercise the full gameplay loop: create &rarr; join &rarr; lock &rarr; start &rarr; submit &rarr; close &rarr; reveal &rarr; complete.</p>
+
+<div class="row">
+<div>
+<section>
+  <h2>Host</h2>
+  <button onclick="createSession()">Create Session</button>
+  <button onclick="lockLobby()">Lock Lobby</button>
+  <button onclick="startSession()">Start Session</button>
+  <button onclick="closeSubmissions()">Close Submissions</button>
+  <button onclick="revealResults()">Reveal Results</button>
+  <button onclick="completeSession()">Complete Session</button>
+  <br/>
+  <button onclick="hostRefresh()">Refresh (as host)</button>
+  <div>sessionId: <span id="host-sessionId">(none)</span></div>
+  <div>roomCode: <span id="host-roomCode">(none)</span></div>
+  <div>hostToken: <span id="host-hostToken">(none)</span></div>
+</section>
+</div>
+<div>
+<section>
+  <h2>Participant</h2>
+  <label>Room code</label>
+  <input id="p-roomCode" placeholder="e.g. AB23CD" />
+  <label>Display name</label>
+  <input id="p-displayName" placeholder="e.g. Alex" />
+  <button onclick="joinSession()">Join</button>
+  <br/>
+  <label>Response text</label>
+  <textarea id="p-text" rows="3"></textarea>
+  <button onclick="submitResponse()">Submit / Revise Response</button>
+  <br/>
+  <button onclick="participantRefresh()">Refresh (as participant)</button>
+  <div>participantId: <span id="p-participantId">(none)</span></div>
+  <div>participantToken: <span id="p-participantToken">(none)</span></div>
+</section>
+</div>
+</div>
+
+<section>
+  <h2>Last response</h2>
+  <pre id="output">(nothing yet)</pre>
+</section>
+
+<script>
+// Developer-harness-only credential persistence, via sessionStorage:
+// survives a refresh of this tab, but never shared with any other tab
+// (unlike localStorage), so multiple tabs can still stand in for
+// multiple independent humans. This is a harness continuity fix only —
+// it does not address real participant-identity recovery (a lost
+// device, a closed tab, a cleared browser), which remains a separate,
+// unaddressed product question outside this MVP's boundary.
+//
+// Storing bearer tokens in Web Storage is a real security anti-pattern
+// for a production interface (any XSS could read them) — acceptable
+// here only because this file already displays those same tokens as
+// plain text on screen, for the same reason: an isolated, unbundled,
+// dev-only harness with no other users. Neither the on-screen display
+// nor this persistence should ever be carried into a real interface.
+
+const HOST_STORAGE_KEY = "level33_dev_harness_host";
+const PARTICIPANT_STORAGE_KEY = "level33_dev_harness_participant";
+
+let hostState = { sessionId: null, roomCode: null, hostToken: null };
+let participantState = { sessionId: null, participantId: null, participantToken: null };
+
+function saveHostState() {
+  sessionStorage.setItem(HOST_STORAGE_KEY, JSON.stringify(hostState));
+}
+
+function saveParticipantState() {
+  sessionStorage.setItem(PARTICIPANT_STORAGE_KEY, JSON.stringify(participantState));
+}
+
+function restoreState() {
+  // Each block is independently try/caught: malformed or manually-edited
+  // storage content degrades gracefully (falls back to the initial null
+  // state and drops the corrupted entry) rather than throwing an
+  // uncaught exception during page load — and a corrupted host entry
+  // doesn't prevent a valid participant entry from restoring, or vice
+  // versa. This is developer-harness robustness only; it doesn't change
+  // intended behavior when storage is well-formed.
+  const storedHost = sessionStorage.getItem(HOST_STORAGE_KEY);
+  if (storedHost) {
+    try {
+      hostState = JSON.parse(storedHost);
+      if (hostState.sessionId) document.getElementById("host-sessionId").textContent = hostState.sessionId;
+      if (hostState.roomCode) document.getElementById("host-roomCode").textContent = hostState.roomCode;
+      if (hostState.hostToken) document.getElementById("host-hostToken").textContent = hostState.hostToken;
+    } catch (e) {
+      console.warn("Discarding malformed host state from sessionStorage:", e);
+      sessionStorage.removeItem(HOST_STORAGE_KEY);
+    }
+  }
+
+  const storedParticipant = sessionStorage.getItem(PARTICIPANT_STORAGE_KEY);
+  if (storedParticipant) {
+    try {
+      participantState = JSON.parse(storedParticipant);
+      if (participantState.participantId) document.getElementById("p-participantId").textContent = participantState.participantId;
+      if (participantState.participantToken) document.getElementById("p-participantToken").textContent = participantState.participantToken;
+    } catch (e) {
+      console.warn("Discarding malformed participant state from sessionStorage:", e);
+      sessionStorage.removeItem(PARTICIPANT_STORAGE_KEY);
+    }
+  }
+}
+
+function show(label, data) {
+  document.getElementById("output").textContent = label + ":\n" + JSON.stringify(data, null, 2);
+}
+
+async function postJson(path, body, bearerToken) {
+  const headers = { "content-type": "application/json" };
+  if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
+  const res = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+async function getJson(path, bearerToken) {
+  const headers = {};
+  if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
+  const res = await fetch(path, { headers });
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+async function createSession() {
+  const { status, json } = await postJson("/api/sessions", {});
+  show("CREATE_SESSION (" + status + ")", json);
+  if (status === 201) {
+    hostState = { sessionId: json.sessionId, roomCode: json.roomCode, hostToken: json.hostToken };
+    document.getElementById("host-sessionId").textContent = json.sessionId;
+    document.getElementById("host-roomCode").textContent = json.roomCode;
+    document.getElementById("host-hostToken").textContent = json.hostToken;
+    saveHostState();
+  }
+}
+
+async function lockLobby() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/lock`, { hostToken: hostState.hostToken });
+  show("LOCK_LOBBY (" + r.status + ")", r.json);
+}
+
+async function startSession() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, { hostToken: hostState.hostToken });
+  show("START_SESSION (" + r.status + ")", r.json);
+}
+
+async function closeSubmissions() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/close-submissions`, { hostToken: hostState.hostToken });
+  show("CLOSE_SUBMISSIONS (" + r.status + ")", r.json);
+}
+
+async function revealResults() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/reveal`, { hostToken: hostState.hostToken });
+  show("REVEAL_RESULTS (" + r.status + ")", r.json);
+}
+
+async function completeSession() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/complete`, { hostToken: hostState.hostToken });
+  show("COMPLETE_SESSION (" + r.status + ")", r.json);
+}
+
+async function hostRefresh() {
+  const r = await getJson(`/api/sessions/${hostState.sessionId}`, hostState.hostToken);
+  show("GET_SESSION as host (" + r.status + ")", r.json);
+}
+
+async function joinSession() {
+  const roomCode = document.getElementById("p-roomCode").value.trim();
+  const displayName = document.getElementById("p-displayName").value.trim();
+  const r = await postJson(`/api/sessions/${roomCode}/join`, { displayName });
+  show("JOIN_SESSION (" + r.status + ")", r.json);
+  if (r.status === 201) {
+    participantState = {
+      sessionId: r.json.sessionId,
+      participantId: r.json.participantId,
+      participantToken: r.json.participantToken,
+    };
+    document.getElementById("p-participantId").textContent = r.json.participantId;
+    document.getElementById("p-participantToken").textContent = r.json.participantToken;
+    saveParticipantState();
+  }
+}
+
+async function submitResponse() {
+  const text = document.getElementById("p-text").value;
+  const r = await postJson(`/api/sessions/${participantState.sessionId}/submit`, { text }, participantState.participantToken);
+  show("SUBMIT_RESPONSE (" + r.status + ")", r.json);
+}
+
+async function participantRefresh() {
+  const r = await getJson(`/api/sessions/${participantState.sessionId}`, participantState.participantToken);
+  show("GET_SESSION as participant (" + r.status + ")", r.json);
+}
+
+restoreState();
+</script>
+</body>
+</html>

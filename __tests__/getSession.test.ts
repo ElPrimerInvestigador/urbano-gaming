@@ -103,6 +103,17 @@ describe("GET_SESSION", () => {
     expect(result.currentPrompt).toBeNull();
   });
 
+  it("returns submittedCount, eligibleParticipantCount, and submissions as null before gameplay has started", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+
+    const result = await getSession(repo, session.sessionId, session.hostToken);
+
+    expect(result.submittedCount).toBeNull();
+    expect(result.eligibleParticipantCount).toBeNull();
+    expect(result.submissions).toBeNull();
+  });
+
   it("reflects state changes after LOCK_LOBBY", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);

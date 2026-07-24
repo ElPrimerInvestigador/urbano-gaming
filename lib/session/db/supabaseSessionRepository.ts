@@ -10,6 +10,9 @@ import {
   LobbyNotLockedError,
   HostTokenMismatchError,
   SessionAlreadyCompleteError,
+  SessionAccessDeniedError,
+  PromptNotActiveError,
+  SubmissionsNotClosedError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -18,6 +21,9 @@ import type {
   LobbyLockedEventRecord,
   SessionCompletedEventRecord,
   PromptRecord,
+  SubmissionRecord,
+  SubmissionsClosedEventRecord,
+  ResultsRevealedEventRecord,
   SessionRepository,
 } from "./sessionRepository";
 
@@ -34,9 +40,12 @@ import type {
  * follows the same pattern again via complete_session_atomically — see
  * supabase/migrations/0006_complete_session_atomically.sql. startSession
  * follows the same pattern again via start_session_atomically — see
- * supabase/migrations/0008_start_session_atomically.sql. This mirrors
- * the existing pairing rather than introducing a new persistence
- * approach.
+ * supabase/migrations/0008_start_session_atomically.sql. submitResponse,
+ * closeSubmissions, and revealResults follow the same pattern via
+ * submit_response_atomically, close_submissions_atomically, and
+ * reveal_results_atomically — see supabase/migrations/0010-0012. This
+ * mirrors the existing pairing rather than introducing a new
+ * persistence approach.
  */
 
 /**
@@ -372,6 +381,179 @@ export class SupabaseSessionRepository implements SessionRepository {
       state: row.state as SessionState,
       stateVersion: row.state_version,
       currentPromptId: row.current_prompt_id,
+    };
+  }
+
+  async submitResponse(
+    sessionId: string,
+    participantId: string,
+    participantToken: string,
+    text: string
+  ): Promise<{ submissionId: string; promptId: string; updatedAt: string }> {
+    const { data, error } = await this.client.rpc("submit_response_atomically", {
+      p_session_id: sessionId,
+      p_participant_id: participantId,
+      p_participant_token: participantToken,
+      p_text: text,
+    });
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_ACCESS_DENIED")
+      ) {
+        throw new SessionAccessDeniedError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("PROMPT_NOT_ACTIVE")
+      ) {
+        throw new PromptNotActiveError(extractStateFromGuardMessage(error.message));
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      submissionId: row.submission_id,
+      promptId: row.prompt_id,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async getSubmissionsForSession(
+    sessionId: string
+  ): Promise<SubmissionRecord[]> {
+    const { data, error } = await this.client
+      .from("submissions")
+      .select("*")
+      .eq("session_id", sessionId);
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      submissionId: row.submission_id,
+      sessionId: row.session_id,
+      participantId: row.participant_id,
+      promptId: row.prompt_id,
+      text: row.text,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async closeSubmissions(
+    sessionId: string,
+    hostToken: string,
+    event: SubmissionsClosedEventRecord
+  ): Promise<{ state: SessionState; stateVersion: number }> {
+    const { data, error } = await this.client.rpc(
+      "close_submissions_atomically",
+      {
+        p_session_id: sessionId,
+        p_host_token: hostToken,
+        p_event_type: event.eventType,
+        p_event_payload: event.payload,
+      }
+    );
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("HOST_TOKEN_MISMATCH")
+      ) {
+        throw new HostTokenMismatchError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("PROMPT_NOT_ACTIVE")
+      ) {
+        throw new PromptNotActiveError(extractStateFromGuardMessage(error.message));
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      state: row.state as SessionState,
+      stateVersion: row.state_version,
+    };
+  }
+
+  async revealResults(
+    sessionId: string,
+    hostToken: string,
+    event: ResultsRevealedEventRecord
+  ): Promise<{ state: SessionState; stateVersion: number }> {
+    const { data, error } = await this.client.rpc(
+      "reveal_results_atomically",
+      {
+        p_session_id: sessionId,
+        p_host_token: hostToken,
+        p_event_type: event.eventType,
+        p_event_payload: event.payload,
+      }
+    );
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("HOST_TOKEN_MISMATCH")
+      ) {
+        throw new HostTokenMismatchError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SUBMISSIONS_NOT_CLOSED")
+      ) {
+        throw new SubmissionsNotClosedError(extractStateFromGuardMessage(error.message));
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      state: row.state as SessionState,
+      stateVersion: row.state_version,
     };
   }
 }

@@ -8,6 +8,9 @@ import {
   LobbyNotLockedError,
   HostTokenMismatchError,
   SessionAlreadyCompleteError,
+  SessionAccessDeniedError,
+  PromptNotActiveError,
+  SubmissionsNotClosedError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -16,6 +19,9 @@ import type {
   LobbyLockedEventRecord,
   SessionCompletedEventRecord,
   PromptRecord,
+  SubmissionRecord,
+  SubmissionsClosedEventRecord,
+  ResultsRevealedEventRecord,
   SessionRepository,
 } from "./sessionRepository";
 
@@ -45,6 +51,8 @@ export class InMemorySessionRepository implements SessionRepository {
   private participants = new Map<string, ParticipantRecord>();
 
   private events: Array<SessionEventRecord> = [];
+
+  private submissions = new Map<string, SubmissionRecord>();
 
   /**
    * Seeded with exactly one prompt at construction, mirroring the
@@ -323,6 +331,150 @@ export class InMemorySessionRepository implements SessionRepository {
       stateVersion: updated.stateVersion,
       currentPromptId: selectedPrompt.promptId,
     };
+  }
+
+  async submitResponse(
+    sessionId: string,
+    participantId: string,
+    participantToken: string,
+    text: string
+  ): Promise<{ submissionId: string; promptId: string; updatedAt: string }> {
+    // Authoritative participant-token and session-state re-check,
+    // independent of any earlier application-layer lookup. Mirrors
+    // submit_response_atomically's row-locked re-check in the real
+    // database function. Also re-reads current_prompt_id here (not
+    // trusting an earlier domain-layer read) since that's what the
+    // submission and its event are scoped to.
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    const participant = this.participants.get(participantId);
+    if (!participant || participant.participantToken !== participantToken) {
+      throw new SessionAccessDeniedError();
+    }
+
+    if (session.state !== "PROMPT_ACTIVE") {
+      throw new PromptNotActiveError(session.state);
+    }
+
+    const promptId = session.currentPromptId as string;
+    const now = new Date().toISOString();
+
+    // Upsert: one submission per participant per prompt. "Last write
+    // wins" is an explicit MVP implementation decision, not a permanent
+    // gameplay rule — see SubmitResponseResult's doc comment.
+    const existing = [...this.submissions.values()].find(
+      (submission) =>
+        submission.sessionId === sessionId &&
+        submission.participantId === participantId &&
+        submission.promptId === promptId
+    );
+
+    const submissionId = existing?.submissionId ?? randomUUID();
+    const record: SubmissionRecord = {
+      submissionId,
+      sessionId,
+      participantId,
+      promptId,
+      text,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    this.submissions.set(submissionId, record);
+
+    this.events.push({
+      sessionId,
+      eventType: "RESPONSE_SUBMITTED",
+      payload: { participantId, promptId },
+    });
+
+    return { submissionId, promptId, updatedAt: now };
+  }
+
+  async getSubmissionsForSession(
+    sessionId: string
+  ): Promise<SubmissionRecord[]> {
+    return [...this.submissions.values()].filter(
+      (submission) => submission.sessionId === sessionId
+    );
+  }
+
+  async closeSubmissions(
+    sessionId: string,
+    hostToken: string,
+    event: SubmissionsClosedEventRecord
+  ): Promise<{ state: SessionRecord["state"]; stateVersion: number }> {
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    if (session.hostToken !== hostToken) {
+      throw new HostTokenMismatchError();
+    }
+
+    if (session.state !== "PROMPT_ACTIVE") {
+      throw new PromptNotActiveError(session.state);
+    }
+
+    const updated: SessionRecord = {
+      ...session,
+      state: "SUBMISSIONS_CLOSED",
+      stateVersion: session.stateVersion + 1,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.sessions.set(sessionId, updated);
+
+    this.events.push({
+      sessionId: event.sessionId,
+      eventType: event.eventType,
+      payload: { ...event.payload },
+    });
+
+    return { state: updated.state, stateVersion: updated.stateVersion };
+  }
+
+  async revealResults(
+    sessionId: string,
+    hostToken: string,
+    event: ResultsRevealedEventRecord
+  ): Promise<{ state: SessionRecord["state"]; stateVersion: number }> {
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    if (session.hostToken !== hostToken) {
+      throw new HostTokenMismatchError();
+    }
+
+    if (session.state !== "SUBMISSIONS_CLOSED") {
+      throw new SubmissionsNotClosedError(session.state);
+    }
+
+    const updated: SessionRecord = {
+      ...session,
+      state: "RESULT_REVEAL",
+      stateVersion: session.stateVersion + 1,
+      updatedAt: new Date().toISOString(),
+    };
+
+    this.sessions.set(sessionId, updated);
+
+    this.events.push({
+      sessionId: event.sessionId,
+      eventType: event.eventType,
+      payload: { ...event.payload },
+    });
+
+    return { state: updated.state, stateVersion: updated.stateVersion };
   }
 
   /** Test-only helper, not part of the repository interface. */

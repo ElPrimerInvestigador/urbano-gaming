@@ -70,6 +70,41 @@ export interface StartSessionResult {
   currentPromptId: string;
 }
 
+/**
+ * Result of a successful SUBMIT_RESPONSE. "Latest response replaces the
+ * previous one" (last-write-wins) is an explicit MVP implementation
+ * decision, not a permanent gameplay rule — future product validation
+ * may determine immutable submissions or a different revision policy
+ * (e.g. a submit-once lock, an edit history, or a host-controlled
+ * revision window). Revisit this deliberately rather than assuming the
+ * current behavior is load-bearing.
+ */
+export interface SubmitResponseResult {
+  submissionId: string;
+  sessionId: string;
+  participantId: string;
+  text: string;
+  updatedAt: string;
+}
+
+/**
+ * Result of a successful CLOSE_SUBMISSIONS.
+ */
+export interface CloseSubmissionsResult {
+  sessionId: string;
+  state: SessionState;
+  stateVersion: number;
+}
+
+/**
+ * Result of a successful REVEAL_RESULTS.
+ */
+export interface RevealResultsResult {
+  sessionId: string;
+  state: SessionState;
+  stateVersion: number;
+}
+
 /** A participant as exposed by GET_SESSION — no token, no join timestamp. */
 export interface ParticipantSummary {
   participantId: string;
@@ -83,8 +118,24 @@ export interface PromptSummary {
 }
 
 /**
+ * A submitted response as exposed by GET_SESSION during RESULT_REVEAL.
+ * No anonymity for the MVP — attributed directly to the participant.
+ */
+export interface SubmissionSummary {
+  participantId: string;
+  displayName: string;
+  text: string;
+}
+
+/**
  * Result of a successful GET_SESSION. Never includes hostToken or any
  * participantToken.
+ *
+ * submittedCount / eligibleParticipantCount are populated during
+ * PROMPT_ACTIVE and SUBMISSIONS_CLOSED, null otherwise. submissions is
+ * populated only from RESULT_REVEAL onward (including after
+ * SESSION_COMPLETE, mirroring currentPrompt's precedent), null
+ * otherwise — response text is never exposed before RESULT_REVEAL.
  */
 export interface GetSessionResult {
   sessionId: string;
@@ -92,6 +143,9 @@ export interface GetSessionResult {
   stateVersion: number;
   participants: ParticipantSummary[];
   currentPrompt: PromptSummary | null;
+  submittedCount: number | null;
+  eligibleParticipantCount: number | null;
+  submissions: SubmissionSummary[] | null;
 }
 
 /** Raised when a generated room code collides with an active session. */
@@ -190,6 +244,60 @@ export class SessionAlreadyCompleteError extends Error {
   constructor() {
     super("Session is already complete.");
     this.name = "SessionAlreadyCompleteError";
+  }
+}
+
+/**
+ * Raised when a command requires the session to be PROMPT_ACTIVE and it
+ * is not. Shared across SUBMIT_RESPONSE and CLOSE_SUBMISSIONS, which
+ * have the identical precondition.
+ */
+export class PromptNotActiveError extends Error {
+  constructor(currentState?: SessionState) {
+    super(
+      currentState
+        ? `Session is in ${currentState}, not PROMPT_ACTIVE.`
+        : "Session is no longer PROMPT_ACTIVE."
+    );
+    this.name = "PromptNotActiveError";
+  }
+}
+
+/**
+ * Raised when REVEAL_RESULTS targets a session that is not
+ * SUBMISSIONS_CLOSED.
+ */
+export class SubmissionsNotClosedError extends Error {
+  constructor(currentState?: SessionState) {
+    super(
+      currentState
+        ? `Session is in ${currentState}, not SUBMISSIONS_CLOSED.`
+        : "Session is no longer SUBMISSIONS_CLOSED."
+    );
+    this.name = "SubmissionsNotClosedError";
+  }
+}
+
+/**
+ * Raised when a submitted response is empty after trimming whitespace.
+ * Per MVP response floor: at least one visible character is required.
+ */
+export class EmptyResponseError extends Error {
+  constructor() {
+    super("Response cannot be empty.");
+    this.name = "EmptyResponseError";
+  }
+}
+
+/**
+ * Raised when a submitted response exceeds the MVP length floor (1000
+ * characters after trimming) — a deliberately generous, adjustable
+ * placeholder, not a considered product limit.
+ */
+export class ResponseTooLongError extends Error {
+  constructor() {
+    super("Response cannot exceed 1000 characters.");
+    this.name = "ResponseTooLongError";
   }
 }
 

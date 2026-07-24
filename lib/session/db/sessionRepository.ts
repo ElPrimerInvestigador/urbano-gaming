@@ -38,6 +38,34 @@ export interface PromptRecord {
   text: string;
 }
 
+export interface SubmissionRecord {
+  submissionId: string;
+  sessionId: string;
+  participantId: string;
+  promptId: string;
+  text: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ResponseSubmittedEventRecord extends SessionEventRecord {
+  eventType: "RESPONSE_SUBMITTED";
+  payload: {
+    participantId: string;
+    promptId: string;
+  };
+}
+
+export interface SubmissionsClosedEventRecord extends SessionEventRecord {
+  eventType: "SUBMISSIONS_CLOSED";
+  payload: Record<string, never>;
+}
+
+export interface ResultsRevealedEventRecord extends SessionEventRecord {
+  eventType: "RESULTS_REVEALED";
+  payload: Record<string, never>;
+}
+
 /**
  * Repository interface for Session Engine persistence.
  *
@@ -194,4 +222,96 @@ export interface SessionRepository {
     stateVersion: number;
     currentPromptId: string;
   }>;
+
+  /**
+   * Atomically re-verify that the supplied participant token belongs to
+   * the given participant of this session, that the session is
+   * PROMPT_ACTIVE, then upsert the participant's response to the
+   * session's current prompt (one submission per participant per
+   * prompt — a second call replaces the first, "last write wins") and
+   * persist a RESPONSE_SUBMITTED event.
+   *
+   * "Last write wins" is an explicit MVP implementation decision, not a
+   * permanent gameplay rule — see SubmitResponseResult.
+   *
+   * Like startSession, this method does not take an event argument: the
+   * event payload depends on the session's current_prompt_id, which
+   * must be re-read authoritatively inside this same atomic operation
+   * (not trusted from an earlier domain-layer read), so the payload is
+   * built here, not by the caller.
+   *
+   * Implementations must:
+   * - commit the submission and its event, or neither;
+   * - re-verify the participant token and session state inside the
+   *   atomic operation itself, not merely trust an earlier caller-side
+   *   check;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw SessionAccessDeniedError only when the token does not match
+   *   the given participant of this session;
+   * - throw PromptNotActiveError only when the session is not
+   *   PROMPT_ACTIVE;
+   * - throw EmptyResponseError / ResponseTooLongError only for the
+   *   corresponding validation failure;
+   * - return the resulting submissionId, the session's current
+   *   promptId, and updatedAt.
+   */
+  submitResponse(
+    sessionId: string,
+    participantId: string,
+    participantToken: string,
+    text: string
+  ): Promise<{ submissionId: string; promptId: string; updatedAt: string }>;
+
+  /**
+   * List all submissions for a session. Not filtered by prompt — for
+   * this MVP there is only ever one prompt per session, so this is
+   * equivalent to "submissions for the current prompt," but the shape
+   * doesn't assume that going forward.
+   */
+  getSubmissionsForSession(sessionId: string): Promise<SubmissionRecord[]>;
+
+  /**
+   * Atomically re-verify the supplied host token and that the session
+   * is PROMPT_ACTIVE, then transition it to SUBMISSIONS_CLOSED,
+   * increment state_version, and persist the SUBMISSIONS_CLOSED event —
+   * as one atomic operation, mirroring lockLobby's authoritative
+   * re-check.
+   *
+   * Implementations must:
+   * - commit the state transition and its event, or neither;
+   * - re-verify the host token and session state inside the atomic
+   *   operation itself;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw HostTokenMismatchError only on a host-token mismatch;
+   * - throw PromptNotActiveError only when the session is not
+   *   PROMPT_ACTIVE;
+   * - return the authoritative post-transition state and state_version.
+   */
+  closeSubmissions(
+    sessionId: string,
+    hostToken: string,
+    event: SubmissionsClosedEventRecord
+  ): Promise<{ state: SessionState; stateVersion: number }>;
+
+  /**
+   * Atomically re-verify the supplied host token and that the session
+   * is SUBMISSIONS_CLOSED, then transition it to RESULT_REVEAL,
+   * increment state_version, and persist the RESULTS_REVEALED event —
+   * as one atomic operation.
+   *
+   * Implementations must:
+   * - commit the state transition and its event, or neither;
+   * - re-verify the host token and session state inside the atomic
+   *   operation itself;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw HostTokenMismatchError only on a host-token mismatch;
+   * - throw SubmissionsNotClosedError only when the session is not
+   *   SUBMISSIONS_CLOSED;
+   * - return the authoritative post-transition state and state_version.
+   */
+  revealResults(
+    sessionId: string,
+    hostToken: string,
+    event: ResultsRevealedEventRecord
+  ): Promise<{ state: SessionState; stateVersion: number }>;
 }
