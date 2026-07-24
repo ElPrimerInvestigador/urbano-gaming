@@ -1,0 +1,371 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Level 33 — Host</title>
+<style>
+  :root {
+    --ink: #1a1a2e;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #4f46e5;
+    --accent-ink: #ffffff;
+    --done: #16a34a;
+    --upcoming: #d1d5db;
+    --danger: #b91c1c;
+    --bg-card: #ffffff;
+    --bg-page: #f7f7fb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg-page);
+    color: var(--ink);
+    max-width: 720px;
+    margin: 24px auto;
+    padding: 0 16px 60px;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 20px; font-size: 14px; }
+
+  .stepper { display: flex; justify-content: space-between; margin: 24px 0; }
+  .step { flex: 1; text-align: center; position: relative; }
+  .step:not(:last-child)::after {
+    content: ""; position: absolute; top: 7px; left: 50%; width: 100%; height: 2px;
+    background: var(--upcoming); z-index: 0;
+  }
+  .step-done:not(:last-child)::after { background: var(--done); }
+  .step-dot {
+    display: inline-block; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--upcoming); position: relative; z-index: 1; margin-bottom: 6px;
+  }
+  .step-done .step-dot { background: var(--done); }
+  .step-active .step-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(79,70,229,0.2); }
+  .step-label { display: block; font-size: 11px; color: var(--muted); }
+  .step-active .step-label { color: var(--accent); font-weight: 600; }
+  .step-done .step-label { color: var(--done); }
+
+  .card {
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 10px; }
+
+  .room-code {
+    font-family: "SF Mono", Menlo, monospace; font-size: 40px; font-weight: 700;
+    letter-spacing: 0.15em; text-align: center; padding: 14px; border: 2px dashed var(--accent);
+    border-radius: 10px; color: var(--accent); background: #f5f4ff;
+  }
+  .room-code-hint { text-align: center; color: var(--muted); font-size: 13px; margin-top: 8px; }
+
+  .kv { display: flex; justify-content: space-between; font-size: 13px; padding: 4px 0; }
+  .kv .k { color: var(--muted); }
+  .kv .v { font-family: monospace; word-break: break-all; text-align: right; margin-left: 12px; }
+
+  .participant-list { list-style: none; padding: 0; margin: 0; }
+  .participant-list li { padding: 4px 0; font-size: 14px; }
+
+  .prompt-text {
+    font-size: 18px; line-height: 1.5; padding: 14px; background: #fafaff;
+    border-left: 4px solid var(--accent); border-radius: 4px;
+  }
+
+  .progress-bar { height: 8px; background: var(--upcoming); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+  .progress-fill { height: 100%; background: var(--done); }
+  .progress-label { font-size: 13px; color: var(--muted); }
+
+  .result-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .result-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .result-text { font-size: 15px; }
+
+  button {
+    font-family: inherit; font-size: 14px; padding: 10px 16px; border-radius: 8px;
+    border: none; cursor: pointer; margin: 4px 6px 4px 0;
+  }
+  button:disabled { cursor: not-allowed; opacity: 0.4; }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); }
+  .btn-secondary { background: #eef2ff; color: var(--accent); }
+  .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+
+  details { margin-top: 20px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 12px; }
+
+  .waiting { text-align: center; color: var(--muted); padding: 20px 0; }
+</style>
+</head>
+<body>
+
+<h1>Level 33 — Host</h1>
+<p class="subtitle">Developer validation interface. Drives the session forward; does not participate.</p>
+
+<div id="stepper" class="stepper"></div>
+
+<div id="pre-create" class="card">
+  <h2>Start a session</h2>
+  <button class="btn-primary" onclick="createSession()">Create Session</button>
+</div>
+
+<div id="session-panels" style="display:none;">
+  <div class="card">
+    <h2>Room Code</h2>
+    <div class="room-code" id="roomCodeDisplay">——————</div>
+    <div class="room-code-hint">Share this with participants at <strong>/participant.html</strong></div>
+  </div>
+
+  <div class="card">
+    <h2>Session (dev info)</h2>
+    <div class="kv"><span class="k">sessionId</span><span class="v" id="sessionIdDisplay">—</span></div>
+    <div class="kv"><span class="k">hostToken</span><span class="v" id="hostTokenDisplay">—</span></div>
+  </div>
+
+  <div class="card">
+    <h2>Participants (<span id="participantCount">0</span>)</h2>
+    <ul class="participant-list" id="participantList"></ul>
+  </div>
+
+  <div class="card" id="promptCard" style="display:none;">
+    <h2>Current Prompt</h2>
+    <div class="prompt-text" id="promptText"></div>
+  </div>
+
+  <div class="card" id="progressCard" style="display:none;">
+    <h2>Submission Progress</h2>
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    <div class="progress-label" id="progressLabel"></div>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none;">
+    <h2>Results</h2>
+    <div id="resultsList"></div>
+  </div>
+
+  <div class="card">
+    <h2>Actions</h2>
+    <button class="btn-primary" id="btn-lock" onclick="lockLobby()">Lock Lobby</button>
+    <button class="btn-primary" id="btn-start" onclick="startSession()">Start Session</button>
+    <button class="btn-primary" id="btn-close" onclick="closeSubmissions()">Close Submissions</button>
+    <button class="btn-primary" id="btn-reveal" onclick="revealResults()">Reveal Results</button>
+    <br/>
+    <button class="btn-ghost" onclick="hostRefresh()">Check for updates</button>
+    <button class="btn-danger" id="btn-complete" onclick="completeSession()">End Session</button>
+  </div>
+</div>
+
+<details>
+  <summary>Debug: last raw response</summary>
+  <pre id="output">(nothing yet)</pre>
+</details>
+
+<script>
+// Developer-harness-only credential persistence, via sessionStorage:
+// survives a refresh of this tab, but never shared with any other tab
+// (unlike localStorage), so a host tab and participant tabs stay
+// independent. This is a harness continuity fix only — it does not
+// address real participant-identity recovery, which remains a
+// separate, unaddressed product question outside this MVP's boundary.
+//
+// Storing the host token in Web Storage, and displaying it on screen,
+// is a real security anti-pattern for a production interface. It is
+// acceptable only here: an isolated, unbundled, dev-only harness with
+// no other users. Neither should ever be carried into a real interface.
+
+const HOST_STORAGE_KEY = "level33_dev_harness_host";
+const LIFECYCLE_STEPS = ["LOBBY_OPEN", "LOBBY_LOCKED", "PROMPT_ACTIVE", "SUBMISSIONS_CLOSED", "RESULT_REVEAL", "SESSION_COMPLETE"];
+const STATE_LABELS = {
+  LOBBY_OPEN: "Lobby Open",
+  LOBBY_LOCKED: "Lobby Locked",
+  PROMPT_ACTIVE: "Prompt Active",
+  SUBMISSIONS_CLOSED: "Submissions Closed",
+  RESULT_REVEAL: "Results",
+  SESSION_COMPLETE: "Complete",
+};
+
+let hostState = { sessionId: null, roomCode: null, hostToken: null };
+let currentState = null;
+
+function saveHostState() {
+  sessionStorage.setItem(HOST_STORAGE_KEY, JSON.stringify(hostState));
+}
+
+function restoreState() {
+  const stored = sessionStorage.getItem(HOST_STORAGE_KEY);
+  if (!stored) return;
+  try {
+    hostState = JSON.parse(stored);
+    if (hostState.sessionId) showSessionPanels();
+  } catch (e) {
+    console.warn("Discarding malformed host state from sessionStorage:", e);
+    sessionStorage.removeItem(HOST_STORAGE_KEY);
+  }
+}
+
+function show(label, data) {
+  document.getElementById("output").textContent = label + ":\n" + JSON.stringify(data, null, 2);
+}
+
+async function postJson(path, body, bearerToken) {
+  const headers = { "content-type": "application/json" };
+  if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
+  const res = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+async function getJson(path, bearerToken) {
+  const headers = {};
+  if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
+  const res = await fetch(path, { headers });
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+function showSessionPanels() {
+  document.getElementById("pre-create").style.display = "none";
+  document.getElementById("session-panels").style.display = "block";
+  document.getElementById("roomCodeDisplay").textContent = hostState.roomCode || "——————";
+  document.getElementById("sessionIdDisplay").textContent = hostState.sessionId || "—";
+  document.getElementById("hostTokenDisplay").textContent = hostState.hostToken || "—";
+}
+
+function renderStepper() {
+  const idx = LIFECYCLE_STEPS.indexOf(currentState);
+  document.getElementById("stepper").innerHTML = LIFECYCLE_STEPS.map((step, i) => {
+    let cls = "step";
+    if (idx !== -1) {
+      if (i < idx) cls += " step-done";
+      else if (i === idx) cls += " step-active";
+      else cls += " step-upcoming";
+    } else {
+      cls += " step-upcoming";
+    }
+    return `<div class="${cls}"><span class="step-dot"></span><span class="step-label">${STATE_LABELS[step]}</span></div>`;
+  }).join("");
+}
+
+function updateActionAvailability() {
+  document.getElementById("btn-lock").disabled = currentState !== "LOBBY_OPEN";
+  document.getElementById("btn-start").disabled = currentState !== "LOBBY_LOCKED";
+  document.getElementById("btn-close").disabled = currentState !== "PROMPT_ACTIVE";
+  document.getElementById("btn-reveal").disabled = currentState !== "SUBMISSIONS_CLOSED";
+  document.getElementById("btn-complete").disabled = currentState === "SESSION_COMPLETE" || !currentState;
+}
+
+function renderParticipants(participants) {
+  document.getElementById("participantCount").textContent = participants.length;
+  document.getElementById("participantList").innerHTML = participants
+    .map((p) => `<li>${p.displayName}</li>`)
+    .join("");
+}
+
+function renderPrompt(currentPrompt) {
+  const card = document.getElementById("promptCard");
+  if (currentPrompt) {
+    card.style.display = "block";
+    document.getElementById("promptText").textContent = currentPrompt.text;
+  } else {
+    card.style.display = "none";
+  }
+}
+
+function renderProgress(submittedCount, eligibleParticipantCount) {
+  const card = document.getElementById("progressCard");
+  if (submittedCount === null || submittedCount === undefined) {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+  const pct = eligibleParticipantCount > 0 ? Math.round((submittedCount / eligibleParticipantCount) * 100) : 0;
+  document.getElementById("progressFill").style.width = pct + "%";
+  document.getElementById("progressLabel").textContent = `${submittedCount} of ${eligibleParticipantCount} submitted`;
+}
+
+// submissions intentionally goes null again once a session reaches
+// SESSION_COMPLETE (the backend can't cheaply tell whether reveal
+// actually happened before an early termination, so it doesn't guess).
+// Caching the last-seen value client-side avoids results visibly
+// vanishing the instant "End Session" is clicked, within this same
+// page load — it does not persist across a refresh.
+let lastKnownSubmissions = null;
+
+function renderResults(submissions) {
+  const card = document.getElementById("resultsCard");
+  const effective = submissions ?? lastKnownSubmissions;
+  if (submissions) lastKnownSubmissions = submissions;
+
+  if (!effective) {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+  document.getElementById("resultsList").innerHTML = effective
+    .map((s) => `<div class="result-card"><div class="result-name">${s.displayName}</div><div class="result-text">${s.text}</div></div>`)
+    .join("") || `<div class="waiting">No responses were submitted.</div>`;
+}
+
+function applySessionSnapshot(data) {
+  currentState = data.state;
+  renderStepper();
+  updateActionAvailability();
+  if (data.participants) renderParticipants(data.participants);
+  if ("currentPrompt" in data) renderPrompt(data.currentPrompt);
+  if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
+  if ("submissions" in data) renderResults(data.submissions);
+}
+
+async function createSession() {
+  const { status, json } = await postJson("/api/sessions", {});
+  show("CREATE_SESSION (" + status + ")", json);
+  if (status === 201) {
+    hostState = { sessionId: json.sessionId, roomCode: json.roomCode, hostToken: json.hostToken };
+    saveHostState();
+    showSessionPanels();
+    applySessionSnapshot(json);
+  }
+}
+
+async function lockLobby() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/lock`, { hostToken: hostState.hostToken });
+  show("LOCK_LOBBY (" + r.status + ")", r.json);
+  if (r.status === 200) applySessionSnapshot(r.json);
+}
+
+async function startSession() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, { hostToken: hostState.hostToken });
+  show("START_SESSION (" + r.status + ")", r.json);
+  if (r.status === 200) { applySessionSnapshot(r.json); await hostRefresh(); }
+}
+
+async function closeSubmissions() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/close-submissions`, { hostToken: hostState.hostToken });
+  show("CLOSE_SUBMISSIONS (" + r.status + ")", r.json);
+  // closeSubmissions's own response has no submittedCount — refresh so
+  // the progress bar reflects the true final tally at closing time,
+  // not a stale pre-close snapshot.
+  if (r.status === 200) { applySessionSnapshot(r.json); await hostRefresh(); }
+}
+
+async function revealResults() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/reveal`, { hostToken: hostState.hostToken });
+  show("REVEAL_RESULTS (" + r.status + ")", r.json);
+  if (r.status === 200) { applySessionSnapshot(r.json); await hostRefresh(); }
+}
+
+async function completeSession() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/complete`, { hostToken: hostState.hostToken });
+  show("COMPLETE_SESSION (" + r.status + ")", r.json);
+  if (r.status === 200) applySessionSnapshot(r.json);
+}
+
+async function hostRefresh() {
+  const r = await getJson(`/api/sessions/${hostState.sessionId}`, hostState.hostToken);
+  show("GET_SESSION as host (" + r.status + ")", r.json);
+  if (r.status === 200) applySessionSnapshot(r.json);
+}
+
+restoreState();
+if (hostState.sessionId) hostRefresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,353 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Level 33 — Play</title>
+<style>
+  :root {
+    --ink: #1a1a2e;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #4f46e5;
+    --accent-ink: #ffffff;
+    --done: #16a34a;
+    --upcoming: #d1d5db;
+    --bg-card: #ffffff;
+    --bg-page: #f7f7fb;
+    --own: #eef2ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg-page);
+    color: var(--ink);
+    max-width: 560px;
+    margin: 24px auto;
+    padding: 0 16px 60px;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 20px; font-size: 14px; }
+
+  .stepper { display: flex; justify-content: space-between; margin: 24px 0; }
+  .step { flex: 1; text-align: center; position: relative; }
+  .step:not(:last-child)::after {
+    content: ""; position: absolute; top: 7px; left: 50%; width: 100%; height: 2px;
+    background: var(--upcoming); z-index: 0;
+  }
+  .step-done:not(:last-child)::after { background: var(--done); }
+  .step-dot {
+    display: inline-block; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--upcoming); position: relative; z-index: 1; margin-bottom: 6px;
+  }
+  .step-done .step-dot { background: var(--done); }
+  .step-active .step-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(79,70,229,0.2); }
+  .step-label { display: block; font-size: 11px; color: var(--muted); }
+  .step-active .step-label { color: var(--accent); font-weight: 600; }
+  .step-done .step-label { color: var(--done); }
+
+  .card {
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 14px;
+  }
+  .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 10px; }
+
+  input, textarea {
+    font-family: inherit; font-size: 15px; width: 100%; padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px;
+  }
+  textarea { resize: vertical; min-height: 90px; }
+  label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
+
+  .prompt-text {
+    font-size: 20px; line-height: 1.5; padding: 16px; background: #fafaff;
+    border-left: 4px solid var(--accent); border-radius: 4px; text-align: center;
+  }
+
+  .waiting {
+    text-align: center; color: var(--muted); padding: 30px 10px; font-size: 15px;
+  }
+  .waiting .big { font-size: 28px; display: block; margin-bottom: 8px; }
+
+  .progress-bar { height: 8px; background: var(--upcoming); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+  .progress-fill { height: 100%; background: var(--done); }
+  .progress-label { font-size: 13px; color: var(--muted); text-align: center; }
+
+  .result-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
+  .result-card.own { background: var(--own); border-color: var(--accent); }
+  .result-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .result-name .you { color: var(--accent); }
+  .result-text { font-size: 15px; }
+
+  button {
+    font-family: inherit; font-size: 14px; padding: 10px 16px; border-radius: 8px;
+    border: none; cursor: pointer; margin: 4px 6px 4px 0;
+  }
+  button:disabled { cursor: not-allowed; opacity: 0.4; }
+  .btn-primary { background: var(--accent); color: var(--accent-ink); width: 100%; }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+
+  details { margin-top: 20px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 12px; }
+
+  .submitted-note { font-size: 13px; color: var(--done); margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<h1>Level 33 — Play</h1>
+<p class="subtitle">Developer validation interface. Plays the game; does not control the session.</p>
+
+<div id="join-panel" class="card">
+  <h2>Join a session</h2>
+  <label>Room code</label>
+  <input id="p-roomCode" placeholder="e.g. AB23CD" />
+  <label>Your name</label>
+  <input id="p-displayName" placeholder="e.g. Alex" />
+  <button class="btn-primary" onclick="joinSession()">Join</button>
+</div>
+
+<div id="game-panels" style="display:none;">
+  <div id="stepper" class="stepper"></div>
+
+  <div id="state-card" class="card"></div>
+
+  <div class="card" id="promptCard" style="display:none;">
+    <h2>Prompt</h2>
+    <div class="prompt-text" id="promptText"></div>
+  </div>
+
+  <div class="card" id="submitCard" style="display:none;">
+    <div class="submitted-note" id="submittedNote" style="display:none;">Response submitted — you can revise it until submissions close.</div>
+    <label>Your response</label>
+    <textarea id="p-text" placeholder="Type your answer…"></textarea>
+    <button class="btn-primary" onclick="submitResponse()">Submit / Revise Response</button>
+  </div>
+
+  <div class="card" id="progressCard" style="display:none;">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+    <div class="progress-label" id="progressLabel"></div>
+  </div>
+
+  <div class="card" id="resultsCard" style="display:none;">
+    <h2>Results</h2>
+    <div id="resultsList"></div>
+  </div>
+
+  <button class="btn-ghost" onclick="participantRefresh()">Check for updates</button>
+</div>
+
+<details>
+  <summary>Debug: last raw response</summary>
+  <pre id="output">(nothing yet)</pre>
+</details>
+
+<script>
+// Developer-harness-only credential persistence, via sessionStorage:
+// survives a refresh of this tab, but never shared with any other tab
+// (unlike localStorage), so each participant tab stays independent.
+// This is a harness continuity fix only — it does not address real
+// participant-identity recovery, which remains a separate, unaddressed
+// product question outside this MVP's boundary.
+//
+// Storing the participant token in Web Storage, and displaying it on
+// screen, is a real security anti-pattern for a production interface.
+// It is acceptable only here: an isolated, unbundled, dev-only harness
+// with no other users. Neither should ever be carried into a real
+// interface.
+
+const PARTICIPANT_STORAGE_KEY = "level33_dev_harness_participant";
+const LIFECYCLE_STEPS = ["LOBBY_OPEN", "LOBBY_LOCKED", "PROMPT_ACTIVE", "SUBMISSIONS_CLOSED", "RESULT_REVEAL", "SESSION_COMPLETE"];
+const STATE_LABELS = {
+  LOBBY_OPEN: "Lobby Open",
+  LOBBY_LOCKED: "Lobby Locked",
+  PROMPT_ACTIVE: "Prompt Active",
+  SUBMISSIONS_CLOSED: "Submissions Closed",
+  RESULT_REVEAL: "Results",
+  SESSION_COMPLETE: "Complete",
+};
+
+let participantState = { sessionId: null, participantId: null, participantToken: null, displayName: null };
+let hasSubmittedThisPageLoad = false;
+// See host.html for why this cache exists: `submissions` intentionally
+// goes null again at SESSION_COMPLETE, and caching the last-seen value
+// avoids results visibly vanishing the instant the host ends the
+// session, within this same page load.
+let lastKnownSubmissions = null;
+
+function saveParticipantState() {
+  sessionStorage.setItem(PARTICIPANT_STORAGE_KEY, JSON.stringify(participantState));
+}
+
+function restoreState() {
+  const stored = sessionStorage.getItem(PARTICIPANT_STORAGE_KEY);
+  if (!stored) return;
+  try {
+    participantState = JSON.parse(stored);
+    if (participantState.sessionId) showGamePanels();
+  } catch (e) {
+    console.warn("Discarding malformed participant state from sessionStorage:", e);
+    sessionStorage.removeItem(PARTICIPANT_STORAGE_KEY);
+  }
+}
+
+function show(label, data) {
+  document.getElementById("output").textContent = label + ":\n" + JSON.stringify(data, null, 2);
+}
+
+async function postJson(path, body, bearerToken) {
+  const headers = { "content-type": "application/json" };
+  if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
+  const res = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+async function getJson(path, bearerToken) {
+  const headers = {};
+  if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
+  const res = await fetch(path, { headers });
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+function showGamePanels() {
+  document.getElementById("join-panel").style.display = "none";
+  document.getElementById("game-panels").style.display = "block";
+}
+
+function renderStepper(currentState) {
+  const idx = LIFECYCLE_STEPS.indexOf(currentState);
+  document.getElementById("stepper").innerHTML = LIFECYCLE_STEPS.map((step, i) => {
+    let cls = "step";
+    if (idx !== -1) {
+      if (i < idx) cls += " step-done";
+      else if (i === idx) cls += " step-active";
+      else cls += " step-upcoming";
+    } else {
+      cls += " step-upcoming";
+    }
+    return `<div class="${cls}"><span class="step-dot"></span><span class="step-label">${STATE_LABELS[step]}</span></div>`;
+  }).join("");
+}
+
+function renderStateCard(state) {
+  const el = document.getElementById("state-card");
+  const messages = {
+    LOBBY_OPEN: ["🕒", `You're in as <strong>${participantState.displayName}</strong>. Waiting for the host to lock the lobby…`],
+    LOBBY_LOCKED: ["🔒", "Lobby locked. Waiting for the host to start the game…"],
+    PROMPT_ACTIVE: null,
+    SUBMISSIONS_CLOSED: ["✋", "Submissions closed. Waiting for the host to reveal results…"],
+    RESULT_REVEAL: null,
+    SESSION_COMPLETE: ["🏁", "This session has ended. Thanks for playing!"],
+  };
+  const msg = messages[state];
+  if (!msg) {
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "block";
+  el.innerHTML = `<div class="waiting"><span class="big">${msg[0]}</span>${msg[1]}</div>`;
+}
+
+function renderPrompt(state, currentPrompt) {
+  const promptCard = document.getElementById("promptCard");
+  const submitCard = document.getElementById("submitCard");
+
+  if (state === "PROMPT_ACTIVE" && currentPrompt) {
+    promptCard.style.display = "block";
+    submitCard.style.display = "block";
+    document.getElementById("promptText").textContent = currentPrompt.text;
+    document.getElementById("submittedNote").style.display = hasSubmittedThisPageLoad ? "block" : "none";
+  } else if (currentPrompt && (state === "SUBMISSIONS_CLOSED" || state === "RESULT_REVEAL" || state === "SESSION_COMPLETE")) {
+    // Prompt stays visible as context once past PROMPT_ACTIVE; the
+    // response form does not, since submissions are no longer open.
+    promptCard.style.display = "block";
+    document.getElementById("promptText").textContent = currentPrompt.text;
+    submitCard.style.display = "none";
+  } else {
+    promptCard.style.display = "none";
+    submitCard.style.display = "none";
+  }
+}
+
+function renderProgress(submittedCount, eligibleParticipantCount) {
+  const card = document.getElementById("progressCard");
+  if (submittedCount === null || submittedCount === undefined) {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+  const pct = eligibleParticipantCount > 0 ? Math.round((submittedCount / eligibleParticipantCount) * 100) : 0;
+  document.getElementById("progressFill").style.width = pct + "%";
+  document.getElementById("progressLabel").textContent = `${submittedCount} of ${eligibleParticipantCount} submitted`;
+}
+
+function renderResults(submissions) {
+  const card = document.getElementById("resultsCard");
+  const effective = submissions ?? lastKnownSubmissions;
+  if (submissions) lastKnownSubmissions = submissions;
+
+  if (!effective) {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+  document.getElementById("resultsList").innerHTML = effective
+    .map((s) => {
+      const isOwn = s.participantId === participantState.participantId;
+      return `<div class="result-card ${isOwn ? "own" : ""}">
+        <div class="result-name">${s.displayName}${isOwn ? ' <span class="you">(you)</span>' : ""}</div>
+        <div class="result-text">${s.text}</div>
+      </div>`;
+    })
+    .join("") || `<div class="waiting">No responses were submitted.</div>`;
+}
+
+function applySessionSnapshot(data) {
+  renderStepper(data.state);
+  renderStateCard(data.state);
+  renderPrompt(data.state, data.currentPrompt);
+  if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
+  if ("submissions" in data) renderResults(data.submissions);
+}
+
+async function joinSession() {
+  const roomCode = document.getElementById("p-roomCode").value.trim();
+  const displayName = document.getElementById("p-displayName").value.trim();
+  const r = await postJson(`/api/sessions/${roomCode}/join`, { displayName });
+  show("JOIN_SESSION (" + r.status + ")", r.json);
+  if (r.status === 201) {
+    participantState = {
+      sessionId: r.json.sessionId,
+      participantId: r.json.participantId,
+      participantToken: r.json.participantToken,
+      displayName: r.json.displayName,
+    };
+    saveParticipantState();
+    showGamePanels();
+    await participantRefresh();
+  }
+}
+
+async function submitResponse() {
+  const text = document.getElementById("p-text").value;
+  const r = await postJson(`/api/sessions/${participantState.sessionId}/submit`, { text }, participantState.participantToken);
+  show("SUBMIT_RESPONSE (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    hasSubmittedThisPageLoad = true;
+    document.getElementById("submittedNote").style.display = "block";
+  }
+}
+
+async function participantRefresh() {
+  const r = await getJson(`/api/sessions/${participantState.sessionId}`, participantState.participantToken);
+  show("GET_SESSION as participant (" + r.status + ")", r.json);
+  if (r.status === 200) applySessionSnapshot(r.json);
+}
+
+restoreState();
+if (participantState.sessionId) participantRefresh();
+</script>
+</body>
+</html>
