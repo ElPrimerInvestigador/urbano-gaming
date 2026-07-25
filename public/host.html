@@ -13,6 +13,7 @@
     --done: #16a34a;
     --upcoming: #d1d5db;
     --danger: #b91c1c;
+    --danger-bg: #fef2f2;
     --bg-card: #ffffff;
     --bg-page: #f7f7fb;
   }
@@ -93,12 +94,20 @@
   pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 12px; }
 
   .waiting { text-align: center; color: var(--muted); padding: 20px 0; }
+
+  .notice {
+    padding: 10px 14px; border-radius: 8px; margin-bottom: 14px;
+    font-size: 14px; border: 1px solid var(--danger);
+    background: var(--danger-bg); color: var(--danger);
+  }
 </style>
 </head>
 <body>
 
 <h1>Level 33 — Host</h1>
 <p class="subtitle">Developer validation interface. Drives the session forward; does not participate.</p>
+
+<div id="status-banner" class="notice" style="display:none;" role="alert"></div>
 
 <div id="stepper" class="stepper"></div>
 
@@ -208,7 +217,12 @@ function show(label, data) {
 async function postJson(path, body, bearerToken) {
   const headers = { "content-type": "application/json" };
   if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
-  const res = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+  let res;
+  try {
+    res = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+  } catch (e) {
+    return { status: 0, json: null };
+  }
   const json = await res.json().catch(() => null);
   return { status: res.status, json };
 }
@@ -216,9 +230,70 @@ async function postJson(path, body, bearerToken) {
 async function getJson(path, bearerToken) {
   const headers = {};
   if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
-  const res = await fetch(path, { headers });
+  let res;
+  try {
+    res = await fetch(path, { headers });
+  } catch (e) {
+    return { status: 0, json: null };
+  }
   const json = await res.json().catch(() => null);
   return { status: res.status, json };
+}
+
+// Translates known backend validation messages into host-appropriate
+// language, so the UI owns its own wording rather than reprinting
+// backend text verbatim. Matched by exact string or by state-suffix
+// (each precondition error's message ends in the required state name,
+// regardless of whether the backend included the current state), so a
+// backend wording tweak degrades to the generic fallback rather than
+// silently going stale. Deliberately independent of participant.html's
+// table — the same backend error class can warrant different wording
+// depending on which role's action triggered it.
+const KNOWN_ERRORS = [
+  { test: (m) => m === "No active session found.", text: "This session could not be found." },
+  { test: (m) => m === "Host token does not match this session.", text: "This host token doesn't match this session." },
+  { test: (m) => m.endsWith("LOBBY_OPEN."), text: "The lobby is no longer open — it may already be locked." },
+  { test: (m) => m.endsWith("LOBBY_LOCKED."), text: "The lobby isn't locked yet, or the session has already moved past that stage." },
+  { test: (m) => m.endsWith("PROMPT_ACTIVE."), text: "Submissions can only be closed while a prompt is active." },
+  { test: (m) => m.endsWith("SUBMISSIONS_CLOSED."), text: "Results can only be revealed after submissions are closed." },
+  { test: (m) => m === "Session is already complete.", text: "This session has already ended." },
+];
+
+function translateKnownError(raw) {
+  const match = KNOWN_ERRORS.find((e) => e.test(raw));
+  return match ? match.text : null;
+}
+
+// Single point deciding what a failed request means for the user:
+// unreachable server, a known/translated validation rejection, or an
+// unrecognized response. Kept separate from renderNotice() so future
+// notice types (e.g. a success confirmation) can reuse the same
+// rendering path without touching this classification logic.
+function classifyError(r) {
+  if (r.status === 0) {
+    return { category: "connectivity", message: "Could not reach the server. Check your connection and try again." };
+  }
+  const raw = r.json && typeof r.json.error === "string" ? r.json.error : null;
+  const friendly = raw ? translateKnownError(raw) : null;
+  if (friendly) return { category: "validation", message: friendly };
+  return { category: "unexpected", message: "Something went wrong. Please try again." };
+}
+
+// The one rendering mechanism for the status banner. Every action
+// calls this with either classifyError(r) on failure or null on
+// success — no action function decides visibility, styling, or text
+// itself. Separate from show(), which continues to write full raw
+// responses to the developer debug panel regardless of outcome.
+function renderNotice(notice) {
+  const el = document.getElementById("status-banner");
+  if (!notice) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.style.display = "block";
+  el.textContent = notice.message;
+  el.className = "notice notice-" + notice.category;
 }
 
 function showSessionPanels() {
@@ -318,23 +393,28 @@ async function createSession() {
   const { status, json } = await postJson("/api/sessions", {});
   show("CREATE_SESSION (" + status + ")", json);
   if (status === 201) {
+    renderNotice(null);
     hostState = { sessionId: json.sessionId, roomCode: json.roomCode, hostToken: json.hostToken };
     saveHostState();
     showSessionPanels();
     applySessionSnapshot(json);
+  } else {
+    renderNotice(classifyError({ status, json }));
   }
 }
 
 async function lockLobby() {
   const r = await postJson(`/api/sessions/${hostState.sessionId}/lock`, { hostToken: hostState.hostToken });
   show("LOCK_LOBBY (" + r.status + ")", r.json);
-  if (r.status === 200) applySessionSnapshot(r.json);
+  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); }
+  else renderNotice(classifyError(r));
 }
 
 async function startSession() {
   const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, { hostToken: hostState.hostToken });
   show("START_SESSION (" + r.status + ")", r.json);
-  if (r.status === 200) { applySessionSnapshot(r.json); await hostRefresh(); }
+  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); await hostRefresh(); }
+  else renderNotice(classifyError(r));
 }
 
 async function closeSubmissions() {
@@ -343,25 +423,29 @@ async function closeSubmissions() {
   // closeSubmissions's own response has no submittedCount — refresh so
   // the progress bar reflects the true final tally at closing time,
   // not a stale pre-close snapshot.
-  if (r.status === 200) { applySessionSnapshot(r.json); await hostRefresh(); }
+  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); await hostRefresh(); }
+  else renderNotice(classifyError(r));
 }
 
 async function revealResults() {
   const r = await postJson(`/api/sessions/${hostState.sessionId}/reveal`, { hostToken: hostState.hostToken });
   show("REVEAL_RESULTS (" + r.status + ")", r.json);
-  if (r.status === 200) { applySessionSnapshot(r.json); await hostRefresh(); }
+  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); await hostRefresh(); }
+  else renderNotice(classifyError(r));
 }
 
 async function completeSession() {
   const r = await postJson(`/api/sessions/${hostState.sessionId}/complete`, { hostToken: hostState.hostToken });
   show("COMPLETE_SESSION (" + r.status + ")", r.json);
-  if (r.status === 200) applySessionSnapshot(r.json);
+  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); }
+  else renderNotice(classifyError(r));
 }
 
 async function hostRefresh() {
   const r = await getJson(`/api/sessions/${hostState.sessionId}`, hostState.hostToken);
   show("GET_SESSION as host (" + r.status + ")", r.json);
-  if (r.status === 200) applySessionSnapshot(r.json);
+  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); }
+  else renderNotice(classifyError(r));
 }
 
 restoreState();

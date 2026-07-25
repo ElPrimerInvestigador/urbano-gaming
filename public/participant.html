@@ -15,6 +15,8 @@
     --bg-card: #ffffff;
     --bg-page: #f7f7fb;
     --own: #eef2ff;
+    --danger: #b91c1c;
+    --danger-bg: #fef2f2;
   }
   * { box-sizing: border-box; }
   body {
@@ -91,12 +93,20 @@
   pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 12px; }
 
   .submitted-note { font-size: 13px; color: var(--done); margin-bottom: 8px; }
+
+  .notice {
+    padding: 10px 14px; border-radius: 8px; margin-bottom: 14px;
+    font-size: 14px; border: 1px solid var(--danger);
+    background: var(--danger-bg); color: var(--danger);
+  }
 </style>
 </head>
 <body>
 
 <h1>Level 33 — Play</h1>
 <p class="subtitle">Developer validation interface. Plays the game; does not control the session.</p>
+
+<div id="status-banner" class="notice" style="display:none;" role="alert"></div>
 
 <div id="join-panel" class="card">
   <h2>Join a session</h2>
@@ -198,7 +208,12 @@ function show(label, data) {
 async function postJson(path, body, bearerToken) {
   const headers = { "content-type": "application/json" };
   if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
-  const res = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+  let res;
+  try {
+    res = await fetch(path, { method: "POST", headers, body: JSON.stringify(body || {}) });
+  } catch (e) {
+    return { status: 0, json: null };
+  }
   const json = await res.json().catch(() => null);
   return { status: res.status, json };
 }
@@ -206,9 +221,72 @@ async function postJson(path, body, bearerToken) {
 async function getJson(path, bearerToken) {
   const headers = {};
   if (bearerToken) headers["authorization"] = "Bearer " + bearerToken;
-  const res = await fetch(path, { headers });
+  let res;
+  try {
+    res = await fetch(path, { headers });
+  } catch (e) {
+    return { status: 0, json: null };
+  }
   const json = await res.json().catch(() => null);
   return { status: res.status, json };
+}
+
+// Translates known backend validation messages into participant-
+// appropriate language, so the UI owns its own wording rather than
+// reprinting backend text verbatim. Matched by exact string or by
+// state-suffix (each precondition error's message ends in the
+// required state name, regardless of whether the backend included the
+// current state), so a backend wording tweak degrades to the generic
+// fallback rather than silently going stale. Deliberately independent
+// of host.html's table — the same backend error class can warrant
+// different wording depending on which role's action triggered it.
+const KNOWN_ERRORS = [
+  { test: (m) => m === "No active session found.", text: "We couldn't find that session. Check the room code and try again." },
+  { test: (m) => m.endsWith("LOBBY_OPEN."), text: "This session is no longer accepting participants." },
+  { test: (m) => m === "This display name is already in use in this session.", text: "That name is already taken in this session — try a different one." },
+  { test: (m) => m === "Display name cannot be empty.", text: "Please enter a display name." },
+  { test: (m) => m === "Display name cannot exceed 40 characters.", text: "That name is too long — please use 40 characters or fewer." },
+  { test: (m) => m.endsWith("PROMPT_ACTIVE."), text: "Submissions have already closed." },
+  { test: (m) => m === "Response cannot be empty.", text: "Please enter a response before submitting." },
+  { test: (m) => m === "Response cannot exceed 1000 characters.", text: "That response is too long — please shorten it." },
+  { test: (m) => m === "This token does not grant access to this session.", text: "You don't have access to this session." },
+];
+
+function translateKnownError(raw) {
+  const match = KNOWN_ERRORS.find((e) => e.test(raw));
+  return match ? match.text : null;
+}
+
+// Single point deciding what a failed request means for the user:
+// unreachable server, a known/translated validation rejection, or an
+// unrecognized response. Kept separate from renderNotice() so future
+// notice types (e.g. a success confirmation) can reuse the same
+// rendering path without touching this classification logic.
+function classifyError(r) {
+  if (r.status === 0) {
+    return { category: "connectivity", message: "Could not reach the server. Check your connection and try again." };
+  }
+  const raw = r.json && typeof r.json.error === "string" ? r.json.error : null;
+  const friendly = raw ? translateKnownError(raw) : null;
+  if (friendly) return { category: "validation", message: friendly };
+  return { category: "unexpected", message: "Something went wrong. Please try again." };
+}
+
+// The one rendering mechanism for the status banner. Every action
+// calls this with either classifyError(r) on failure or null on
+// success — no action function decides visibility, styling, or text
+// itself. Separate from show(), which continues to write full raw
+// responses to the developer debug panel regardless of outcome.
+function renderNotice(notice) {
+  const el = document.getElementById("status-banner");
+  if (!notice) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.style.display = "block";
+  el.textContent = notice.message;
+  el.className = "notice notice-" + notice.category;
 }
 
 function showGamePanels() {
@@ -318,6 +396,7 @@ async function joinSession() {
   const r = await postJson(`/api/sessions/${roomCode}/join`, { displayName });
   show("JOIN_SESSION (" + r.status + ")", r.json);
   if (r.status === 201) {
+    renderNotice(null);
     participantState = {
       sessionId: r.json.sessionId,
       participantId: r.json.participantId,
@@ -327,6 +406,8 @@ async function joinSession() {
     saveParticipantState();
     showGamePanels();
     await participantRefresh();
+  } else {
+    renderNotice(classifyError(r));
   }
 }
 
@@ -335,15 +416,19 @@ async function submitResponse() {
   const r = await postJson(`/api/sessions/${participantState.sessionId}/submit`, { text }, participantState.participantToken);
   show("SUBMIT_RESPONSE (" + r.status + ")", r.json);
   if (r.status === 200) {
+    renderNotice(null);
     hasSubmittedThisPageLoad = true;
     document.getElementById("submittedNote").style.display = "block";
+  } else {
+    renderNotice(classifyError(r));
   }
 }
 
 async function participantRefresh() {
   const r = await getJson(`/api/sessions/${participantState.sessionId}`, participantState.participantToken);
   show("GET_SESSION as participant (" + r.status + ")", r.json);
-  if (r.status === 200) applySessionSnapshot(r.json);
+  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); }
+  else renderNotice(classifyError(r));
 }
 
 restoreState();
