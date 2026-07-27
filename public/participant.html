@@ -179,10 +179,18 @@ const STATE_LABELS = {
 
 let participantState = { sessionId: null, participantId: null, participantToken: null, displayName: null };
 let hasSubmittedThisPageLoad = false;
+// Slice 001 (Session / Interaction separation): tracks the last
+// interactionNumber seen from GET_SESSION, so a newly started
+// interaction can be detected and hasSubmittedThisPageLoad (and the
+// draft response text) reset for it — otherwise a "submitted" note
+// from interaction #1 would wrongly persist onto interaction #2.
+let lastSeenInteractionNumber = null;
 // See host.html for why this cache exists: `submissions` intentionally
 // goes null again at SESSION_COMPLETE, and caching the last-seen value
 // avoids results visibly vanishing the instant the host ends the
-// session, within this same page load.
+// session, within this same page load. Gated on the session's own
+// state (see renderResults) so it does not also bridge the unrelated
+// gap when a new interaction starts.
 let lastKnownSubmissions = null;
 
 function saveParticipantState() {
@@ -361,9 +369,9 @@ function renderProgress(submittedCount, eligibleParticipantCount) {
   document.getElementById("progressLabel").textContent = `${submittedCount} of ${eligibleParticipantCount} submitted`;
 }
 
-function renderResults(submissions) {
+function renderResults(submissions, sessionState) {
   const card = document.getElementById("resultsCard");
-  const effective = submissions ?? lastKnownSubmissions;
+  const effective = submissions ?? (sessionState === "SESSION_COMPLETE" ? lastKnownSubmissions : null);
   if (submissions) lastKnownSubmissions = submissions;
 
   if (!effective) {
@@ -382,12 +390,49 @@ function renderResults(submissions) {
     .join("") || `<div class="waiting">No responses were submitted.</div>`;
 }
 
+// Slice 001: GET_SESSION's `state` is now only the session's own
+// narrower lifecycle (LOBBY_OPEN | LOBBY_LOCKED | SESSION_COMPLETE) —
+// the PROMPT_ACTIVE / SUBMISSIONS_CLOSED / RESULT_REVEAL stages that
+// used to live there now live on `interactionState` instead. This
+// combines both back into the single stage name the rendering
+// functions below already key off of, so renderStepper/renderStateCard
+// /renderPrompt need no further change.
+function computeEffectiveState(sessionState, interactionState) {
+  if (sessionState === "LOBBY_OPEN") return "LOBBY_OPEN";
+  if (sessionState === "SESSION_COMPLETE") return "SESSION_COMPLETE";
+  if (sessionState === "LOBBY_LOCKED") {
+    if (interactionState === "PROMPT_ACTIVE") return "PROMPT_ACTIVE";
+    if (interactionState === "SUBMISSIONS_CLOSED") return "SUBMISSIONS_CLOSED";
+    if (interactionState === "RESULT_REVEAL") return "RESULT_REVEAL";
+    return "LOBBY_LOCKED";
+  }
+  return null;
+}
+
 function applySessionSnapshot(data) {
-  renderStepper(data.state);
-  renderStateCard(data.state);
-  renderPrompt(data.state, data.currentPrompt);
+  // A new interaction beginning (interactionNumber advancing) must not
+  // inherit the previous interaction's "already submitted" note, draft
+  // response text, or cached results — each interaction starts with a
+  // clean slate. lastKnownSubmissions must be cleared here, not just
+  // gated by session state: gating alone is not sufficient — if this
+  // tab never observes the *current* interaction's own reveal before
+  // the session completes (e.g. it was mid-PROMPT_ACTIVE on interaction
+  // #2 and only refreshes again after COMPLETE_SESSION), the
+  // SESSION_COMPLETE fallback would otherwise resurface interaction
+  // #1's stale cached results under interaction #2's prompt.
+  if ("interactionNumber" in data && data.interactionNumber !== lastSeenInteractionNumber) {
+    hasSubmittedThisPageLoad = false;
+    document.getElementById("p-text").value = "";
+    lastKnownSubmissions = null;
+    lastSeenInteractionNumber = data.interactionNumber;
+  }
+
+  const effectiveState = computeEffectiveState(data.state, data.interactionState);
+  renderStepper(effectiveState);
+  renderStateCard(effectiveState);
+  renderPrompt(effectiveState, data.currentPrompt);
   if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
-  if ("submissions" in data) renderResults(data.submissions);
+  if ("submissions" in data) renderResults(data.submissions, data.state);
 }
 
 async function joinSession() {

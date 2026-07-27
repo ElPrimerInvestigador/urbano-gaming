@@ -5,9 +5,11 @@ import { SessionNotFoundError, SessionAccessDeniedError } from "./types";
 /**
  * GET_SESSION command handler.
  *
- * Scope: returns current session state, state_version, and the
+ * Scope: returns current session state, state_version, the
  * participant list (display names only — never a hostToken or any
- * participantToken). Read-only, no state mutation, no event write.
+ * participantToken), and Slice 001 (Session / Interaction
+ * separation): the current interaction instance's number, state, and
+ * prompt. Read-only, no state mutation, no event write.
  *
  * Authorization: unlike LOCK_LOBBY's write-time authorization, there is
  * no concurrent-mutation race to close here — two reads cannot conflict
@@ -36,35 +38,64 @@ export async function getSession(
     throw new SessionAccessDeniedError();
   }
 
-  const currentPrompt = session.currentPromptId
-    ? await repo.getPromptById(session.currentPromptId)
+  const interactionInstances = await repo.getInteractionInstancesForSession(
+    sessionId
+  );
+  const currentInteraction =
+    interactionInstances.length > 0
+      ? interactionInstances[interactionInstances.length - 1]
+      : null;
+  const interactionNumber =
+    interactionInstances.length > 0 ? interactionInstances.length : null;
+
+  // Visible regardless of session state once an interaction has ever
+  // started — mirrors the pre-Slice-001 precedent where currentPrompt
+  // stayed visible after SESSION_COMPLETE.
+  const currentPrompt = currentInteraction
+    ? await repo.getPromptById(currentInteraction.promptId)
     : null;
 
   let submittedCount: number | null = null;
   let eligibleParticipantCount: number | null = null;
   let submissions: GetSessionResult["submissions"] = null;
 
-  if (session.state === "PROMPT_ACTIVE" || session.state === "SUBMISSIONS_CLOSED") {
-    const allSubmissions = await repo.getSubmissionsForSession(sessionId);
-    const relevantSubmissions = session.currentPromptId
-      ? allSubmissions.filter((s) => s.promptId === session.currentPromptId)
-      : [];
-    submittedCount = relevantSubmissions.length;
+  // Both branches below require session.state === "LOBBY_LOCKED" —
+  // this exactly preserves the pre-Slice-001 behavior of resetting to
+  // null once the session reaches SESSION_COMPLETE, now expressed via
+  // two conditions (session state + interaction state) instead of one,
+  // since those two responsibilities are no longer the same field.
+  if (
+    session.state === "LOBBY_LOCKED" &&
+    currentInteraction &&
+    (currentInteraction.state === "PROMPT_ACTIVE" ||
+      currentInteraction.state === "SUBMISSIONS_CLOSED")
+  ) {
+    const allSubmissions = await repo.getSubmissionsForInteractionInstance(
+      currentInteraction.interactionInstanceId
+    );
+    submittedCount = allSubmissions.length;
     eligibleParticipantCount = participants.length;
-  } else if (session.state === "RESULT_REVEAL") {
-    // Deliberately not extended to SESSION_COMPLETE the way currentPrompt
-    // is: whether a completed session ever actually passed through
-    // RESULT_REVEAL (vs. an early admin termination) isn't cheaply
-    // knowable from SessionRecord alone, and showing responses the host
-    // never explicitly revealed would be the wrong default to guess.
-    const allSubmissions = await repo.getSubmissionsForSession(sessionId);
-    const relevantSubmissions = session.currentPromptId
-      ? allSubmissions.filter((s) => s.promptId === session.currentPromptId)
-      : [];
+  } else if (
+    session.state === "LOBBY_LOCKED" &&
+    currentInteraction &&
+    currentInteraction.state === "RESULT_REVEAL"
+  ) {
+    // Deliberately not extended to SESSION_COMPLETE, mirroring the
+    // pre-Slice-001 reasoning exactly: whether a completed session's
+    // current interaction ever actually passed through RESULT_REVEAL
+    // (vs. an early admin termination) is, in principle, now cheaply
+    // knowable from the interaction instance's own persisted state —
+    // but changing this visibility behavior is not part of this
+    // slice's scope, so the same reset-to-null-at-completion behavior
+    // already relied upon by the harness's lastKnownSubmissions cache
+    // is preserved unchanged.
+    const allSubmissions = await repo.getSubmissionsForInteractionInstance(
+      currentInteraction.interactionInstanceId
+    );
     const displayNameByParticipantId = new Map(
       participants.map((p) => [p.participantId, p.displayName])
     );
-    submissions = relevantSubmissions.map((s) => ({
+    submissions = allSubmissions.map((s) => ({
       participantId: s.participantId,
       displayName: displayNameByParticipantId.get(s.participantId) ?? "",
       text: s.text,
@@ -79,6 +110,8 @@ export async function getSession(
       participantId: participant.participantId,
       displayName: participant.displayName,
     })),
+    interactionNumber,
+    interactionState: currentInteraction?.state ?? null,
     currentPrompt: currentPrompt
       ? { promptId: currentPrompt.promptId, text: currentPrompt.text }
       : null,

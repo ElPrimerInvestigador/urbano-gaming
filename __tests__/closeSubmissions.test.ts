@@ -6,6 +6,7 @@ import { lockLobby } from "../lib/session/lockLobby";
 import { startSession } from "../lib/session/startSession";
 import { submitResponse } from "../lib/session/submitResponse";
 import { closeSubmissions } from "../lib/session/closeSubmissions";
+import { revealResults } from "../lib/session/revealResults";
 import { getSession } from "../lib/session/getSession";
 import { InMemorySessionRepository } from "../lib/session/db/inMemorySessionRepository";
 import {
@@ -18,22 +19,39 @@ async function setupActiveSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
   const participant = await joinSession(repo, session.roomCode, "Alex");
   await lockLobby(repo, session.sessionId, session.hostToken);
-  await startSession(repo, session.sessionId, session.hostToken);
-  return { session, participant };
+  const interaction = await startSession(
+    repo,
+    session.sessionId,
+    session.hostToken,
+    "Prompt text"
+  );
+  return { session, participant, interaction };
 }
 
 describe("CLOSE_SUBMISSIONS", () => {
-  it("transitions a PROMPT_ACTIVE session to SUBMISSIONS_CLOSED", async () => {
+  it("transitions the current interaction instance from PROMPT_ACTIVE to SUBMISSIONS_CLOSED", async () => {
     const repo = new InMemorySessionRepository();
-    const { session } = await setupActiveSession(repo);
+    const { session, interaction } = await setupActiveSession(repo);
 
     const result = await closeSubmissions(repo, session.sessionId, session.hostToken);
 
+    expect(result.sessionId).toBe(session.sessionId);
+    expect(result.interactionInstanceId).toBe(interaction.interactionInstanceId);
     expect(result.state).toBe("SUBMISSIONS_CLOSED");
-    expect(result.stateVersion).toBe(4); // create(1) -> lock(2) -> start(3) -> close(4)
   });
 
-  it("rejects closing a session that never started (LOBBY_LOCKED)", async () => {
+  it("does not change the session's own state or state_version", async () => {
+    const repo = new InMemorySessionRepository();
+    const { session } = await setupActiveSession(repo);
+
+    await closeSubmissions(repo, session.sessionId, session.hostToken);
+
+    const stored = await repo.getSessionById(session.sessionId);
+    expect(stored?.state).toBe("LOBBY_LOCKED");
+    expect(stored?.stateVersion).toBe(2); // create(1) -> lock(2), unchanged by start/close
+  });
+
+  it("rejects closing before any interaction has started (LOBBY_LOCKED)", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
@@ -78,7 +96,7 @@ describe("CLOSE_SUBMISSIONS", () => {
 
     const result = await getSession(repo, session.sessionId, session.hostToken);
 
-    expect(result.state).toBe("SUBMISSIONS_CLOSED");
+    expect(result.interactionState).toBe("SUBMISSIONS_CLOSED");
     expect(result.submittedCount).toBe(1);
     expect(result.submissions).toBeNull();
     expect(JSON.stringify(result)).not.toContain("My answer");
@@ -105,6 +123,24 @@ describe("CLOSE_SUBMISSIONS", () => {
       ]);
 
       expect(attempts.filter((a) => a.status === "fulfilled")).toHaveLength(1);
+    });
+  });
+
+  describe("sequential interactions", () => {
+    it("closes only the current interaction instance, leaving a prior revealed one untouched", async () => {
+      const repo = new InMemorySessionRepository();
+      const { session, interaction: firstInteraction } = await setupActiveSession(repo);
+      await closeSubmissions(repo, session.sessionId, session.hostToken);
+      await revealResults(repo, session.sessionId, session.hostToken);
+      await startSession(repo, session.sessionId, session.hostToken, "Second prompt");
+
+      await closeSubmissions(repo, session.sessionId, session.hostToken);
+
+      const instances = repo._allInteractionInstances();
+      const first = instances.find(
+        (i) => i.interactionInstanceId === firstInteraction.interactionInstanceId
+      );
+      expect(first?.state).toBe("RESULT_REVEAL");
     });
   });
 });

@@ -5,14 +5,20 @@ import {
   SessionNotFoundError,
   HostTokenMismatchError,
   LobbyNotLockedError,
+  PreviousInteractionNotRevealedError,
+  EmptyPromptTextError,
+  PromptTextTooLongError,
 } from "@/lib/session/types";
 
 /**
  * POST /api/sessions/[identifier]/start — START_SESSION
  *
- * Host-authenticated only, callable only from LOBBY_LOCKED. Transitions
- * directly to PROMPT_ACTIVE — SESSION_INTRO is excluded from the MVP
- * until it has defined product meaning.
+ * Slice 001 (Session / Interaction separation): host-authenticated
+ * only, re-invocable — callable once per interaction, any number of
+ * times, as long as the session is LOBBY_LOCKED and its current
+ * interaction instance (if any) is already RESULT_REVEAL. Requires
+ * host-supplied prompt text on every call; no longer selects from a
+ * fixed seeded prompt.
  *
  * The dynamic segment is named [identifier] for the same reason the
  * join/lock/complete/GET routes share it. Route is thin by design:
@@ -36,9 +42,11 @@ export async function POST(
   }
 
   let hostToken: unknown;
+  let promptText: unknown;
   try {
     const body = (await request.json()) as Record<string, unknown>;
     hostToken = body?.hostToken;
+    promptText = body?.promptText;
   } catch {
     return NextResponse.json(
       { error: "Request body must be valid JSON." },
@@ -53,10 +61,17 @@ export async function POST(
     );
   }
 
+  if (typeof promptText !== "string") {
+    return NextResponse.json(
+      { error: "promptText is required and must be a string." },
+      { status: 400 }
+    );
+  }
+
   const repo = new SupabaseSessionRepository(supabaseUrl, supabaseServiceKey);
 
   try {
-    const result = await startSession(repo, sessionId, hostToken);
+    const result = await startSession(repo, sessionId, hostToken, promptText);
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof SessionNotFoundError) {
@@ -67,6 +82,15 @@ export async function POST(
     }
     if (err instanceof LobbyNotLockedError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof PreviousInteractionNotRevealedError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    if (
+      err instanceof EmptyPromptTextError ||
+      err instanceof PromptTextTooLongError
+    ) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
 
     console.error("START_SESSION failed:", err);

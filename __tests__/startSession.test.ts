@@ -6,38 +6,99 @@ import { lockLobby } from "../lib/session/lockLobby";
 import { completeSession } from "../lib/session/completeSession";
 import { getSession } from "../lib/session/getSession";
 import { startSession } from "../lib/session/startSession";
+import { closeSubmissions } from "../lib/session/closeSubmissions";
+import { revealResults } from "../lib/session/revealResults";
 import { InMemorySessionRepository } from "../lib/session/db/inMemorySessionRepository";
 import {
   SessionNotFoundError,
   HostTokenMismatchError,
   LobbyNotLockedError,
+  PreviousInteractionNotRevealedError,
+  EmptyPromptTextError,
+  PromptTextTooLongError,
 } from "../lib/session/types";
 
 describe("START_SESSION", () => {
-  it("transitions a LOBBY_LOCKED session to PROMPT_ACTIVE and increments state_version", async () => {
+  it("creates a new interaction instance in PROMPT_ACTIVE for a LOBBY_LOCKED session", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
-    const result = await startSession(repo, session.sessionId, session.hostToken);
+    const result = await startSession(
+      repo,
+      session.sessionId,
+      session.hostToken,
+      "What's your favorite pizza topping?"
+    );
 
     expect(result.sessionId).toBe(session.sessionId);
     expect(result.state).toBe("PROMPT_ACTIVE");
-    expect(result.stateVersion).toBe(3); // 1 (create) -> 2 (lock) -> 3 (start)
-    expect(result.currentPromptId).toBeTruthy();
+    expect(result.interactionInstanceId).toBeTruthy();
+    expect(result.promptId).toBeTruthy();
   });
 
-  it("writes a SESSION_STARTED event with the selected promptId", async () => {
+  it("does not change the session's own state or state_version", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
-    const result = await startSession(repo, session.sessionId, session.hostToken);
+    await startSession(repo, session.sessionId, session.hostToken, "Prompt text");
+
+    const stored = await repo.getSessionById(session.sessionId);
+    expect(stored?.state).toBe("LOBBY_LOCKED");
+    expect(stored?.stateVersion).toBe(2); // 1 (create) -> 2 (lock), unchanged by start
+  });
+
+  it("writes an INTERACTION_STARTED event with the interaction instance and prompt ids", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+    await lockLobby(repo, session.sessionId, session.hostToken);
+
+    const result = await startSession(repo, session.sessionId, session.hostToken, "Prompt text");
     const events = repo._getEventsForSession(session.sessionId);
 
-    const startedEvent = events.find((e) => e.eventType === "SESSION_STARTED");
+    const startedEvent = events.find((e) => e.eventType === "INTERACTION_STARTED");
     expect(startedEvent).toBeDefined();
-    expect(startedEvent?.payload).toEqual({ promptId: result.currentPromptId });
+    expect(startedEvent?.payload).toEqual({
+      interactionInstanceId: result.interactionInstanceId,
+      promptId: result.promptId,
+    });
+  });
+
+  it("trims the host-supplied prompt text before persisting it", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+    await lockLobby(repo, session.sessionId, session.hostToken);
+
+    const result = await startSession(
+      repo,
+      session.sessionId,
+      session.hostToken,
+      "  Pizza night!  "
+    );
+
+    const prompt = await repo.getPromptById(result.promptId);
+    expect(prompt?.text).toBe("Pizza night!");
+  });
+
+  it("rejects an empty (post-trim) prompt", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+    await lockLobby(repo, session.sessionId, session.hostToken);
+
+    await expect(
+      startSession(repo, session.sessionId, session.hostToken, "   ")
+    ).rejects.toBeInstanceOf(EmptyPromptTextError);
+  });
+
+  it("rejects a prompt exceeding 1000 characters after trimming", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+    await lockLobby(repo, session.sessionId, session.hostToken);
+
+    await expect(
+      startSession(repo, session.sessionId, session.hostToken, "a".repeat(1001))
+    ).rejects.toBeInstanceOf(PromptTextTooLongError);
   });
 
   it("rejects starting a session that was never locked (still LOBBY_OPEN)", async () => {
@@ -45,19 +106,31 @@ describe("START_SESSION", () => {
     const session = await createSession(repo);
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken)
+      startSession(repo, session.sessionId, session.hostToken, "Prompt text")
     ).rejects.toBeInstanceOf(LobbyNotLockedError);
   });
 
-  it("rejects starting a session that has already started (PROMPT_ACTIVE)", async () => {
+  it("rejects starting again while the current interaction is still PROMPT_ACTIVE", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
-    await startSession(repo, session.sessionId, session.hostToken);
+    await startSession(repo, session.sessionId, session.hostToken, "First prompt");
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken)
-    ).rejects.toBeInstanceOf(LobbyNotLockedError);
+      startSession(repo, session.sessionId, session.hostToken, "Second prompt")
+    ).rejects.toBeInstanceOf(PreviousInteractionNotRevealedError);
+  });
+
+  it("rejects starting again while the current interaction is SUBMISSIONS_CLOSED", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+    await lockLobby(repo, session.sessionId, session.hostToken);
+    await startSession(repo, session.sessionId, session.hostToken, "First prompt");
+    await closeSubmissions(repo, session.sessionId, session.hostToken);
+
+    await expect(
+      startSession(repo, session.sessionId, session.hostToken, "Second prompt")
+    ).rejects.toBeInstanceOf(PreviousInteractionNotRevealedError);
   });
 
   it("rejects starting a session that was administratively completed", async () => {
@@ -67,7 +140,7 @@ describe("START_SESSION", () => {
     await completeSession(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken)
+      startSession(repo, session.sessionId, session.hostToken, "Prompt text")
     ).rejects.toBeInstanceOf(LobbyNotLockedError);
   });
 
@@ -77,19 +150,22 @@ describe("START_SESSION", () => {
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(repo, session.sessionId, "wrong-token")
+      startSession(repo, session.sessionId, "wrong-token", "Prompt text")
     ).rejects.toBeInstanceOf(HostTokenMismatchError);
 
-    const stored = await repo.getSessionById(session.sessionId);
-    expect(stored?.state).toBe("LOBBY_LOCKED");
-    expect(stored?.currentPromptId).toBeNull();
+    expect(repo._allInteractionInstances()).toHaveLength(0);
   });
 
   it("rejects a nonexistent session id", async () => {
     const repo = new InMemorySessionRepository();
 
     await expect(
-      startSession(repo, "11111111-1111-1111-1111-111111111111", "any-token")
+      startSession(
+        repo,
+        "11111111-1111-1111-1111-111111111111",
+        "any-token",
+        "Prompt text"
+      )
     ).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 
@@ -100,8 +176,8 @@ describe("START_SESSION", () => {
       await lockLobby(repo, session.sessionId, session.hostToken);
 
       const attempts = await Promise.allSettled([
-        startSession(repo, session.sessionId, session.hostToken),
-        startSession(repo, session.sessionId, session.hostToken),
+        startSession(repo, session.sessionId, session.hostToken, "Prompt A"),
+        startSession(repo, session.sessionId, session.hostToken, "Prompt B"),
       ]);
 
       const successes = attempts.filter((a) => a.status === "fulfilled");
@@ -109,9 +185,7 @@ describe("START_SESSION", () => {
 
       expect(successes).toHaveLength(1);
       expect(failures).toHaveLength(1);
-
-      const stored = await repo.getSessionById(session.sessionId);
-      expect(stored?.stateVersion).toBe(3);
+      expect(repo._allInteractionInstances()).toHaveLength(1);
     });
 
     it("in-memory proof: startSession independently rejects a session that is not LOBBY_LOCKED, even when called directly (bypassing the domain fast-path)", async () => {
@@ -119,7 +193,7 @@ describe("START_SESSION", () => {
       const session = await createSession(repo);
 
       await expect(
-        repo.startSession(session.sessionId, session.hostToken)
+        repo.startSession(session.sessionId, session.hostToken, "Prompt text")
       ).rejects.toBeInstanceOf(LobbyNotLockedError);
     });
 
@@ -129,16 +203,16 @@ describe("START_SESSION", () => {
       await lockLobby(repo, session.sessionId, session.hostToken);
 
       await expect(
-        repo.startSession(session.sessionId, "wrong-token")
+        repo.startSession(session.sessionId, "wrong-token", "Prompt text")
       ).rejects.toBeInstanceOf(HostTokenMismatchError);
     });
 
     it(
       "real Postgres contract proof NOT available in this environment — " +
-        "start_session_atomically's row-locked re-check (0008 migration) " +
-        "requires a live database connection to verify serialization behavior " +
-        "under true concurrency. The tests above prove the logic path; " +
-        "they do not prove Postgres row-lock serialization itself.",
+        "start_session_atomically's row-locked re-check requires a live " +
+        "database connection to verify serialization behavior under true " +
+        "concurrency. The tests above prove the logic path; they do not " +
+        "prove Postgres row-lock serialization itself.",
       () => {
         expect(true).toBe(true);
       }
@@ -146,31 +220,42 @@ describe("START_SESSION", () => {
   });
 
   describe("GET_SESSION integration", () => {
-    it("GET_SESSION returns the selected prompt once started", async () => {
+    it("GET_SESSION returns the created prompt and interactionNumber once started", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
       await lockLobby(repo, session.sessionId, session.hostToken);
-      const started = await startSession(repo, session.sessionId, session.hostToken);
+      const started = await startSession(
+        repo,
+        session.sessionId,
+        session.hostToken,
+        "Pizza night!"
+      );
 
       const result = await getSession(repo, session.sessionId, session.hostToken);
 
-      expect(result.state).toBe("PROMPT_ACTIVE");
+      expect(result.interactionState).toBe("PROMPT_ACTIVE");
+      expect(result.interactionNumber).toBe(1);
       expect(result.currentPrompt).not.toBeNull();
-      expect(result.currentPrompt?.promptId).toBe(started.currentPromptId);
-      expect(result.currentPrompt?.text).toBeTruthy();
+      expect(result.currentPrompt?.promptId).toBe(started.promptId);
+      expect(result.currentPrompt?.text).toBe("Pizza night!");
     });
 
     it("currentPrompt remains visible after the session is later completed", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
       await lockLobby(repo, session.sessionId, session.hostToken);
-      const started = await startSession(repo, session.sessionId, session.hostToken);
+      const started = await startSession(
+        repo,
+        session.sessionId,
+        session.hostToken,
+        "Prompt text"
+      );
       await completeSession(repo, session.sessionId, session.hostToken);
 
       const result = await getSession(repo, session.sessionId, session.hostToken);
 
       expect(result.state).toBe("SESSION_COMPLETE");
-      expect(result.currentPrompt?.promptId).toBe(started.currentPromptId);
+      expect(result.currentPrompt?.promptId).toBe(started.promptId);
     });
   });
 
@@ -179,14 +264,92 @@ describe("START_SESSION", () => {
     const session = await createSession(repo);
     const participant = await joinSession(repo, session.roomCode, "Alex");
     await lockLobby(repo, session.sessionId, session.hostToken);
-    await startSession(repo, session.sessionId, session.hostToken);
+    await startSession(repo, session.sessionId, session.hostToken, "Prompt text");
 
     const result = await getSession(repo, session.sessionId, session.hostToken);
 
-    expect(result.state).toBe("PROMPT_ACTIVE");
+    expect(result.interactionState).toBe("PROMPT_ACTIVE");
     expect(result.currentPrompt).not.toBeNull();
     expect(result.participants).toEqual([
       { participantId: participant.participantId, displayName: "Alex" },
     ]);
+  });
+
+  describe("sequential interactions (the motivating capability this slice adds)", () => {
+    it("allows a second interaction to start once the first has been revealed", async () => {
+      const repo = new InMemorySessionRepository();
+      const session = await createSession(repo);
+      await lockLobby(repo, session.sessionId, session.hostToken);
+
+      const first = await startSession(
+        repo,
+        session.sessionId,
+        session.hostToken,
+        "First prompt"
+      );
+      await closeSubmissions(repo, session.sessionId, session.hostToken);
+      await revealResults(repo, session.sessionId, session.hostToken);
+
+      const second = await startSession(
+        repo,
+        session.sessionId,
+        session.hostToken,
+        "Second prompt"
+      );
+
+      expect(second.interactionInstanceId).not.toBe(first.interactionInstanceId);
+      expect(second.promptId).not.toBe(first.promptId);
+      expect(second.state).toBe("PROMPT_ACTIVE");
+
+      const instances = repo._allInteractionInstances();
+      expect(instances).toHaveLength(2);
+
+      const result = await getSession(repo, session.sessionId, session.hostToken);
+      expect(result.interactionNumber).toBe(2);
+      expect(result.currentPrompt?.promptId).toBe(second.promptId);
+    });
+
+    it("GET_SESSION's current interaction is always the most recently started one, and interactionNumber counts all of them", async () => {
+      const repo = new InMemorySessionRepository();
+      const session = await createSession(repo);
+      await lockLobby(repo, session.sessionId, session.hostToken);
+
+      await startSession(repo, session.sessionId, session.hostToken, "Prompt 1");
+      await closeSubmissions(repo, session.sessionId, session.hostToken);
+      await revealResults(repo, session.sessionId, session.hostToken);
+
+      await startSession(repo, session.sessionId, session.hostToken, "Prompt 2");
+      await closeSubmissions(repo, session.sessionId, session.hostToken);
+      await revealResults(repo, session.sessionId, session.hostToken);
+
+      const third = await startSession(
+        repo,
+        session.sessionId,
+        session.hostToken,
+        "Prompt 3"
+      );
+
+      const result = await getSession(repo, session.sessionId, session.hostToken);
+      expect(result.interactionNumber).toBe(3);
+      expect(result.interactionState).toBe("PROMPT_ACTIVE");
+      expect(result.currentPrompt?.promptId).toBe(third.promptId);
+    });
+
+    it("a prior interaction's submissions are not exposed as the current interaction's submissions", async () => {
+      const repo = new InMemorySessionRepository();
+      const session = await createSession(repo);
+      await lockLobby(repo, session.sessionId, session.hostToken);
+
+      await startSession(repo, session.sessionId, session.hostToken, "Prompt 1");
+      await closeSubmissions(repo, session.sessionId, session.hostToken);
+      await revealResults(repo, session.sessionId, session.hostToken);
+
+      await startSession(repo, session.sessionId, session.hostToken, "Prompt 2");
+
+      const result = await getSession(repo, session.sessionId, session.hostToken);
+      // Current interaction is PROMPT_ACTIVE, so submissions stays null —
+      // the first interaction's revealed submissions must not leak through.
+      expect(result.submissions).toBeNull();
+    });
   });
 });

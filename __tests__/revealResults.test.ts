@@ -21,29 +21,46 @@ async function setupClosedSession(repo: InMemorySessionRepository) {
   const alex = await joinSession(repo, session.roomCode, "Alex");
   const jordan = await joinSession(repo, session.roomCode, "Jordan");
   await lockLobby(repo, session.sessionId, session.hostToken);
-  await startSession(repo, session.sessionId, session.hostToken);
+  const interaction = await startSession(
+    repo,
+    session.sessionId,
+    session.hostToken,
+    "Prompt text"
+  );
   await submitResponse(repo, session.sessionId, alex.participantToken, "Alex's answer");
   await submitResponse(repo, session.sessionId, jordan.participantToken, "Jordan's answer");
   await closeSubmissions(repo, session.sessionId, session.hostToken);
-  return { session, alex, jordan };
+  return { session, alex, jordan, interaction };
 }
 
 describe("REVEAL_RESULTS", () => {
-  it("transitions a SUBMISSIONS_CLOSED session to RESULT_REVEAL", async () => {
+  it("transitions the current interaction instance from SUBMISSIONS_CLOSED to RESULT_REVEAL", async () => {
     const repo = new InMemorySessionRepository();
-    const { session } = await setupClosedSession(repo);
+    const { session, interaction } = await setupClosedSession(repo);
 
     const result = await revealResults(repo, session.sessionId, session.hostToken);
 
+    expect(result.sessionId).toBe(session.sessionId);
+    expect(result.interactionInstanceId).toBe(interaction.interactionInstanceId);
     expect(result.state).toBe("RESULT_REVEAL");
-    expect(result.stateVersion).toBe(5); // create,lock,start,close,reveal
+  });
+
+  it("does not change the session's own state or state_version", async () => {
+    const repo = new InMemorySessionRepository();
+    const { session } = await setupClosedSession(repo);
+
+    await revealResults(repo, session.sessionId, session.hostToken);
+
+    const stored = await repo.getSessionById(session.sessionId);
+    expect(stored?.state).toBe("LOBBY_LOCKED");
+    expect(stored?.stateVersion).toBe(2); // create(1) -> lock(2), unchanged thereafter
   });
 
   it("rejects revealing before submissions are closed (PROMPT_ACTIVE)", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
-    await startSession(repo, session.sessionId, session.hostToken);
+    await startSession(repo, session.sessionId, session.hostToken, "Prompt text");
 
     await expect(
       revealResults(repo, session.sessionId, session.hostToken)
@@ -74,7 +91,7 @@ describe("REVEAL_RESULTS", () => {
 
     const result = await getSession(repo, session.sessionId, session.hostToken);
 
-    expect(result.state).toBe("RESULT_REVEAL");
+    expect(result.interactionState).toBe("RESULT_REVEAL");
     expect(result.submissions).toEqual(
       expect.arrayContaining([
         { participantId: alex.participantId, displayName: "Alex", text: "Alex's answer" },
@@ -123,6 +140,42 @@ describe("REVEAL_RESULTS", () => {
       ]);
 
       expect(attempts.filter((a) => a.status === "fulfilled")).toHaveLength(1);
+    });
+  });
+
+  describe("sequential interactions (the motivating capability this slice adds)", () => {
+    it("full two-interaction loop within one session: start -> submit -> close -> reveal, twice", async () => {
+      const repo = new InMemorySessionRepository();
+      const { session, alex, jordan } = await setupClosedSession(repo);
+      const firstReveal = await revealResults(repo, session.sessionId, session.hostToken);
+      expect(firstReveal.state).toBe("RESULT_REVEAL");
+
+      const second = await startSession(
+        repo,
+        session.sessionId,
+        session.hostToken,
+        "Second prompt"
+      );
+      await submitResponse(repo, session.sessionId, alex.participantToken, "Alex round 2");
+      await submitResponse(repo, session.sessionId, jordan.participantToken, "Jordan round 2");
+      await closeSubmissions(repo, session.sessionId, session.hostToken);
+      const secondReveal = await revealResults(repo, session.sessionId, session.hostToken);
+
+      expect(secondReveal.interactionInstanceId).toBe(second.interactionInstanceId);
+      expect(secondReveal.state).toBe("RESULT_REVEAL");
+
+      const result = await getSession(repo, session.sessionId, session.hostToken);
+      expect(result.interactionNumber).toBe(2);
+      expect(result.submissions).toEqual(
+        expect.arrayContaining([
+          { participantId: alex.participantId, displayName: "Alex", text: "Alex round 2" },
+          { participantId: jordan.participantId, displayName: "Jordan", text: "Jordan round 2" },
+        ])
+      );
+
+      const instances = repo._allInteractionInstances();
+      expect(instances).toHaveLength(2);
+      expect(instances.every((i) => i.state === "RESULT_REVEAL")).toBe(true);
     });
   });
 });

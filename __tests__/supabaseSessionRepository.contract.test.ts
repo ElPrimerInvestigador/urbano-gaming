@@ -197,21 +197,28 @@ describe("SupabaseSessionRepository contract", () => {
  * These tests exist to prove each atomic Postgres function actually
  * executes and returns the expected shape against a real, live
  * database — not to re-cover the exhaustive edge cases and error paths
- * already exercised by the in-memory repository's 106 behavioral
+ * already exercised by the in-memory repository's 121 behavioral
  * tests. One coherent, realistic sequence per concern, not a matrix.
  *
  * Motivation: a live human playtest found two real bugs (ambiguous
  * column references between RETURNS TABLE output parameters and
  * identically-named source columns) in lockLobby/startSession/
  * completeSession/closeSubmissions/revealResults and submitResponse —
- * bugs that 106 passing in-memory tests could never have caught, since
- * SQL identifier resolution doesn't exist in a plain JS test double.
- * This suite exists specifically to catch that class of bug
- * automatically, going forward, rather than depending on a human to
- * manually click through the full loop again.
+ * bugs that passing in-memory tests could never have caught, since SQL
+ * identifier resolution doesn't exist in a plain JS test double. This
+ * suite exists specifically to catch that class of bug automatically,
+ * going forward, rather than depending on a human to manually click
+ * through the full loop again.
+ *
+ * Slice 001 (Session / Interaction separation): startSession,
+ * submitResponse, closeSubmissions, and revealResults now resolve and
+ * mutate the session's *current interaction instance*, not the
+ * session's own state/state_version — the session stays LOBBY_LOCKED
+ * (state_version 2, set by LOCK_LOBBY) through every interaction it
+ * runs, only moving again at COMPLETE_SESSION.
  */
 describe("SupabaseSessionRepository contract — full lifecycle against live Postgres", () => {
-  it("exercises every remaining atomic function through one complete, realistic session lifecycle", async () => {
+  it("exercises every remaining atomic function through one complete, realistic session lifecycle, including a second sequential interaction", async () => {
     // CREATE_SESSION
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
@@ -236,18 +243,26 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
     });
     expect(lockResult).toEqual({ state: "LOBBY_LOCKED", stateVersion: 2 });
 
-    // START_SESSION
-    const startResult = await repository.startSession(session.sessionId, session.hostToken);
-    expect(startResult.state).toBe("PROMPT_ACTIVE");
-    expect(startResult.stateVersion).toBe(3);
-    expect(startResult.currentPromptId).toBeTruthy();
+    // START_SESSION — first interaction
+    const firstStart = await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "Initial contract-test prompt"
+    );
+    expect(firstStart.state).toBe("PROMPT_ACTIVE");
+    expect(firstStart.interactionInstanceId).toBeTruthy();
+    expect(firstStart.promptId).toBeTruthy();
 
     // GET_SESSION's prompt hydration path
-    const prompt = await repository.getPromptById(startResult.currentPromptId);
+    const prompt = await repository.getPromptById(firstStart.promptId);
     expect(prompt).not.toBeNull();
-    expect(prompt?.promptId).toBe(startResult.currentPromptId);
-    expect(typeof prompt?.text).toBe("string");
-    expect(prompt?.text.length).toBeGreaterThan(0);
+    expect(prompt?.promptId).toBe(firstStart.promptId);
+    expect(prompt?.text).toBe("Initial contract-test prompt");
+
+    // Session's own state/state_version are untouched by START_SESSION.
+    const afterFirstStart = await repository.getSessionById(session.sessionId);
+    expect(afterFirstStart?.state).toBe("LOBBY_LOCKED");
+    expect(afterFirstStart?.stateVersion).toBe(2);
 
     // SUBMIT_RESPONSE — initial submission
     const firstSubmit = await repository.submitResponse(
@@ -257,7 +272,8 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
       "Initial contract-test response"
     );
     expect(firstSubmit.submissionId).toBeTruthy();
-    expect(firstSubmit.promptId).toBe(startResult.currentPromptId);
+    expect(firstSubmit.interactionInstanceId).toBe(firstStart.interactionInstanceId);
+    expect(firstSubmit.promptId).toBe(firstStart.promptId);
 
     // SUBMIT_RESPONSE — revision, proving the live ON CONFLICT upsert
     // ("last write wins") actually works against real Postgres, not
@@ -270,9 +286,12 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
     );
     expect(secondSubmit.submissionId).toBe(firstSubmit.submissionId);
 
-    const submissions = await repository.getSubmissionsForSession(session.sessionId);
-    expect(submissions).toHaveLength(1);
-    expect(submissions[0].text).toBe("Revised contract-test response");
+    const firstInteractionSubmissions =
+      await repository.getSubmissionsForInteractionInstance(
+        firstStart.interactionInstanceId
+      );
+    expect(firstInteractionSubmissions).toHaveLength(1);
+    expect(firstInteractionSubmissions[0].text).toBe("Revised contract-test response");
 
     // CLOSE_SUBMISSIONS
     const closeResult = await repository.closeSubmissions(session.sessionId, session.hostToken, {
@@ -280,7 +299,10 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
       eventType: "SUBMISSIONS_CLOSED",
       payload: {},
     });
-    expect(closeResult).toEqual({ state: "SUBMISSIONS_CLOSED", stateVersion: 4 });
+    expect(closeResult).toEqual({
+      interactionInstanceId: firstStart.interactionInstanceId,
+      state: "SUBMISSIONS_CLOSED",
+    });
 
     // REVEAL_RESULTS
     const revealResult = await repository.revealResults(session.sessionId, session.hostToken, {
@@ -288,7 +310,63 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
       eventType: "RESULTS_REVEALED",
       payload: {},
     });
-    expect(revealResult).toEqual({ state: "RESULT_REVEAL", stateVersion: 5 });
+    expect(revealResult).toEqual({
+      interactionInstanceId: firstStart.interactionInstanceId,
+      state: "RESULT_REVEAL",
+    });
+
+    // START_SESSION — second interaction, proving the re-invocable
+    // Slice 001 capability against real Postgres: re-invoking START_SESSION
+    // is only legal once the previous interaction instance is RESULT_REVEAL,
+    // and the row-locked re-check inside start_session_atomically must
+    // authoritatively confirm that, not just this test's own lookups.
+    const secondStart = await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "Second contract-test prompt"
+    );
+    expect(secondStart.state).toBe("PROMPT_ACTIVE");
+    expect(secondStart.interactionInstanceId).not.toBe(firstStart.interactionInstanceId);
+    expect(secondStart.promptId).not.toBe(firstStart.promptId);
+
+    const instances = await repository.getInteractionInstancesForSession(session.sessionId);
+    expect(instances).toHaveLength(2);
+    expect(instances[0].interactionInstanceId).toBe(firstStart.interactionInstanceId);
+    expect(instances[0].state).toBe("RESULT_REVEAL");
+    expect(instances[1].interactionInstanceId).toBe(secondStart.interactionInstanceId);
+    expect(instances[1].state).toBe("PROMPT_ACTIVE");
+
+    // The first interaction's submissions must not bleed into the second.
+    const secondInteractionSubmissionsBeforeSubmit =
+      await repository.getSubmissionsForInteractionInstance(
+        secondStart.interactionInstanceId
+      );
+    expect(secondInteractionSubmissionsBeforeSubmit).toHaveLength(0);
+
+    await repository.submitResponse(
+      session.sessionId,
+      participant.participantId,
+      participant.participantToken,
+      "Second interaction response"
+    );
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+    const secondReveal = await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+    expect(secondReveal.interactionInstanceId).toBe(secondStart.interactionInstanceId);
+    expect(secondReveal.state).toBe("RESULT_REVEAL");
+
+    // Session's own state/state_version remain untouched by any of the
+    // interaction-level activity above.
+    const beforeComplete = await repository.getSessionById(session.sessionId);
+    expect(beforeComplete?.state).toBe("LOBBY_LOCKED");
+    expect(beforeComplete?.stateVersion).toBe(2);
 
     // COMPLETE_SESSION
     const completeResult = await repository.completeSession(session.sessionId, session.hostToken, {
@@ -296,7 +374,7 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
       eventType: "SESSION_COMPLETED",
       payload: {},
     });
-    expect(completeResult).toEqual({ state: "SESSION_COMPLETE", stateVersion: 6 });
+    expect(completeResult).toEqual({ state: "SESSION_COMPLETE", stateVersion: 3 });
 
     // Room-code reuse mechanism, proven live: a completed session's
     // room code is no longer resolvable as active.

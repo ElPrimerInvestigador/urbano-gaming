@@ -1,4 +1,4 @@
-import type { SessionRecord, SessionState } from "../types";
+import type { SessionRecord, SessionState, InteractionState } from "../types";
 
 export interface SessionEventRecord {
   sessionId: string;
@@ -38,9 +38,45 @@ export interface PromptRecord {
   text: string;
 }
 
+/**
+ * Slice 001 (Session / Interaction separation). One executable Open
+ * Response interaction inside a session. Sessions may now run zero,
+ * one, or many of these sequentially — each owns its own prompt and
+ * its own PROMPT_ACTIVE / SUBMISSIONS_CLOSED / RESULT_REVEAL
+ * lifecycle, independent of the session's own (now narrower)
+ * lifecycle.
+ *
+ * Deliberately has no stored sequence number and no stored
+ * state_version — see 0015's migration comment for why both were
+ * cut during the accepted design's stress test. Ordering and
+ * "current" are both derived from createdAt, never stored.
+ */
+export interface InteractionInstanceRecord {
+  interactionInstanceId: string;
+  sessionId: string;
+  promptId: string;
+  state: InteractionState;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InteractionStartedEventRecord extends SessionEventRecord {
+  eventType: "INTERACTION_STARTED";
+  payload: {
+    interactionInstanceId: string;
+    promptId: string;
+  };
+}
+
 export interface SubmissionRecord {
   submissionId: string;
   sessionId: string;
+  /**
+   * Slice 001: the authoritative scope a submission belongs to.
+   * promptId is retained alongside it as harmless denormalization
+   * (see 0016's migration comment) rather than removed.
+   */
+  interactionInstanceId: string;
   participantId: string;
   promptId: string;
   text: string;
@@ -52,6 +88,7 @@ export interface ResponseSubmittedEventRecord extends SessionEventRecord {
   eventType: "RESPONSE_SUBMITTED";
   payload: {
     participantId: string;
+    interactionInstanceId: string;
     promptId: string;
   };
 }
@@ -157,7 +194,11 @@ export interface SessionRepository {
    *
    * Per Interpretation 2 (administrative termination): this is callable
    * from any state except SESSION_COMPLETE itself — there is no single
-   * required source state the way LOCK_LOBBY requires LOBBY_OPEN.
+   * required source state the way LOCK_LOBBY requires LOBBY_OPEN. This
+   * remains true unchanged by Slice 001: completing while an
+   * interaction instance is still PROMPT_ACTIVE (or any other
+   * interaction state) is explicitly supported — that interaction
+   * instance simply stays at whatever state it was in, as history.
    *
    * Implementations must:
    * - commit the state transition and its event, or neither;
@@ -177,141 +218,179 @@ export interface SessionRepository {
 
   /**
    * Look up a single prompt by id. Returns null if it doesn't exist.
-   * Used by GET_SESSION to hydrate currentPrompt.
+   * Used by GET_SESSION to hydrate the current interaction instance's
+   * prompt.
    */
   getPromptById(promptId: string): Promise<PromptRecord | null>;
 
   /**
-   * Atomically re-verify the supplied host token and that the session is
-   * LOBBY_LOCKED, select a prompt, and transition the session to
-   * PROMPT_ACTIVE, increment state_version, set current_prompt_id, and
-   * persist the SESSION_STARTED event (with the selected promptId in its
-   * payload) — as one atomic operation.
+   * Slice 001: list every interaction instance for a session, ordered
+   * by createdAt ascending. Callers derive "the current interaction"
+   * as the last element (or null if the array is empty — no
+   * interaction has been started yet) and "interactionNumber" as the
+   * array's length. Not filtered by state — GET_SESSION must be able
+   * to read this regardless of session state.
    *
-   * Unlike lockLobby/completeSession, this method does not take an event
-   * argument: the event payload depends on which prompt gets selected,
-   * and prompt selection happens inside this atomic operation itself
-   * (not beforehand in the domain layer) so that a future, richer
-   * selection strategy — random, round-robin, exclude-already-used —
-   * can be introduced later without opening a race between two
-   * concurrent starts. Today, with exactly one prompt seeded, selection
-   * is trivially deterministic; only the selection step itself would
-   * need to change later, not this method's shape.
+   * Deliberately returns the full list rather than exposing separate
+   * "current" and "count" methods: one query covers both needs (see
+   * the accepted Slice 001 design's stress test on avoiding a stored
+   * sequence number or a stored "current" pointer).
+   */
+  getInteractionInstancesForSession(
+    sessionId: string
+  ): Promise<InteractionInstanceRecord[]>;
+
+  /**
+   * Slice 001. Atomically re-verify the supplied host token and that
+   * the session is LOBBY_LOCKED, re-verify that the session's current
+   * interaction instance (if any) is at RESULT_REVEAL, insert a new
+   * prompt from the supplied text, create a new interaction instance
+   * referencing it in PROMPT_ACTIVE, and persist an INTERACTION_STARTED
+   * event — as one atomic operation.
    *
-   * current_prompt_id is an explicit MVP optimization, not a
-   * commitment to the long-term gameplay model — a future "rounds"
-   * concept may eventually own prompt selection instead of the session
-   * row directly.
+   * Re-invocable: unlike the pre-Slice-001 START_SESSION, this may be
+   * called once per interaction, any number of times, for the same
+   * session — not once per session's entire lifetime. The session's
+   * own state and state_version are never touched by this call.
    *
    * Implementations must:
-   * - commit the state transition and its event, or neither;
+   * - commit the prompt insert, the interaction instance insert, and
+   *   the event, or none of them;
    * - re-verify the host token and session state inside the atomic
    *   operation itself, not merely trust an earlier caller-side check;
+   * - re-verify the current interaction instance's state (if one
+   *   exists) inside the same atomic operation, closing the race
+   *   window between two concurrent start attempts;
    * - throw SessionNotFoundError only when no session exists for the id;
    * - throw HostTokenMismatchError only on a host-token mismatch;
    * - throw LobbyNotLockedError only when the session is not
    *   LOBBY_LOCKED;
-   * - return the authoritative post-transition state, state_version,
-   *   and the selected currentPromptId.
+   * - throw PreviousInteractionNotRevealedError only when a current
+   *   interaction instance exists and is not at RESULT_REVEAL;
+   * - throw EmptyPromptTextError / PromptTextTooLongError only for the
+   *   corresponding validation failure;
+   * - return the newly created interaction instance's id, prompt id,
+   *   and state.
    */
   startSession(
     sessionId: string,
-    hostToken: string
+    hostToken: string,
+    promptText: string
   ): Promise<{
-    state: SessionState;
-    stateVersion: number;
-    currentPromptId: string;
+    interactionInstanceId: string;
+    promptId: string;
+    state: InteractionState;
   }>;
 
   /**
    * Atomically re-verify that the supplied participant token belongs to
    * the given participant of this session, that the session is
-   * PROMPT_ACTIVE, then upsert the participant's response to the
-   * session's current prompt (one submission per participant per
-   * prompt — a second call replaces the first, "last write wins") and
-   * persist a RESPONSE_SUBMITTED event.
+   * LOBBY_LOCKED, and that the session's current interaction instance
+   * is PROMPT_ACTIVE, then upsert the participant's response to that
+   * interaction instance (one submission per participant per
+   * interaction instance — a second call replaces the first, "last
+   * write wins") and persist a RESPONSE_SUBMITTED event.
    *
    * "Last write wins" is an explicit MVP implementation decision, not a
    * permanent gameplay rule — see SubmitResponseResult.
    *
    * Like startSession, this method does not take an event argument: the
-   * event payload depends on the session's current_prompt_id, which
-   * must be re-read authoritatively inside this same atomic operation
-   * (not trusted from an earlier domain-layer read), so the payload is
-   * built here, not by the caller.
+   * event payload depends on which interaction instance is current,
+   * which must be re-read authoritatively inside this same atomic
+   * operation (not trusted from an earlier domain-layer read), so the
+   * payload is built here, not by the caller.
    *
    * Implementations must:
    * - commit the submission and its event, or neither;
    * - re-verify the participant token and session state inside the
    *   atomic operation itself, not merely trust an earlier caller-side
    *   check;
+   * - re-resolve the current interaction instance inside the same
+   *   atomic operation;
    * - throw SessionNotFoundError only when no session exists for the id;
    * - throw SessionAccessDeniedError only when the token does not match
    *   the given participant of this session;
    * - throw PromptNotActiveError only when the session is not
-   *   PROMPT_ACTIVE;
+   *   LOBBY_LOCKED, or no interaction instance exists, or the current
+   *   one is not PROMPT_ACTIVE;
    * - throw EmptyResponseError / ResponseTooLongError only for the
    *   corresponding validation failure;
-   * - return the resulting submissionId, the session's current
-   *   promptId, and updatedAt.
+   * - return the resulting submissionId, the interaction instance's id
+   *   and promptId, and updatedAt.
    */
   submitResponse(
     sessionId: string,
     participantId: string,
     participantToken: string,
     text: string
-  ): Promise<{ submissionId: string; promptId: string; updatedAt: string }>;
+  ): Promise<{
+    submissionId: string;
+    interactionInstanceId: string;
+    promptId: string;
+    updatedAt: string;
+  }>;
 
   /**
-   * List all submissions for a session. Not filtered by prompt — for
-   * this MVP there is only ever one prompt per session, so this is
-   * equivalent to "submissions for the current prompt," but the shape
-   * doesn't assume that going forward.
+   * Slice 001: list all submissions for one interaction instance. Not
+   * filtered by state — GET_SESSION's own state-based visibility rule
+   * (submissions only surfaced once RESULT_REVEAL) is applied by the
+   * domain layer, not this method.
    */
-  getSubmissionsForSession(sessionId: string): Promise<SubmissionRecord[]>;
+  getSubmissionsForInteractionInstance(
+    interactionInstanceId: string
+  ): Promise<SubmissionRecord[]>;
 
   /**
-   * Atomically re-verify the supplied host token and that the session
-   * is PROMPT_ACTIVE, then transition it to SUBMISSIONS_CLOSED,
-   * increment state_version, and persist the SUBMISSIONS_CLOSED event —
-   * as one atomic operation, mirroring lockLobby's authoritative
-   * re-check.
+   * Atomically re-verify the supplied host token, that the session is
+   * LOBBY_LOCKED, and that the session's current interaction instance
+   * is PROMPT_ACTIVE, then transition that interaction instance to
+   * SUBMISSIONS_CLOSED and persist the SUBMISSIONS_CLOSED event — as
+   * one atomic operation, mirroring lockLobby's authoritative re-check.
    *
    * Implementations must:
    * - commit the state transition and its event, or neither;
    * - re-verify the host token and session state inside the atomic
    *   operation itself;
+   * - re-resolve the current interaction instance inside the same
+   *   atomic operation;
    * - throw SessionNotFoundError only when no session exists for the id;
    * - throw HostTokenMismatchError only on a host-token mismatch;
    * - throw PromptNotActiveError only when the session is not
-   *   PROMPT_ACTIVE;
-   * - return the authoritative post-transition state and state_version.
+   *   LOBBY_LOCKED, or no interaction instance exists, or the current
+   *   one is not PROMPT_ACTIVE;
+   * - return the interaction instance's id and its post-transition
+   *   state.
    */
   closeSubmissions(
     sessionId: string,
     hostToken: string,
     event: SubmissionsClosedEventRecord
-  ): Promise<{ state: SessionState; stateVersion: number }>;
+  ): Promise<{ interactionInstanceId: string; state: InteractionState }>;
 
   /**
-   * Atomically re-verify the supplied host token and that the session
-   * is SUBMISSIONS_CLOSED, then transition it to RESULT_REVEAL,
-   * increment state_version, and persist the RESULTS_REVEALED event —
-   * as one atomic operation.
+   * Atomically re-verify the supplied host token, that the session is
+   * LOBBY_LOCKED, and that the session's current interaction instance
+   * is SUBMISSIONS_CLOSED, then transition that interaction instance to
+   * RESULT_REVEAL and persist the RESULTS_REVEALED event — as one
+   * atomic operation.
    *
    * Implementations must:
    * - commit the state transition and its event, or neither;
    * - re-verify the host token and session state inside the atomic
    *   operation itself;
+   * - re-resolve the current interaction instance inside the same
+   *   atomic operation;
    * - throw SessionNotFoundError only when no session exists for the id;
    * - throw HostTokenMismatchError only on a host-token mismatch;
    * - throw SubmissionsNotClosedError only when the session is not
-   *   SUBMISSIONS_CLOSED;
-   * - return the authoritative post-transition state and state_version.
+   *   LOBBY_LOCKED, or no interaction instance exists, or the current
+   *   one is not SUBMISSIONS_CLOSED;
+   * - return the interaction instance's id and its post-transition
+   *   state.
    */
   revealResults(
     sessionId: string,
     hostToken: string,
     event: ResultsRevealedEventRecord
-  ): Promise<{ state: SessionState; stateVersion: number }>;
+  ): Promise<{ interactionInstanceId: string; state: InteractionState }>;
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { SessionRecord } from "../types";
+import type { SessionRecord, InteractionState } from "../types";
 import {
   RoomCodeCollisionError,
   DisplayNameTakenError,
@@ -11,6 +11,9 @@ import {
   SessionAccessDeniedError,
   PromptNotActiveError,
   SubmissionsNotClosedError,
+  PreviousInteractionNotRevealedError,
+  EmptyPromptTextError,
+  PromptTextTooLongError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -19,20 +22,14 @@ import type {
   LobbyLockedEventRecord,
   SessionCompletedEventRecord,
   PromptRecord,
+  InteractionInstanceRecord,
   SubmissionRecord,
   SubmissionsClosedEventRecord,
   ResultsRevealedEventRecord,
   SessionRepository,
 } from "./sessionRepository";
 
-/**
- * Engineering seed prompt — placeholder content whose only purpose is
- * validating the START_SESSION pipeline (transition, persistence,
- * GET_SESSION integration). Not production copy; replace freely without
- * any architectural impact.
- */
-const ENGINEERING_SEED_PROMPT_TEXT =
-  "[ENGINEERING SEED PROMPT — placeholder, not production copy] What's one thing you're looking forward to this week?";
+const MAX_PROMPT_TEXT_LENGTH = 1000;
 
 /**
  * In-memory test double.
@@ -54,21 +51,45 @@ export class InMemorySessionRepository implements SessionRepository {
 
   private submissions = new Map<string, SubmissionRecord>();
 
+  private prompts = new Map<string, PromptRecord>();
+
   /**
-   * Seeded with exactly one prompt at construction, mirroring the
-   * production migration's single-row seed. current_prompt_id is an
-   * explicit MVP optimization, not a commitment to the long-term
-   * gameplay model.
+   * Slice 001 (Session / Interaction separation). No seeded content —
+   * unlike prompts, which were previously seeded with one fixed row,
+   * interaction instances (and the prompts that back them) are always
+   * created dynamically from host-supplied text via startSession.
    */
-  private prompts = new Map<string, PromptRecord>([
-    (() => {
-      const promptId = randomUUID();
-      return [
-        promptId,
-        { promptId, text: ENGINEERING_SEED_PROMPT_TEXT },
-      ] as const;
-    })(),
-  ]);
+  private interactionInstances = new Map<string, InteractionInstanceRecord>();
+
+  /**
+   * The current interaction instance for a session is "the most
+   * recently created one" — never a stored pointer (see the accepted
+   * Slice 001 design's stress test). Returns null if no interaction
+   * has ever been started for this session.
+   */
+  private getCurrentInteractionInstance(
+    sessionId: string
+  ): InteractionInstanceRecord | null {
+    const instances = [...this.interactionInstances.values()]
+      .filter((instance) => instance.sessionId === sessionId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+    return instances.length > 0 ? instances[instances.length - 1] : null;
+  }
+
+  private validateAndTrimPromptText(text: string): string {
+    const trimmed = text.trim();
+
+    if (trimmed.length === 0) {
+      throw new EmptyPromptTextError();
+    }
+
+    if (trimmed.length > MAX_PROMPT_TEXT_LENGTH) {
+      throw new PromptTextTooLongError();
+    }
+
+    return trimmed;
+  }
 
   async createSession(
     record: SessionRecord,
@@ -278,13 +299,22 @@ export class InMemorySessionRepository implements SessionRepository {
     return this.prompts.get(promptId) ?? null;
   }
 
+  async getInteractionInstancesForSession(
+    sessionId: string
+  ): Promise<InteractionInstanceRecord[]> {
+    return [...this.interactionInstances.values()]
+      .filter((instance) => instance.sessionId === sessionId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
   async startSession(
     sessionId: string,
-    hostToken: string
+    hostToken: string,
+    promptText: string
   ): Promise<{
-    state: SessionRecord["state"];
-    stateVersion: number;
-    currentPromptId: string;
+    interactionInstanceId: string;
+    promptId: string;
+    state: InteractionState;
   }> {
     // Authoritative host-token and session-state re-check, independent of
     // any earlier application-layer lookup. Mirrors
@@ -304,32 +334,41 @@ export class InMemorySessionRepository implements SessionRepository {
       throw new LobbyNotLockedError(session.state);
     }
 
-    // Prompt selection swap point: today, exactly one prompt exists, so
-    // this is trivially deterministic. A future selection strategy
-    // (random, round-robin, exclude-already-used) replaces only this
-    // line — no change to anything above or below it.
-    const [selectedPrompt] = this.prompts.values();
+    const trimmedPromptText = this.validateAndTrimPromptText(promptText);
 
-    const updated: SessionRecord = {
-      ...session,
+    // Re-invocable precondition: the session's current interaction
+    // instance, if any, must already be RESULT_REVEAL before another
+    // one may begin.
+    const previousInteraction = this.getCurrentInteractionInstance(sessionId);
+    if (previousInteraction && previousInteraction.state !== "RESULT_REVEAL") {
+      throw new PreviousInteractionNotRevealedError(previousInteraction.state);
+    }
+
+    const now = new Date().toISOString();
+    const promptId = randomUUID();
+    this.prompts.set(promptId, { promptId, text: trimmedPromptText });
+
+    const interactionInstanceId = randomUUID();
+    const interactionInstance: InteractionInstanceRecord = {
+      interactionInstanceId,
+      sessionId,
+      promptId,
       state: "PROMPT_ACTIVE",
-      currentPromptId: selectedPrompt.promptId,
-      stateVersion: session.stateVersion + 1,
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
-
-    this.sessions.set(sessionId, updated);
+    this.interactionInstances.set(interactionInstanceId, interactionInstance);
 
     this.events.push({
       sessionId,
-      eventType: "SESSION_STARTED",
-      payload: { promptId: selectedPrompt.promptId },
+      eventType: "INTERACTION_STARTED",
+      payload: { interactionInstanceId, promptId },
     });
 
     return {
-      state: updated.state,
-      stateVersion: updated.stateVersion,
-      currentPromptId: selectedPrompt.promptId,
+      interactionInstanceId,
+      promptId,
+      state: "PROMPT_ACTIVE",
     };
   }
 
@@ -338,13 +377,18 @@ export class InMemorySessionRepository implements SessionRepository {
     participantId: string,
     participantToken: string,
     text: string
-  ): Promise<{ submissionId: string; promptId: string; updatedAt: string }> {
-    // Authoritative participant-token and session-state re-check,
-    // independent of any earlier application-layer lookup. Mirrors
-    // submit_response_atomically's row-locked re-check in the real
-    // database function. Also re-reads current_prompt_id here (not
-    // trusting an earlier domain-layer read) since that's what the
-    // submission and its event are scoped to.
+  ): Promise<{
+    submissionId: string;
+    interactionInstanceId: string;
+    promptId: string;
+    updatedAt: string;
+  }> {
+    // Authoritative participant-token and session/interaction-state
+    // re-check, independent of any earlier application-layer lookup.
+    // Mirrors submit_response_atomically's row-locked re-check in the
+    // real database function. Also re-resolves the current interaction
+    // instance here (not trusting an earlier domain-layer read), since
+    // that's what the submission and its event are scoped to.
     const session = this.sessions.get(sessionId);
 
     if (!session) {
@@ -356,27 +400,34 @@ export class InMemorySessionRepository implements SessionRepository {
       throw new SessionAccessDeniedError();
     }
 
-    if (session.state !== "PROMPT_ACTIVE") {
-      throw new PromptNotActiveError(session.state);
+    const interactionInstance = this.getCurrentInteractionInstance(sessionId);
+
+    if (
+      session.state !== "LOBBY_LOCKED" ||
+      !interactionInstance ||
+      interactionInstance.state !== "PROMPT_ACTIVE"
+    ) {
+      throw new PromptNotActiveError(interactionInstance?.state);
     }
 
-    const promptId = session.currentPromptId as string;
+    const { interactionInstanceId, promptId } = interactionInstance;
     const now = new Date().toISOString();
 
-    // Upsert: one submission per participant per prompt. "Last write
-    // wins" is an explicit MVP implementation decision, not a permanent
-    // gameplay rule — see SubmitResponseResult's doc comment.
+    // Upsert: one submission per participant per interaction instance.
+    // "Last write wins" is an explicit MVP implementation decision, not
+    // a permanent gameplay rule — see SubmitResponseResult's doc
+    // comment.
     const existing = [...this.submissions.values()].find(
       (submission) =>
-        submission.sessionId === sessionId &&
-        submission.participantId === participantId &&
-        submission.promptId === promptId
+        submission.interactionInstanceId === interactionInstanceId &&
+        submission.participantId === participantId
     );
 
     const submissionId = existing?.submissionId ?? randomUUID();
     const record: SubmissionRecord = {
       submissionId,
       sessionId,
+      interactionInstanceId,
       participantId,
       promptId,
       text,
@@ -389,17 +440,17 @@ export class InMemorySessionRepository implements SessionRepository {
     this.events.push({
       sessionId,
       eventType: "RESPONSE_SUBMITTED",
-      payload: { participantId, promptId },
+      payload: { participantId, interactionInstanceId, promptId },
     });
 
-    return { submissionId, promptId, updatedAt: now };
+    return { submissionId, interactionInstanceId, promptId, updatedAt: now };
   }
 
-  async getSubmissionsForSession(
-    sessionId: string
+  async getSubmissionsForInteractionInstance(
+    interactionInstanceId: string
   ): Promise<SubmissionRecord[]> {
     return [...this.submissions.values()].filter(
-      (submission) => submission.sessionId === sessionId
+      (submission) => submission.interactionInstanceId === interactionInstanceId
     );
   }
 
@@ -407,7 +458,7 @@ export class InMemorySessionRepository implements SessionRepository {
     sessionId: string,
     hostToken: string,
     event: SubmissionsClosedEventRecord
-  ): Promise<{ state: SessionRecord["state"]; stateVersion: number }> {
+  ): Promise<{ interactionInstanceId: string; state: InteractionState }> {
     const session = this.sessions.get(sessionId);
 
     if (!session) {
@@ -418,18 +469,22 @@ export class InMemorySessionRepository implements SessionRepository {
       throw new HostTokenMismatchError();
     }
 
-    if (session.state !== "PROMPT_ACTIVE") {
-      throw new PromptNotActiveError(session.state);
+    const interactionInstance = this.getCurrentInteractionInstance(sessionId);
+
+    if (
+      session.state !== "LOBBY_LOCKED" ||
+      !interactionInstance ||
+      interactionInstance.state !== "PROMPT_ACTIVE"
+    ) {
+      throw new PromptNotActiveError(interactionInstance?.state);
     }
 
-    const updated: SessionRecord = {
-      ...session,
+    const updated: InteractionInstanceRecord = {
+      ...interactionInstance,
       state: "SUBMISSIONS_CLOSED",
-      stateVersion: session.stateVersion + 1,
       updatedAt: new Date().toISOString(),
     };
-
-    this.sessions.set(sessionId, updated);
+    this.interactionInstances.set(updated.interactionInstanceId, updated);
 
     this.events.push({
       sessionId: event.sessionId,
@@ -437,14 +492,17 @@ export class InMemorySessionRepository implements SessionRepository {
       payload: { ...event.payload },
     });
 
-    return { state: updated.state, stateVersion: updated.stateVersion };
+    return {
+      interactionInstanceId: updated.interactionInstanceId,
+      state: updated.state,
+    };
   }
 
   async revealResults(
     sessionId: string,
     hostToken: string,
     event: ResultsRevealedEventRecord
-  ): Promise<{ state: SessionRecord["state"]; stateVersion: number }> {
+  ): Promise<{ interactionInstanceId: string; state: InteractionState }> {
     const session = this.sessions.get(sessionId);
 
     if (!session) {
@@ -455,18 +513,22 @@ export class InMemorySessionRepository implements SessionRepository {
       throw new HostTokenMismatchError();
     }
 
-    if (session.state !== "SUBMISSIONS_CLOSED") {
-      throw new SubmissionsNotClosedError(session.state);
+    const interactionInstance = this.getCurrentInteractionInstance(sessionId);
+
+    if (
+      session.state !== "LOBBY_LOCKED" ||
+      !interactionInstance ||
+      interactionInstance.state !== "SUBMISSIONS_CLOSED"
+    ) {
+      throw new SubmissionsNotClosedError(interactionInstance?.state);
     }
 
-    const updated: SessionRecord = {
-      ...session,
+    const updated: InteractionInstanceRecord = {
+      ...interactionInstance,
       state: "RESULT_REVEAL",
-      stateVersion: session.stateVersion + 1,
       updatedAt: new Date().toISOString(),
     };
-
-    this.sessions.set(sessionId, updated);
+    this.interactionInstances.set(updated.interactionInstanceId, updated);
 
     this.events.push({
       sessionId: event.sessionId,
@@ -474,7 +536,10 @@ export class InMemorySessionRepository implements SessionRepository {
       payload: { ...event.payload },
     });
 
-    return { state: updated.state, stateVersion: updated.stateVersion };
+    return {
+      interactionInstanceId: updated.interactionInstanceId,
+      state: updated.state,
+    };
   }
 
   /** Test-only helper, not part of the repository interface. */
@@ -516,5 +581,10 @@ export class InMemorySessionRepository implements SessionRepository {
     if (session) {
       this.sessions.set(sessionId, { ...session, state });
     }
+  }
+
+  /** Test-only helper, not part of the repository interface. */
+  _allInteractionInstances() {
+    return [...this.interactionInstances.values()];
   }
 }

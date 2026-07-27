@@ -35,8 +35,11 @@ function validateAndTrimResponse(text: string): string {
  *
  * Scope: authenticates the caller as a participant of this session via
  * their participant token (never a host token — see below), verifies
- * the session is PROMPT_ACTIVE, and atomically upserts the
- * participant's response to the session's current prompt, persisting a
+ * the session is LOBBY_LOCKED and its current interaction instance is
+ * PROMPT_ACTIVE (Slice 001: this used to be "the session is
+ * PROMPT_ACTIVE" directly — that responsibility now belongs to the
+ * interaction instance), and atomically upserts the participant's
+ * response to that interaction instance, persisting a
  * RESPONSE_SUBMITTED event. Nothing else.
  *
  * "Last write wins" (a second submission from the same participant
@@ -49,14 +52,16 @@ function validateAndTrimResponse(text: string): string {
  * A host token does not authenticate here unless the host is also a
  * joined participant of this session — there is no host fallback.
  *
- * Participant-token and session-state authority: the
- * getParticipantsForSession lookup below is a fast-path check for
- * immediate rejection (nonexistent session, unrecognized token,
- * obviously-not-active session) — it is NOT the sole guarantee, the
- * same way every other command's fast-path lookup isn't. The
- * repository's submitResponse call is the authoritative check,
- * re-verifying both the participant token and the session state inside
- * the same atomic operation that performs the upsert.
+ * Participant-token, session-state, and interaction-state authority:
+ * the getParticipantsForSession / getInteractionInstancesForSession
+ * lookups below are a fast-path check for immediate rejection
+ * (nonexistent session, unrecognized token, obviously-not-active
+ * interaction) — they are NOT the sole guarantee, the same way every
+ * other command's fast-path lookup isn't. The repository's
+ * submitResponse call is the authoritative check, re-verifying the
+ * participant token, the session state, and the current interaction
+ * instance's state inside the same atomic operation that performs the
+ * upsert.
  */
 export async function submitResponse(
   repo: SessionRepository,
@@ -80,8 +85,20 @@ export async function submitResponse(
     throw new SessionAccessDeniedError();
   }
 
-  if (session.state !== "PROMPT_ACTIVE") {
-    throw new PromptNotActiveError(session.state);
+  const interactionInstances = await repo.getInteractionInstancesForSession(
+    sessionId
+  );
+  const currentInteraction =
+    interactionInstances.length > 0
+      ? interactionInstances[interactionInstances.length - 1]
+      : null;
+
+  if (
+    session.state !== "LOBBY_LOCKED" ||
+    !currentInteraction ||
+    currentInteraction.state !== "PROMPT_ACTIVE"
+  ) {
+    throw new PromptNotActiveError(currentInteraction?.state);
   }
 
   const result = await repo.submitResponse(
@@ -94,6 +111,7 @@ export async function submitResponse(
   return {
     submissionId: result.submissionId,
     sessionId,
+    interactionInstanceId: result.interactionInstanceId,
     participantId: participant.participantId,
     text: trimmedText,
     updatedAt: result.updatedAt,

@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { SessionRecord, SessionState } from "../types";
+import type { SessionRecord, SessionState, InteractionState } from "../types";
 import {
   RoomCodeCollisionError,
   DisplayNameTakenError,
@@ -13,6 +13,8 @@ import {
   SessionAccessDeniedError,
   PromptNotActiveError,
   SubmissionsNotClosedError,
+  PreviousInteractionNotRevealedError,
+  EmptyPromptTextError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -21,6 +23,7 @@ import type {
   LobbyLockedEventRecord,
   SessionCompletedEventRecord,
   PromptRecord,
+  InteractionInstanceRecord,
   SubmissionRecord,
   SubmissionsClosedEventRecord,
   ResultsRevealedEventRecord,
@@ -38,27 +41,32 @@ import type {
  * follows the same pattern again via lock_lobby_atomically — see
  * supabase/migrations/0005_lock_lobby_atomically.sql. completeSession
  * follows the same pattern again via complete_session_atomically — see
- * supabase/migrations/0006_complete_session_atomically.sql. startSession
- * follows the same pattern again via start_session_atomically — see
- * supabase/migrations/0008_start_session_atomically.sql. submitResponse,
- * closeSubmissions, and revealResults follow the same pattern via
- * submit_response_atomically, close_submissions_atomically, and
- * reveal_results_atomically — see supabase/migrations/0010-0012. This
- * mirrors the existing pairing rather than introducing a new
- * persistence approach.
+ * supabase/migrations/0006_complete_session_atomically.sql.
+ *
+ * Slice 001 (Session / Interaction separation): startSession,
+ * submitResponse, closeSubmissions, and revealResults now resolve and
+ * operate on the session's *current interaction instance* rather than
+ * the session's own state — see supabase/migrations/0017-0020, which
+ * forward-fix 0010-0012 and 0008 respectively. This mirrors the
+ * existing pairing rather than introducing a new persistence approach.
  */
 
 /**
- * lock_lobby_atomically, join_participant_atomically, and
- * start_session_atomically each raise their wrong-state exception with
- * the same embedded shape ("... session is in <STATE> state, not
- * <REQUIRED_STATE>"). Extracting it here lets every translation site
- * construct its specific error (LobbyNotOpenError, LobbyNotLockedError)
- * with the actual state, matching the detail already available from the
- * in-memory repository and the domain-layer fast-path checks.
+ * lock_lobby_atomically, join_participant_atomically,
+ * start_session_atomically, submit_response_atomically,
+ * close_submissions_atomically, and reveal_results_atomically each
+ * raise their wrong-state exception with an embedded state name
+ * ("... is in <STATE> state, not <REQUIRED_STATE>"), whether the
+ * subject is "session" (pre-Slice-001 phrasing) or "current
+ * interaction" (Slice 001 phrasing). Extracting it here lets every
+ * translation site construct its specific error with the actual
+ * state, matching the detail already available from the in-memory
+ * repository and the domain-layer fast-path checks.
  */
-function extractStateFromGuardMessage(message: string): SessionState | undefined {
-  const match = message.match(/session is in (\w+) state/);
+function extractStateFromGuardMessage(
+  message: string
+): SessionState | undefined {
+  const match = message.match(/is in (\w+) state/);
   return match ? (match[1] as SessionState) : undefined;
 }
 
@@ -334,17 +342,40 @@ export class SupabaseSessionRepository implements SessionRepository {
     };
   }
 
+  async getInteractionInstancesForSession(
+    sessionId: string
+  ): Promise<InteractionInstanceRecord[]> {
+    const { data, error } = await this.client
+      .from("interaction_instances")
+      .select("*")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: true });
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      interactionInstanceId: row.interaction_instance_id,
+      sessionId: row.session_id,
+      promptId: row.prompt_id,
+      state: row.state as InteractionState,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
   async startSession(
     sessionId: string,
-    hostToken: string
+    hostToken: string,
+    promptText: string
   ): Promise<{
-    state: SessionState;
-    stateVersion: number;
-    currentPromptId: string;
+    interactionInstanceId: string;
+    promptId: string;
+    state: InteractionState;
   }> {
     const { data, error } = await this.client.rpc("start_session_atomically", {
       p_session_id: sessionId,
       p_host_token: hostToken,
+      p_prompt_text: promptText,
     });
 
     if (error) {
@@ -372,15 +403,33 @@ export class SupabaseSessionRepository implements SessionRepository {
         throw new LobbyNotLockedError(extractStateFromGuardMessage(error.message));
       }
 
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("PREVIOUS_INTERACTION_NOT_REVEALED")
+      ) {
+        throw new PreviousInteractionNotRevealedError(
+          extractStateFromGuardMessage(error.message) as InteractionState | undefined
+        );
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("EMPTY_PROMPT_TEXT")
+      ) {
+        throw new EmptyPromptTextError();
+      }
+
       throw error;
     }
 
     const row = Array.isArray(data) ? data[0] : data;
 
     return {
-      state: row.state as SessionState,
-      stateVersion: row.state_version,
-      currentPromptId: row.current_prompt_id,
+      interactionInstanceId: row.interaction_instance_id,
+      promptId: row.prompt_id,
+      state: row.state as InteractionState,
     };
   }
 
@@ -389,7 +438,12 @@ export class SupabaseSessionRepository implements SessionRepository {
     participantId: string,
     participantToken: string,
     text: string
-  ): Promise<{ submissionId: string; promptId: string; updatedAt: string }> {
+  ): Promise<{
+    submissionId: string;
+    interactionInstanceId: string;
+    promptId: string;
+    updatedAt: string;
+  }> {
     const { data, error } = await this.client.rpc("submit_response_atomically", {
       p_session_id: sessionId,
       p_participant_id: participantId,
@@ -429,24 +483,26 @@ export class SupabaseSessionRepository implements SessionRepository {
 
     return {
       submissionId: row.submission_id,
+      interactionInstanceId: row.interaction_instance_id,
       promptId: row.prompt_id,
       updatedAt: row.updated_at,
     };
   }
 
-  async getSubmissionsForSession(
-    sessionId: string
+  async getSubmissionsForInteractionInstance(
+    interactionInstanceId: string
   ): Promise<SubmissionRecord[]> {
     const { data, error } = await this.client
       .from("submissions")
       .select("*")
-      .eq("session_id", sessionId);
+      .eq("interaction_instance_id", interactionInstanceId);
 
     if (error) throw error;
 
     return (data ?? []).map((row) => ({
       submissionId: row.submission_id,
       sessionId: row.session_id,
+      interactionInstanceId: row.interaction_instance_id,
       participantId: row.participant_id,
       promptId: row.prompt_id,
       text: row.text,
@@ -459,7 +515,7 @@ export class SupabaseSessionRepository implements SessionRepository {
     sessionId: string,
     hostToken: string,
     event: SubmissionsClosedEventRecord
-  ): Promise<{ state: SessionState; stateVersion: number }> {
+  ): Promise<{ interactionInstanceId: string; state: InteractionState }> {
     const { data, error } = await this.client.rpc(
       "close_submissions_atomically",
       {
@@ -501,8 +557,8 @@ export class SupabaseSessionRepository implements SessionRepository {
     const row = Array.isArray(data) ? data[0] : data;
 
     return {
-      state: row.state as SessionState,
-      stateVersion: row.state_version,
+      interactionInstanceId: row.interaction_instance_id,
+      state: row.state as InteractionState,
     };
   }
 
@@ -510,7 +566,7 @@ export class SupabaseSessionRepository implements SessionRepository {
     sessionId: string,
     hostToken: string,
     event: ResultsRevealedEventRecord
-  ): Promise<{ state: SessionState; stateVersion: number }> {
+  ): Promise<{ interactionInstanceId: string; state: InteractionState }> {
     const { data, error } = await this.client.rpc(
       "reveal_results_atomically",
       {
@@ -552,8 +608,8 @@ export class SupabaseSessionRepository implements SessionRepository {
     const row = Array.isArray(data) ? data[0] : data;
 
     return {
-      state: row.state as SessionState,
-      stateVersion: row.state_version,
+      interactionInstanceId: row.interaction_instance_id,
+      state: row.state as InteractionState,
     };
   }
 }

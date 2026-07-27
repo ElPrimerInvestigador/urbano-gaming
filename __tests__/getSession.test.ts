@@ -93,7 +93,7 @@ describe("GET_SESSION", () => {
     ).rejects.toBeInstanceOf(SessionNotFoundError);
   });
 
-  it("returns currentPrompt as null before a session has started", async () => {
+  it("returns currentPrompt and interactionState/interactionNumber as null before any interaction has started", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
@@ -101,6 +101,8 @@ describe("GET_SESSION", () => {
     const result = await getSession(repo, session.sessionId, session.hostToken);
 
     expect(result.currentPrompt).toBeNull();
+    expect(result.interactionState).toBeNull();
+    expect(result.interactionNumber).toBeNull();
   });
 
   it("returns submittedCount, eligibleParticipantCount, and submissions as null before gameplay has started", async () => {

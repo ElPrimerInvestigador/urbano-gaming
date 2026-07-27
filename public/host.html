@@ -110,6 +110,7 @@
 <div id="status-banner" class="notice" style="display:none;" role="alert"></div>
 
 <div id="stepper" class="stepper"></div>
+<div id="interactionLabel" class="room-code-hint" style="display:none;"></div>
 
 <div id="pre-create" class="card">
   <h2>Start a session</h2>
@@ -153,7 +154,10 @@
   <div class="card">
     <h2>Actions</h2>
     <button class="btn-primary" id="btn-lock" onclick="lockLobby()">Lock Lobby</button>
-    <button class="btn-primary" id="btn-start" onclick="startSession()">Start Session</button>
+    <div style="margin: 10px 0;">
+      <textarea id="promptTextInput" rows="2" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line);" placeholder="Prompt for the next interaction (e.g. What's your favorite pizza topping?)"></textarea>
+    </div>
+    <button class="btn-primary" id="btn-start" onclick="startSession()">Start Interaction</button>
     <button class="btn-primary" id="btn-close" onclick="closeSubmissions()">Close Submissions</button>
     <button class="btn-primary" id="btn-reveal" onclick="revealResults()">Reveal Results</button>
     <br/>
@@ -192,7 +196,21 @@ const STATE_LABELS = {
 };
 
 let hostState = { sessionId: null, roomCode: null, hostToken: null };
-let currentState = null;
+// Slice 001 (Session / Interaction separation): the session's own
+// lifecycle (LOBBY_OPEN | LOBBY_LOCKED | SESSION_COMPLETE) and the
+// current interaction instance's lifecycle (null | PROMPT_ACTIVE |
+// SUBMISSIONS_CLOSED | RESULT_REVEAL) are now two separate fields on
+// the GET_SESSION response, not one combined session state.
+let sessionLifecycleState = null;
+let interactionLifecycleState = null;
+let interactionNumber = null;
+// Tracks the last interactionNumber this tab has seen, so a newly
+// started interaction can be detected and lastKnownSubmissions cleared
+// for it (see applySessionSnapshot) — otherwise a tab that never
+// observed the *current* interaction's own reveal before the session
+// completed would wrongly resurface an earlier interaction's cached
+// results under the current interaction's prompt.
+let lastSeenInteractionNumber = null;
 
 function saveHostState() {
   sessionStorage.setItem(HOST_STORAGE_KEY, JSON.stringify(hostState));
@@ -256,7 +274,10 @@ const KNOWN_ERRORS = [
   { test: (m) => m.endsWith("LOBBY_LOCKED."), text: "The lobby isn't locked yet, or the session has already moved past that stage." },
   { test: (m) => m.endsWith("PROMPT_ACTIVE."), text: "Submissions can only be closed while a prompt is active." },
   { test: (m) => m.endsWith("SUBMISSIONS_CLOSED."), text: "Results can only be revealed after submissions are closed." },
+  { test: (m) => m.endsWith("RESULT_REVEAL."), text: "You can start a new interaction once the current one's results have been revealed." },
   { test: (m) => m === "Session is already complete.", text: "This session has already ended." },
+  { test: (m) => m === "Prompt text cannot be empty.", text: "Enter a prompt before starting the interaction." },
+  { test: (m) => m === "Prompt text cannot exceed 1000 characters.", text: "Prompt is too long — please shorten it to 1000 characters or fewer." },
 ];
 
 function translateKnownError(raw) {
@@ -304,8 +325,28 @@ function showSessionPanels() {
   document.getElementById("hostTokenDisplay").textContent = hostState.hostToken || "—";
 }
 
+// Slice 001: the stepper's 6 visual steps still read left-to-right as
+// one linear sequence, but the middle three (PROMPT_ACTIVE /
+// SUBMISSIONS_CLOSED / RESULT_REVEAL) now belong to whichever
+// interaction instance is current, not to the session directly — a
+// second interaction genuinely moves the stepper's highlighted step
+// backward to PROMPT_ACTIVE, which is expected, not a bug. The
+// interactionLabel element (see renderInteractionLabel) is what
+// distinguishes "still on interaction 1" from "now on interaction 2".
+function computeStepIndex() {
+  if (sessionLifecycleState === "LOBBY_OPEN") return 0;
+  if (sessionLifecycleState === "SESSION_COMPLETE") return 5;
+  if (sessionLifecycleState === "LOBBY_LOCKED") {
+    if (interactionLifecycleState === "PROMPT_ACTIVE") return 2;
+    if (interactionLifecycleState === "SUBMISSIONS_CLOSED") return 3;
+    if (interactionLifecycleState === "RESULT_REVEAL") return 4;
+    return 1; // LOBBY_LOCKED, no interaction started yet
+  }
+  return -1;
+}
+
 function renderStepper() {
-  const idx = LIFECYCLE_STEPS.indexOf(currentState);
+  const idx = computeStepIndex();
   document.getElementById("stepper").innerHTML = LIFECYCLE_STEPS.map((step, i) => {
     let cls = "step";
     if (idx !== -1) {
@@ -319,12 +360,33 @@ function renderStepper() {
   }).join("");
 }
 
+function renderInteractionLabel() {
+  const el = document.getElementById("interactionLabel");
+  if (!interactionNumber) {
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "block";
+  el.textContent = `Interaction #${interactionNumber}`;
+}
+
 function updateActionAvailability() {
-  document.getElementById("btn-lock").disabled = currentState !== "LOBBY_OPEN";
-  document.getElementById("btn-start").disabled = currentState !== "LOBBY_LOCKED";
-  document.getElementById("btn-close").disabled = currentState !== "PROMPT_ACTIVE";
-  document.getElementById("btn-reveal").disabled = currentState !== "SUBMISSIONS_CLOSED";
-  document.getElementById("btn-complete").disabled = currentState === "SESSION_COMPLETE" || !currentState;
+  document.getElementById("btn-lock").disabled = sessionLifecycleState !== "LOBBY_OPEN";
+  // Start is re-invocable: available once per interaction, any number
+  // of times, as long as the session is LOBBY_LOCKED and there is no
+  // current interaction still in flight (none yet, or the last one has
+  // already reached RESULT_REVEAL).
+  document.getElementById("btn-start").disabled = !(
+    sessionLifecycleState === "LOBBY_LOCKED" &&
+    (interactionLifecycleState === null || interactionLifecycleState === "RESULT_REVEAL")
+  );
+  document.getElementById("btn-close").disabled = !(
+    sessionLifecycleState === "LOBBY_LOCKED" && interactionLifecycleState === "PROMPT_ACTIVE"
+  );
+  document.getElementById("btn-reveal").disabled = !(
+    sessionLifecycleState === "LOBBY_LOCKED" && interactionLifecycleState === "SUBMISSIONS_CLOSED"
+  );
+  document.getElementById("btn-complete").disabled = sessionLifecycleState === "SESSION_COMPLETE" || !sessionLifecycleState;
 }
 
 function renderParticipants(participants) {
@@ -362,11 +424,27 @@ function renderProgress(submittedCount, eligibleParticipantCount) {
 // Caching the last-seen value client-side avoids results visibly
 // vanishing the instant "End Session" is clicked, within this same
 // page load — it does not persist across a refresh.
+//
+// Slice 001: submissions also legitimately goes null the moment a new
+// interaction starts (interactionState resets to PROMPT_ACTIVE for the
+// new round) — that gap must NOT be bridged by this cache, or a second
+// interaction's blank results card would wrongly keep showing the
+// first interaction's revealed answers. Gating the fallback on
+// sessionLifecycleState === "SESSION_COMPLETE" alone is NOT sufficient
+// for this, though: a live two-interaction simulation caught the gap —
+// if this tab never observes the *current* interaction's own reveal
+// before the session completes (e.g. it refreshed once during
+// interaction #1's reveal, then not again until after
+// COMPLETE_SESSION), the SESSION_COMPLETE fallback resurfaces
+// interaction #1's stale results underneath interaction #2's actual
+// prompt. applySessionSnapshot's interactionNumber-change handling
+// below clears this cache explicitly for that reason, mirroring
+// participant.html's identical fix.
 let lastKnownSubmissions = null;
 
 function renderResults(submissions) {
   const card = document.getElementById("resultsCard");
-  const effective = submissions ?? lastKnownSubmissions;
+  const effective = submissions ?? (sessionLifecycleState === "SESSION_COMPLETE" ? lastKnownSubmissions : null);
   if (submissions) lastKnownSubmissions = submissions;
 
   if (!effective) {
@@ -380,8 +458,21 @@ function renderResults(submissions) {
 }
 
 function applySessionSnapshot(data) {
-  currentState = data.state;
+  sessionLifecycleState = data.state;
+  if ("interactionState" in data) interactionLifecycleState = data.interactionState;
+  if ("interactionNumber" in data) {
+    // A new interaction beginning must not let a stale cached
+    // results set from an earlier interaction resurface later under
+    // the SESSION_COMPLETE fallback — see lastKnownSubmissions's
+    // comment above renderResults for the scenario this prevents.
+    if (data.interactionNumber !== lastSeenInteractionNumber) {
+      lastKnownSubmissions = null;
+      lastSeenInteractionNumber = data.interactionNumber;
+    }
+    interactionNumber = data.interactionNumber;
+  }
   renderStepper();
+  renderInteractionLabel();
   updateActionAvailability();
   if (data.participants) renderParticipants(data.participants);
   if ("currentPrompt" in data) renderPrompt(data.currentPrompt);
@@ -411,26 +502,42 @@ async function lockLobby() {
 }
 
 async function startSession() {
-  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, { hostToken: hostState.hostToken });
+  const promptText = document.getElementById("promptTextInput").value;
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, {
+    hostToken: hostState.hostToken,
+    promptText,
+  });
   show("START_SESSION (" + r.status + ")", r.json);
-  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); await hostRefresh(); }
-  else renderNotice(classifyError(r));
+  // START_SESSION's own response describes only the newly created
+  // interaction instance (interactionInstanceId, promptId, state) — it
+  // no longer carries the session-level fields applySessionSnapshot
+  // needs (participants, submittedCount, ...). Refresh via GET_SESSION
+  // instead of applying the raw response directly.
+  if (r.status === 200) {
+    renderNotice(null);
+    document.getElementById("promptTextInput").value = "";
+    await hostRefresh();
+  } else {
+    renderNotice(classifyError(r));
+  }
 }
 
 async function closeSubmissions() {
   const r = await postJson(`/api/sessions/${hostState.sessionId}/close-submissions`, { hostToken: hostState.hostToken });
   show("CLOSE_SUBMISSIONS (" + r.status + ")", r.json);
-  // closeSubmissions's own response has no submittedCount — refresh so
-  // the progress bar reflects the true final tally at closing time,
-  // not a stale pre-close snapshot.
-  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); await hostRefresh(); }
+  // CLOSE_SUBMISSIONS's own response (Slice 001) describes only the
+  // interaction instance that closed — {interactionInstanceId, state},
+  // where state is the interaction's state, not the session's. Refresh
+  // via GET_SESSION rather than applying it as a session snapshot.
+  if (r.status === 200) { renderNotice(null); await hostRefresh(); }
   else renderNotice(classifyError(r));
 }
 
 async function revealResults() {
   const r = await postJson(`/api/sessions/${hostState.sessionId}/reveal`, { hostToken: hostState.hostToken });
   show("REVEAL_RESULTS (" + r.status + ")", r.json);
-  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); await hostRefresh(); }
+  // Same shape caveat as CLOSE_SUBMISSIONS — see comment there.
+  if (r.status === 200) { renderNotice(null); await hostRefresh(); }
   else renderNotice(classifyError(r));
 }
 

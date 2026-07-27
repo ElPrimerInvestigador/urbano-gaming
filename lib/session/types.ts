@@ -17,6 +17,21 @@ export type SessionState =
 
 export type PauseReason = "MANUAL" | "HOST_DISCONNECTED" | null;
 
+/**
+ * Slice 001 (Session / Interaction separation): the lifecycle of one
+ * Interaction Instance, independent of the session's own (now
+ * narrower) lifecycle. These three values are already members of
+ * SessionState above — kept as literal members there rather than
+ * removed, since the sessions.state check constraint still permits
+ * them and no existing historical row needs to change shape. Going
+ * forward, the application only ever writes them to
+ * interaction_instances.state, never to sessions.state.
+ */
+export type InteractionState =
+  | "PROMPT_ACTIVE"
+  | "SUBMISSIONS_CLOSED"
+  | "RESULT_REVEAL";
+
 export interface SessionRecord {
   sessionId: string;
   roomCode: string;
@@ -61,13 +76,19 @@ export interface CompleteSessionResult {
 }
 
 /**
- * Result of a successful START_SESSION.
+ * Result of a successful START_SESSION. Slice 001: this command is now
+ * re-invocable — once per interaction, not once per session — and
+ * always creates a fresh interaction instance from host-supplied
+ * prompt text. The session's own state/stateVersion never change as a
+ * result of this call (the session was already LOBBY_LOCKED and stays
+ * that way for every interaction it runs), so this result describes
+ * only the newly created interaction instance.
  */
 export interface StartSessionResult {
   sessionId: string;
-  state: SessionState;
-  stateVersion: number;
-  currentPromptId: string;
+  interactionInstanceId: string;
+  promptId: string;
+  state: InteractionState;
 }
 
 /**
@@ -82,27 +103,31 @@ export interface StartSessionResult {
 export interface SubmitResponseResult {
   submissionId: string;
   sessionId: string;
+  interactionInstanceId: string;
   participantId: string;
   text: string;
   updatedAt: string;
 }
 
 /**
- * Result of a successful CLOSE_SUBMISSIONS.
+ * Result of a successful CLOSE_SUBMISSIONS. Slice 001: describes the
+ * interaction instance that closed, not the session — the session's
+ * own state does not change.
  */
 export interface CloseSubmissionsResult {
   sessionId: string;
-  state: SessionState;
-  stateVersion: number;
+  interactionInstanceId: string;
+  state: InteractionState;
 }
 
 /**
- * Result of a successful REVEAL_RESULTS.
+ * Result of a successful REVEAL_RESULTS. Slice 001: describes the
+ * interaction instance that revealed, not the session.
  */
 export interface RevealResultsResult {
   sessionId: string;
-  state: SessionState;
-  stateVersion: number;
+  interactionInstanceId: string;
+  state: InteractionState;
 }
 
 /** A participant as exposed by GET_SESSION — no token, no join timestamp. */
@@ -131,17 +156,32 @@ export interface SubmissionSummary {
  * Result of a successful GET_SESSION. Never includes hostToken or any
  * participantToken.
  *
- * submittedCount / eligibleParticipantCount are populated during
- * PROMPT_ACTIVE and SUBMISSIONS_CLOSED, null otherwise. submissions is
- * populated only from RESULT_REVEAL onward (including after
- * SESSION_COMPLETE, mirroring currentPrompt's precedent), null
- * otherwise — response text is never exposed before RESULT_REVEAL.
+ * Slice 001: `state` is now the session's own narrower lifecycle
+ * (LOBBY_OPEN | LOBBY_LOCKED | SESSION_COMPLETE) — it no longer
+ * reflects prompt/submission/reveal phase. `interactionNumber` and
+ * `interactionState` describe the current interaction instance (the
+ * most recently started one for this session), both null before any
+ * interaction has ever been started. interactionNumber is a 1-indexed
+ * count of interactions started so far — derived at read time from
+ * however many interaction_instances rows exist for this session, not
+ * a stored value (see the accepted Slice 001 design's stress test).
+ *
+ * submittedCount / eligibleParticipantCount are populated while the
+ * current interaction is PROMPT_ACTIVE or SUBMISSIONS_CLOSED, null
+ * otherwise. submissions is populated only while the current
+ * interaction is RESULT_REVEAL (including after SESSION_COMPLETE, if
+ * the session completed after revealing — mirroring currentPrompt's
+ * precedent), null otherwise — response text is never exposed before
+ * RESULT_REVEAL. Both are scoped to the *current* interaction only;
+ * this slice does not expose past interactions' submissions.
  */
 export interface GetSessionResult {
   sessionId: string;
   state: SessionState;
   stateVersion: number;
   participants: ParticipantSummary[];
+  interactionNumber: number | null;
+  interactionState: InteractionState | null;
   currentPrompt: PromptSummary | null;
   submittedCount: number | null;
   eligibleParticipantCount: number | null;
@@ -248,9 +288,15 @@ export class SessionAlreadyCompleteError extends Error {
 }
 
 /**
- * Raised when a command requires the session to be PROMPT_ACTIVE and it
- * is not. Shared across SUBMIT_RESPONSE and CLOSE_SUBMISSIONS, which
- * have the identical precondition.
+ * Raised when a command requires the current interaction instance to
+ * be PROMPT_ACTIVE and it is not — either because no interaction has
+ * been started yet, or because the current one has already moved past
+ * PROMPT_ACTIVE, or because the session itself is no longer
+ * LOBBY_LOCKED (e.g. already completed). Shared across SUBMIT_RESPONSE
+ * and CLOSE_SUBMISSIONS, which have the identical precondition.
+ * Slice 001: the state described is now the interaction instance's,
+ * not the session's, though the type remains SessionState since
+ * InteractionState's members are already a subset of it.
  */
 export class PromptNotActiveError extends Error {
   constructor(currentState?: SessionState) {
@@ -264,8 +310,8 @@ export class PromptNotActiveError extends Error {
 }
 
 /**
- * Raised when REVEAL_RESULTS targets a session that is not
- * SUBMISSIONS_CLOSED.
+ * Raised when REVEAL_RESULTS targets a session whose current
+ * interaction instance is not SUBMISSIONS_CLOSED.
  */
 export class SubmissionsNotClosedError extends Error {
   constructor(currentState?: SessionState) {
@@ -275,6 +321,48 @@ export class SubmissionsNotClosedError extends Error {
         : "Session is no longer SUBMISSIONS_CLOSED."
     );
     this.name = "SubmissionsNotClosedError";
+  }
+}
+
+/**
+ * Slice 001. Raised when START_SESSION is invoked while the session's
+ * current interaction instance exists but has not yet reached
+ * RESULT_REVEAL — the precondition that makes the command safely
+ * re-invocable once per interaction rather than once per session.
+ */
+export class PreviousInteractionNotRevealedError extends Error {
+  constructor(currentInteractionState?: InteractionState) {
+    super(
+      currentInteractionState
+        ? `The current interaction is in ${currentInteractionState}, not RESULT_REVEAL.`
+        : "The current interaction has not been revealed yet."
+    );
+    this.name = "PreviousInteractionNotRevealedError";
+  }
+}
+
+/**
+ * Slice 001. Raised when a host-supplied prompt is empty after
+ * trimming whitespace. Mirrors EmptyResponseError's MVP floor: at
+ * least one visible character is required.
+ */
+export class EmptyPromptTextError extends Error {
+  constructor() {
+    super("Prompt text cannot be empty.");
+    this.name = "EmptyPromptTextError";
+  }
+}
+
+/**
+ * Slice 001. Raised when a host-supplied prompt exceeds the MVP
+ * length floor (1000 characters after trimming) — mirrors
+ * ResponseTooLongError's deliberately generous, adjustable
+ * placeholder, not a considered product limit.
+ */
+export class PromptTextTooLongError extends Error {
+  constructor() {
+    super("Prompt text cannot exceed 1000 characters.");
+    this.name = "PromptTextTooLongError";
   }
 }
 

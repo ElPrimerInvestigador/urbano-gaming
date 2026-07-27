@@ -12,16 +12,21 @@ import {
 /**
  * CLOSE_SUBMISSIONS command handler.
  *
- * Scope: authenticates the caller as the session's host via the stored
- * host token, verifies the session is PROMPT_ACTIVE, and atomically
- * transitions it to SUBMISSIONS_CLOSED, incrementing state_version and
- * persisting a SUBMISSIONS_CLOSED event. Host-triggered only — no
- * timers, no background jobs, no automatic closure in this MVP.
+ * Slice 001 (Session / Interaction separation): scope moves from the
+ * session's own state to the session's current interaction instance.
  *
- * Host-token and session-state authority: the getSessionById lookup
- * below is a fast-path check for immediate rejection — it is NOT the
- * sole guarantee, the same way every other command's lookup isn't. The
- * repository's closeSubmissions call is the authoritative check.
+ * Scope: authenticates the caller as the session's host via the stored
+ * host token, verifies the session is LOBBY_LOCKED and its current
+ * interaction instance is PROMPT_ACTIVE, and atomically transitions
+ * that interaction instance to SUBMISSIONS_CLOSED, persisting a
+ * SUBMISSIONS_CLOSED event. Host-triggered only — no timers, no
+ * background jobs, no automatic closure in this MVP.
+ *
+ * Host-token, session-state, and interaction-state authority: the
+ * getSessionById / getInteractionInstancesForSession lookups below
+ * are a fast-path check for immediate rejection — they are NOT the
+ * sole guarantee, the same way every other command's lookup isn't.
+ * The repository's closeSubmissions call is the authoritative check.
  */
 export async function closeSubmissions(
   repo: SessionRepository,
@@ -37,8 +42,20 @@ export async function closeSubmissions(
     throw new HostTokenMismatchError();
   }
 
-  if (session.state !== "PROMPT_ACTIVE") {
-    throw new PromptNotActiveError(session.state);
+  const interactionInstances = await repo.getInteractionInstancesForSession(
+    sessionId
+  );
+  const currentInteraction =
+    interactionInstances.length > 0
+      ? interactionInstances[interactionInstances.length - 1]
+      : null;
+
+  if (
+    session.state !== "LOBBY_LOCKED" ||
+    !currentInteraction ||
+    currentInteraction.state !== "PROMPT_ACTIVE"
+  ) {
+    throw new PromptNotActiveError(currentInteraction?.state);
   }
 
   const event: SubmissionsClosedEventRecord = {
@@ -51,7 +68,7 @@ export async function closeSubmissions(
 
   return {
     sessionId: session.sessionId,
+    interactionInstanceId: result.interactionInstanceId,
     state: result.state,
-    stateVersion: result.stateVersion,
   };
 }
