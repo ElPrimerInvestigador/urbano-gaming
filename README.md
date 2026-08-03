@@ -1,11 +1,19 @@
 # level33-mvp — Level 33 session/game engine
 
-Implements the full first-playable Level 33 session lifecycle:
-`CREATE_SESSION → JOIN_SESSION → LOCK_LOBBY → START_SESSION →
-SUBMIT_RESPONSE (with revision) → CLOSE_SUBMISSIONS → REVEAL_RESULTS →
-COMPLETE_SESSION`. See governing documents (Account Intelligence,
-CLAUDE.md, Project Genesis) for full context — this README covers only
-how to run what exists.
+Implements the full first-playable Level 33 session lifecycle, with a
+Session now separate from the Interaction Instances it runs (Slice
+001 — Session / Interaction separation):
+
+`CREATE_SESSION → JOIN_SESSION → LOCK_LOBBY →`
+`[ START_SESSION (host-defined prompt) → SUBMIT_RESPONSE (with revision) →`
+`CLOSE_SUBMISSIONS → REVEAL_RESULTS ] × N →`
+`COMPLETE_SESSION`
+
+`START_SESSION` is re-invocable: once the current interaction reaches
+`REVEAL_RESULTS`, the host may start another with new prompt text, any
+number of times, before completing the Session. See governing
+documents (Account Intelligence, CLAUDE.md, Project Genesis) for full
+context — this README covers only how to run what exists.
 
 ## Prerequisites
 
@@ -27,8 +35,11 @@ how to run what exists.
 3. Apply every migration in `supabase/migrations/` to your Supabase
    project, in numerical order (via the Supabase SQL editor or the
    Supabase CLI). All of them are required — later migrations depend
-   on tables and functions created by earlier ones, and two
-   (`0013`, `0014`) are forward-fixes for bugs found in earlier ones.
+   on tables and functions created by earlier ones. `0013`/`0014` and
+   `0017`-`0019` are forward-fixes for two related bug classes found
+   in earlier migrations (ambiguous-column-reference bugs, and a
+   `RETURNS TABLE` shape change that `CREATE OR REPLACE` can't apply
+   in place) — see each file's header comment.
 
 ## Running tests
 
@@ -57,10 +68,12 @@ developer harness pages once `.env.local` is populated and all
 migrations have been applied:
 
 - `http://localhost:3000/host.html` — host interface: create a
-  session, drive it through the lifecycle, reveal and complete it.
+  session, lock it, then start any number of sequential interactions
+  (enter prompt text, close submissions, reveal), and complete the
+  session whenever done.
 - `http://localhost:3000/participant.html` — participant interface:
-  join with the displayed room code, wait, submit/revise a response,
-  view the reveal.
+  join with the displayed room code, wait, submit/revise a response to
+  whichever interaction is currently active, view each reveal.
 
 Both are developer validation tools, not a production UI — see the
 inline comments in each file for their intended scope and

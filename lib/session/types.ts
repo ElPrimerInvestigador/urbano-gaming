@@ -18,6 +18,15 @@ export type SessionState =
 export type PauseReason = "MANUAL" | "HOST_DISCONNECTED" | null;
 
 /**
+ * Slice 003 (Second Interaction Engine). Which Interaction Engine
+ * produced a given Interaction Instance. Every interaction before this
+ * slice was implicitly OPEN_RESPONSE — this type makes that explicit
+ * rather than leaving it inferable only from which engine-specific
+ * extension table has a matching row.
+ */
+export type EngineType = "OPEN_RESPONSE" | "MULTIPLE_CHOICE";
+
+/**
  * Slice 001 (Session / Interaction separation): the lifecycle of one
  * Interaction Instance, independent of the session's own (now
  * narrower) lifecycle. These three values are already members of
@@ -89,6 +98,7 @@ export interface StartSessionResult {
   interactionInstanceId: string;
   promptId: string;
   state: InteractionState;
+  engineType: EngineType;
 }
 
 /**
@@ -136,20 +146,97 @@ export interface ParticipantSummary {
   displayName: string;
 }
 
-/** A prompt as exposed by GET_SESSION. */
+/**
+ * Slice 002 (Scored Multi-Round Experience). One participant's
+ * cumulative score for this session, derived by summing point_awards
+ * at read time — never stored as a running total. Always present for
+ * every participant, defaulting to 0 before any award exists.
+ */
+export interface ParticipantStanding {
+  participantId: string;
+  displayName: string;
+  score: number;
+}
+
+/**
+ * Result of a successful AWARD_POINTS. Slice 002: describes the one
+ * point-award ledger row created (or, on an idempotent replay,
+ * already existing) — not the session, and not cumulative standings.
+ * GET_SESSION is responsible for surfacing derived standings.
+ */
+export interface AwardPointsResult {
+  pointAwardId: string;
+  sessionId: string;
+  interactionInstanceId: string;
+  participantId: string;
+  points: number;
+  createdAt: string;
+}
+
+/**
+ * A prompt as exposed by GET_SESSION.
+ *
+ * Slice 003: options is populated for a Multiple Choice interaction
+ * (needed to answer at all) and null for Open Response. correctIndex
+ * is the platform's first genuinely private-until-reveal field — known
+ * to the system from the moment the interaction is created, but always
+ * null here until the current interaction reaches RESULT_REVEAL,
+ * regardless of caller role. This mirrors submissions' existing
+ * reveal-gating exactly, applied to a second field.
+ */
 export interface PromptSummary {
   promptId: string;
   text: string;
+  options: string[] | null;
+  correctOptionIndex: number | null;
 }
 
 /**
  * A submitted response as exposed by GET_SESSION during RESULT_REVEAL.
  * No anonymity for the MVP — attributed directly to the participant.
+ *
+ * Slice 003: for a Multiple Choice interaction, text is resolved to
+ * the selected option's label (not the raw stored index) and
+ * isCorrect reflects automatic evaluation. Both are null/unset in
+ * spirit for Open Response — isCorrect is always null there, since
+ * Open Response has no correctness concept at all.
  */
 export interface SubmissionSummary {
   participantId: string;
   displayName: string;
   text: string;
+  isCorrect: boolean | null;
+}
+
+/**
+ * Slice 003. One question in a session's pre-authored Multiple Choice
+ * queue, as exposed by GET_SESSION. Host-only: the correct answer here
+ * is available before the corresponding interaction is ever started,
+ * let alone revealed, so this field must never be included in a
+ * participant's GET_SESSION response.
+ */
+export interface PreparedQuestionSummary {
+  preparedQuestionId: string;
+  ordinal: number;
+  promptText: string;
+  options: string[];
+  correctOptionIndex: number;
+  pointsForCorrect: number;
+  consumedAt: string | null;
+}
+
+/** One question as supplied to PREPARE_QUESTIONS, before validation. */
+export interface PrepareQuestionsInput {
+  promptText: string;
+  options: string[];
+  correctOptionIndex: number;
+  points?: number;
+}
+
+/** Result of a successful PREPARE_QUESTIONS. */
+export interface PrepareQuestionsResult {
+  sessionId: string;
+  questions: PreparedQuestionSummary[];
 }
 
 /**
@@ -174,6 +261,28 @@ export interface SubmissionSummary {
  * precedent), null otherwise — response text is never exposed before
  * RESULT_REVEAL. Both are scoped to the *current* interaction only;
  * this slice does not expose past interactions' submissions.
+ *
+ * Slice 002 (Scored Multi-Round Experience): `standings` is always
+ * present (one entry per participant, score defaulting to 0), with its
+ * own visibility rule independent of currentPrompt/submissions above —
+ * it does not go null at SESSION_COMPLETE, since final standings must
+ * remain visible once the session ends. `currentInteractionInstanceId`
+ * is exposed so a client can submit AWARD_POINTS against an explicit
+ * target after a refresh or on a second device, rather than only ever
+ * learning it from START_SESSION/REVEAL_RESULTS's own responses. No
+ * "winner" field is exposed — winner determination (including the
+ * zero-score case, where no awards exist and no one should be declared
+ * a winner) is an intentionally client-derived presentation rule for
+ * this slice, not a stored or server-computed value.
+ *
+ * Slice 003 (Second Interaction Engine): `preparedQuestions` is the
+ * first field in this platform's history that differs by caller role
+ * rather than only by overall access — populated (including each
+ * question's correct answer) only when the caller is the host, null
+ * for a participant, even though both roles are equally authorized to
+ * call GET_SESSION at all. `currentPrompt.options` / `correctOptionIndex`
+ * and `submissions[].isCorrect` are the Multiple Choice-specific fields
+ * described on their own types above.
  */
 export interface GetSessionResult {
   sessionId: string;
@@ -182,10 +291,14 @@ export interface GetSessionResult {
   participants: ParticipantSummary[];
   interactionNumber: number | null;
   interactionState: InteractionState | null;
+  currentInteractionInstanceId: string | null;
+  currentEngineType: EngineType | null;
   currentPrompt: PromptSummary | null;
   submittedCount: number | null;
   eligibleParticipantCount: number | null;
   submissions: SubmissionSummary[] | null;
+  standings: ParticipantStanding[];
+  preparedQuestions: PreparedQuestionSummary[] | null;
 }
 
 /** Raised when a generated room code collides with an active session. */
@@ -421,5 +534,112 @@ export class DisplayNameTooLongError extends Error {
   constructor() {
     super("Display name cannot exceed 40 characters.");
     this.name = "DisplayNameTooLongError";
+  }
+}
+
+/**
+ * Slice 002 (Scored Multi-Round Experience). Raised on a genuinely new
+ * AWARD_POINTS request (never on an idempotent replay) when the
+ * supplied interactionInstanceId is not both the session's current
+ * (most recently created) interaction instance and at RESULT_REVEAL.
+ * Awards are restricted to the specific interaction the client named,
+ * and only while that one is still current and revealed — not any
+ * earlier interaction, and not "whatever is current now" if the
+ * session has since moved on.
+ */
+export class InteractionInstanceNotEligibleError extends Error {
+  constructor() {
+    super(
+      "The supplied interaction is not the session's current, revealed interaction."
+    );
+    this.name = "InteractionInstanceNotEligibleError";
+  }
+}
+
+/**
+ * Slice 002. Raised on a genuinely new AWARD_POINTS request when the
+ * supplied participantId does not belong to the session.
+ */
+export class ParticipantNotInSessionError extends Error {
+  constructor() {
+    super("This participant does not belong to this session.");
+    this.name = "ParticipantNotInSessionError";
+  }
+}
+
+/**
+ * Slice 002. Raised on a genuinely new AWARD_POINTS request when the
+ * supplied points value is not a positive integer, or exceeds the MVP
+ * sanity bound (10000) — a fat-finger floor, not a considered scoring
+ * limit. Score correction is deferred for this slice, so negative
+ * values are rejected outright rather than treated as corrections.
+ */
+export class InvalidPointsError extends Error {
+  constructor() {
+    super("Points must be a positive integer no greater than 10000.");
+    this.name = "InvalidPointsError";
+  }
+}
+
+/**
+ * Slice 003 (Second Interaction Engine). Raised by PREPARE_QUESTIONS
+ * when a question supplies fewer than two options, an empty option
+ * after trimming, or duplicate option text.
+ */
+export class InvalidOptionsError extends Error {
+  constructor() {
+    super(
+      "A question must supply at least two distinct, non-empty options."
+    );
+    this.name = "InvalidOptionsError";
+  }
+}
+
+/**
+ * Slice 003. Raised by PREPARE_QUESTIONS when a question's
+ * correctOptionIndex is not a valid index into its own options array.
+ */
+export class InvalidCorrectOptionIndexError extends Error {
+  constructor() {
+    super("correctOptionIndex must be a valid index into options.");
+    this.name = "InvalidCorrectOptionIndexError";
+  }
+}
+
+/**
+ * Slice 003. Raised when a START_SESSION call's supplied
+ * preparedQuestionId does not identify a prepared question belonging
+ * to this session.
+ */
+export class PreparedQuestionNotFoundError extends Error {
+  constructor() {
+    super("No prepared question exists for this id in this session.");
+    this.name = "PreparedQuestionNotFoundError";
+  }
+}
+
+/**
+ * Slice 003. Raised when a START_SESSION call's supplied
+ * preparedQuestionId has already been consumed by an earlier
+ * interaction instance.
+ */
+export class PreparedQuestionAlreadyConsumedError extends Error {
+  constructor() {
+    super("This prepared question has already been started.");
+    this.name = "PreparedQuestionAlreadyConsumedError";
+  }
+}
+
+/**
+ * Slice 003. Raised when SUBMIT_RESPONSE targets a Multiple Choice
+ * interaction with text that is not a legal option index for that
+ * specific question — the Multiple Choice analogue of
+ * EmptyResponseError/ResponseTooLongError, which only make sense for
+ * Open Response's free-text shape.
+ */
+export class InvalidOptionSelectionError extends Error {
+  constructor() {
+    super("Selected option is not valid for this question.");
+    this.name = "InvalidOptionSelectionError";
   }
 }

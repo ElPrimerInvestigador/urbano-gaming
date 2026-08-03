@@ -59,14 +59,31 @@ function validateAndTrimPromptText(text: string): string {
  * re-verifying the host token, the session state, and the previous
  * interaction instance's state — and creating the prompt and
  * interaction instance — inside the same atomic operation.
+ *
+ * Slice 003 (Second Interaction Engine): an optional preparedQuestionId
+ * starts a specific, previously-authored Multiple Choice question
+ * instead of an Open Response interaction. When supplied, promptText
+ * is not validated or used at all — the prompt text for a Multiple
+ * Choice interaction comes from the prepared question itself, resolved
+ * authoritatively by the repository. Deliberately explicit rather than
+ * an implicit "use the next unconsumed prepared question" fallback:
+ * the caller always names the exact question being started, so this
+ * command's meaning never depends on hidden repository state. A host
+ * UI may still present one "Start next question" button that
+ * auto-selects the lowest unconsumed ordinal from GET_SESSION's
+ * preparedQuestions field — but the request it sends here always
+ * carries that specific id.
  */
 export async function startSession(
   repo: SessionRepository,
   sessionId: string,
   hostToken: string,
-  promptText: string
+  promptText: string,
+  preparedQuestionId?: string | null
 ): Promise<StartSessionResult> {
-  const trimmedPromptText = validateAndTrimPromptText(promptText);
+  const trimmedPromptText = preparedQuestionId
+    ? ""
+    : validateAndTrimPromptText(promptText);
 
   const session = await repo.getSessionById(sessionId);
   if (!session) {
@@ -96,7 +113,8 @@ export async function startSession(
   const result = await repo.startSession(
     session.sessionId,
     hostToken,
-    trimmedPromptText
+    trimmedPromptText,
+    preparedQuestionId
   );
 
   return {
@@ -104,5 +122,6 @@ export async function startSession(
     interactionInstanceId: result.interactionInstanceId,
     promptId: result.promptId,
     state: result.state,
+    engineType: result.engineType,
   };
 }

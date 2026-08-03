@@ -62,6 +62,7 @@ describe("START_SESSION", () => {
     expect(startedEvent?.payload).toEqual({
       interactionInstanceId: result.interactionInstanceId,
       promptId: result.promptId,
+      engineType: "OPEN_RESPONSE",
     });
   });
 

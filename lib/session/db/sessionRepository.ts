@@ -1,4 +1,9 @@
-import type { SessionRecord, SessionState, InteractionState } from "../types";
+import type {
+  SessionRecord,
+  SessionState,
+  InteractionState,
+  EngineType,
+} from "../types";
 
 export interface SessionEventRecord {
   sessionId: string;
@@ -50,14 +55,53 @@ export interface PromptRecord {
  * state_version — see 0015's migration comment for why both were
  * cut during the accepted design's stress test. Ordering and
  * "current" are both derived from createdAt, never stored.
+ *
+ * Slice 003 (Second Interaction Engine): engineType is the single
+ * source of truth for which engine produced this interaction —
+ * 'OPEN_RESPONSE' for every row that predates this slice.
  */
 export interface InteractionInstanceRecord {
   interactionInstanceId: string;
   sessionId: string;
   promptId: string;
   state: InteractionState;
+  engineType: EngineType;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Slice 003. The Multiple Choice engine's own data for one interaction
+ * instance — a 1:1 extension, not a merge into InteractionInstanceRecord
+ * itself (see 0024's migration comment for why). correctOptionIndex is
+ * private state: known to the repository from creation, but the
+ * domain layer (GET_SESSION) is exclusively responsible for
+ * withholding it from any caller until the interaction reaches
+ * RESULT_REVEAL.
+ */
+export interface MultipleChoiceDetailsRecord {
+  interactionInstanceId: string;
+  options: string[];
+  correctOptionIndex: number;
+  pointsForCorrect: number;
+}
+
+/**
+ * Slice 003. One question in a session's pre-authored Multiple Choice
+ * queue. consumedAt is null until a START_SESSION call turns it into a
+ * real interaction instance, after which it is permanent history —
+ * never deleted or reused.
+ */
+export interface PreparedQuestionRecord {
+  preparedQuestionId: string;
+  sessionId: string;
+  ordinal: number;
+  promptText: string;
+  options: string[];
+  correctOptionIndex: number;
+  pointsForCorrect: number;
+  consumedAt: string | null;
+  createdAt: string;
 }
 
 export interface InteractionStartedEventRecord extends SessionEventRecord {
@@ -101,6 +145,37 @@ export interface SubmissionsClosedEventRecord extends SessionEventRecord {
 export interface ResultsRevealedEventRecord extends SessionEventRecord {
   eventType: "RESULTS_REVEALED";
   payload: Record<string, never>;
+}
+
+/**
+ * Slice 002 (Scored Multi-Round Experience). One independent scoring
+ * event: the host awarding a participant a positive number of points
+ * for a specific, currently-revealed interaction instance. Immutable —
+ * there is no update-in-place; every row is permanent from the moment
+ * it is written. Deliberately has no uniqueness constraint on
+ * (interactionInstanceId, participantId): a future experience may
+ * legitimately produce more than one independent scoring event for the
+ * same participant in the same interaction, and this generic ledger
+ * should not encode a business rule that belongs to the experience,
+ * not to Shared Game State.
+ */
+export interface PointAwardRecord {
+  pointAwardId: string;
+  sessionId: string;
+  interactionInstanceId: string;
+  participantId: string;
+  points: number;
+  createdAt: string;
+}
+
+export interface PointsAwardedEventRecord extends SessionEventRecord {
+  eventType: "POINTS_AWARDED";
+  payload: {
+    pointAwardId: string;
+    interactionInstanceId: string;
+    participantId: string;
+    points: number;
+  };
 }
 
 /**
@@ -271,15 +346,38 @@ export interface SessionRepository {
    *   corresponding validation failure;
    * - return the newly created interaction instance's id, prompt id,
    *   and state.
+   *
+   * Slice 003 (Second Interaction Engine): gains an optional
+   * preparedQuestionId. When supplied, promptText is ignored and the
+   * implementation must instead atomically: verify the prepared
+   * question exists, belongs to this session, and is not already
+   * consumed; create the interaction instance as 'MULTIPLE_CHOICE';
+   * create its multiple_choice_details row from the prepared
+   * question's options/correctOptionIndex/pointsForCorrect; and mark
+   * the prepared question consumed — all inside the same atomic
+   * operation as every other check here. When omitted, behavior is
+   * byte-for-byte the existing Open Response path. Deliberately
+   * explicit rather than an implicit "use the next unconsumed prepared
+   * question" fallback, so the request's meaning never depends on
+   * hidden repository state.
+   *
+   * Implementations must additionally:
+   * - throw PreparedQuestionNotFoundError only when preparedQuestionId
+   *   does not identify a prepared question belonging to this session;
+   * - throw PreparedQuestionAlreadyConsumedError only when it has
+   *   already been consumed;
+   * - return engineType alongside the existing fields.
    */
   startSession(
     sessionId: string,
     hostToken: string,
-    promptText: string
+    promptText: string,
+    preparedQuestionId?: string | null
   ): Promise<{
     interactionInstanceId: string;
     promptId: string;
     state: InteractionState;
+    engineType: EngineType;
   }>;
 
   /**
@@ -393,4 +491,109 @@ export interface SessionRepository {
     hostToken: string,
     event: ResultsRevealedEventRecord
   ): Promise<{ interactionInstanceId: string; state: InteractionState }>;
+
+  /**
+   * Slice 002. Idempotency-first: if a point_award already exists for
+   * this (sessionId, idempotencyKey) pair, return it immediately — no
+   * other validation runs, even if the session has since progressed to
+   * a later interaction or completed. Only when the key is genuinely
+   * new does the implementation validate host token, session state
+   * (LOBBY_LOCKED), that interactionInstanceId is both the session's
+   * current interaction and at RESULT_REVEAL, that participantId
+   * belongs to the session, and that points is a positive integer —
+   * then insert one new, permanent point_award row and persist a
+   * POINTS_AWARDED event.
+   *
+   * No update-in-place: a second call with a different idempotencyKey,
+   * even for the same participant and interaction, creates a second,
+   * independent row. This is deliberate — the ledger does not enforce
+   * "one award per participant per interaction."
+   *
+   * Implementations must:
+   * - resolve idempotencyKey (scoped to sessionId) before any other
+   *   check, and skip all other validation on a match;
+   * - commit the new row and its event atomically, or neither;
+   * - guard against a concurrent request racing on the same
+   *   (sessionId, idempotencyKey) pair by returning the winner's result
+   *   rather than erroring;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw HostTokenMismatchError only on a host-token mismatch;
+   * - throw LobbyNotLockedError only when the session is not
+   *   LOBBY_LOCKED;
+   * - throw InteractionInstanceNotEligibleError only when
+   *   interactionInstanceId is not the session's current interaction,
+   *   or that interaction is not at RESULT_REVEAL;
+   * - throw ParticipantNotInSessionError only when participantId does
+   *   not belong to this session;
+   * - throw InvalidPointsError only when points is not a positive
+   *   integer within the accepted bound;
+   * - return the resulting (or pre-existing) point award record.
+   */
+  awardPoints(
+    sessionId: string,
+    hostToken: string,
+    interactionInstanceId: string,
+    participantId: string,
+    points: number,
+    idempotencyKey: string
+  ): Promise<PointAwardRecord>;
+
+  /**
+   * Slice 002: list every point award for a session. Used by
+   * GET_SESSION to derive per-participant cumulative standings by
+   * summation — never filtered or pre-aggregated here, since the
+   * summation itself is the domain layer's responsibility.
+   */
+  getPointAwardsForSession(sessionId: string): Promise<PointAwardRecord[]>;
+
+  /**
+   * Slice 003 (Second Interaction Engine). Persist a batch of
+   * pre-authored Multiple Choice questions for a session, assigning
+   * each the next sequential ordinal after whatever already exists for
+   * this session. Host-token verification and validation of each
+   * question's shape (non-empty prompt text, at least two distinct
+   * non-empty options, correctOptionIndex within bounds, points a
+   * positive integer within the accepted bound) are the domain layer's
+   * responsibility (see prepareQuestions.ts) — this method persists
+   * already-validated rows.
+   *
+   * No atomic re-check of host token or session state is required here
+   * the way write commands elsewhere in this interface require one:
+   * authoring a prepared question has no concurrent invariant to
+   * protect (no state transition, no uniqueness other than the
+   * ordinal this method itself assigns), unlike lockLobby or
+   * startSession, which race against concurrent calls changing the
+   * same state.
+   */
+  createPreparedQuestions(
+    sessionId: string,
+    questions: Array<{
+      promptText: string;
+      options: string[];
+      correctOptionIndex: number;
+      pointsForCorrect: number;
+    }>
+  ): Promise<PreparedQuestionRecord[]>;
+
+  /**
+   * Slice 003. List every prepared question for a session, ordered by
+   * ordinal ascending — both consumed and unconsumed. GET_SESSION
+   * applies its own host-only visibility rule on top of this; this
+   * method itself performs no filtering by caller role.
+   */
+  getPreparedQuestionsForSession(
+    sessionId: string
+  ): Promise<PreparedQuestionRecord[]>;
+
+  /**
+   * Slice 003. Look up the Multiple Choice engine's own data for one
+   * interaction instance. Returns null for an Open Response
+   * interaction (or any interaction instance id with no matching row).
+   * Used by SUBMIT_RESPONSE (engine-aware validation) and GET_SESSION
+   * (resolving options, reveal-gating correctOptionIndex, mapping
+   * submitted option indices to their label text).
+   */
+  getMultipleChoiceDetailsForInteraction(
+    interactionInstanceId: string
+  ): Promise<MultipleChoiceDetailsRecord | null>;
 }

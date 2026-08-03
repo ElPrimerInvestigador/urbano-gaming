@@ -8,6 +8,8 @@ import {
   PreviousInteractionNotRevealedError,
   EmptyPromptTextError,
   PromptTextTooLongError,
+  PreparedQuestionNotFoundError,
+  PreparedQuestionAlreadyConsumedError,
 } from "@/lib/session/types";
 
 /**
@@ -19,6 +21,10 @@ import {
  * interaction instance (if any) is already RESULT_REVEAL. Requires
  * host-supplied prompt text on every call; no longer selects from a
  * fixed seeded prompt.
+ *
+ * Slice 003 (Second Interaction Engine): an optional preparedQuestionId
+ * starts a specific, previously-authored Multiple Choice question
+ * instead. When supplied, promptText is not required.
  *
  * The dynamic segment is named [identifier] for the same reason the
  * join/lock/complete/GET routes share it. Route is thin by design:
@@ -43,10 +49,12 @@ export async function POST(
 
   let hostToken: unknown;
   let promptText: unknown;
+  let preparedQuestionId: unknown;
   try {
     const body = (await request.json()) as Record<string, unknown>;
     hostToken = body?.hostToken;
     promptText = body?.promptText;
+    preparedQuestionId = body?.preparedQuestionId;
   } catch {
     return NextResponse.json(
       { error: "Request body must be valid JSON." },
@@ -61,9 +69,26 @@ export async function POST(
     );
   }
 
-  if (typeof promptText !== "string") {
+  if (
+    preparedQuestionId !== undefined &&
+    preparedQuestionId !== null &&
+    (typeof preparedQuestionId !== "string" || preparedQuestionId.length === 0)
+  ) {
     return NextResponse.json(
-      { error: "promptText is required and must be a string." },
+      { error: "preparedQuestionId, if supplied, must be a non-empty string." },
+      { status: 400 }
+    );
+  }
+
+  const hasPreparedQuestionId =
+    typeof preparedQuestionId === "string" && preparedQuestionId.length > 0;
+
+  if (!hasPreparedQuestionId && typeof promptText !== "string") {
+    return NextResponse.json(
+      {
+        error:
+          "promptText is required and must be a string, unless preparedQuestionId is supplied.",
+      },
       { status: 400 }
     );
   }
@@ -71,7 +96,13 @@ export async function POST(
   const repo = new SupabaseSessionRepository(supabaseUrl, supabaseServiceKey);
 
   try {
-    const result = await startSession(repo, sessionId, hostToken, promptText);
+    const result = await startSession(
+      repo,
+      sessionId,
+      hostToken,
+      typeof promptText === "string" ? promptText : "",
+      hasPreparedQuestionId ? (preparedQuestionId as string) : null
+    );
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof SessionNotFoundError) {
@@ -91,6 +122,12 @@ export async function POST(
       err instanceof PromptTextTooLongError
     ) {
       return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof PreparedQuestionNotFoundError) {
+      return NextResponse.json({ error: err.message }, { status: 404 });
+    }
+    if (err instanceof PreparedQuestionAlreadyConsumedError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
     }
 
     console.error("START_SESSION failed:", err);

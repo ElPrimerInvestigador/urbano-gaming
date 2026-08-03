@@ -48,11 +48,39 @@ export async function getSession(
   const interactionNumber =
     interactionInstances.length > 0 ? interactionInstances.length : null;
 
+  // Slice 003 (Second Interaction Engine): resolved once, up front,
+  // since both currentPrompt's shape and submissions' visibility now
+  // depend on which engine produced the current interaction.
+  const multipleChoiceDetails =
+    currentInteraction && currentInteraction.engineType === "MULTIPLE_CHOICE"
+      ? await repo.getMultipleChoiceDetailsForInteraction(
+          currentInteraction.interactionInstanceId
+        )
+      : null;
+  const isRevealed = currentInteraction?.state === "RESULT_REVEAL";
+
   // Visible regardless of session state once an interaction has ever
   // started — mirrors the pre-Slice-001 precedent where currentPrompt
-  // stayed visible after SESSION_COMPLETE.
-  const currentPrompt = currentInteraction
+  // stayed visible after SESSION_COMPLETE. Slice 003: options is
+  // populated whenever this is a Multiple Choice interaction (needed
+  // to answer at all); correctOptionIndex is this platform's first
+  // genuinely private-until-reveal field — known internally from
+  // creation, but withheld from every caller, host included, until the
+  // interaction reaches RESULT_REVEAL, mirroring submissions' existing
+  // reveal-gating below.
+  const currentPromptRecord = currentInteraction
     ? await repo.getPromptById(currentInteraction.promptId)
+    : null;
+  const currentPrompt = currentPromptRecord
+    ? {
+        promptId: currentPromptRecord.promptId,
+        text: currentPromptRecord.text,
+        options: multipleChoiceDetails?.options ?? null,
+        correctOptionIndex:
+          multipleChoiceDetails && isRevealed
+            ? multipleChoiceDetails.correctOptionIndex
+            : null,
+      }
     : null;
 
   let submittedCount: number | null = null;
@@ -95,12 +123,72 @@ export async function getSession(
     const displayNameByParticipantId = new Map(
       participants.map((p) => [p.participantId, p.displayName])
     );
-    submissions = allSubmissions.map((s) => ({
-      participantId: s.participantId,
-      displayName: displayNameByParticipantId.get(s.participantId) ?? "",
-      text: s.text,
-    }));
+    // Slice 003: for a Multiple Choice interaction, the stored text is
+    // the selected option's index, not something a host or participant
+    // should ever see raw — resolved here to the option's actual
+    // label, with correctness computed alongside it. Open Response
+    // keeps its raw free-text display and isCorrect stays null, since
+    // it has no correctness concept at all.
+    submissions = allSubmissions.map((s) => {
+      if (multipleChoiceDetails) {
+        const selectedIndex = Number(s.text);
+        const label =
+          multipleChoiceDetails.options[selectedIndex] ?? s.text;
+        return {
+          participantId: s.participantId,
+          displayName: displayNameByParticipantId.get(s.participantId) ?? "",
+          text: label,
+          isCorrect: selectedIndex === multipleChoiceDetails.correctOptionIndex,
+        };
+      }
+
+      return {
+        participantId: s.participantId,
+        displayName: displayNameByParticipantId.get(s.participantId) ?? "",
+        text: s.text,
+        isCorrect: null,
+      };
+    });
   }
+
+  // Slice 002 (Scored Multi-Round Experience): standings are always
+  // computed, with their own visibility rule independent of the
+  // currentPrompt/submissions branches above — they must remain
+  // visible at SESSION_COMPLETE (final standings), unlike submissions,
+  // which intentionally goes null again at that point. Every
+  // participant appears, defaulting to a score of 0, so the client
+  // never has to distinguish "no standings yet" from "no awards yet."
+  const pointAwards = await repo.getPointAwardsForSession(sessionId);
+  const scoreByParticipantId = new Map<string, number>();
+  for (const award of pointAwards) {
+    scoreByParticipantId.set(
+      award.participantId,
+      (scoreByParticipantId.get(award.participantId) ?? 0) + award.points
+    );
+  }
+  const standings = participants.map((participant) => ({
+    participantId: participant.participantId,
+    displayName: participant.displayName,
+    score: scoreByParticipantId.get(participant.participantId) ?? 0,
+  }));
+
+  // Slice 003: the first field in this platform's history that
+  // differs by caller role rather than only by overall access. Every
+  // prepared question's correctOptionIndex is authoring-time data the
+  // host must be able to review — and must never reach a participant,
+  // who is equally authorized to call GET_SESSION at all, just not to
+  // see this.
+  const preparedQuestions = isHost
+    ? (await repo.getPreparedQuestionsForSession(sessionId)).map((q) => ({
+        preparedQuestionId: q.preparedQuestionId,
+        ordinal: q.ordinal,
+        promptText: q.promptText,
+        options: q.options,
+        correctOptionIndex: q.correctOptionIndex,
+        pointsForCorrect: q.pointsForCorrect,
+        consumedAt: q.consumedAt,
+      }))
+    : null;
 
   return {
     sessionId: session.sessionId,
@@ -112,11 +200,13 @@ export async function getSession(
     })),
     interactionNumber,
     interactionState: currentInteraction?.state ?? null,
-    currentPrompt: currentPrompt
-      ? { promptId: currentPrompt.promptId, text: currentPrompt.text }
-      : null,
+    currentInteractionInstanceId: currentInteraction?.interactionInstanceId ?? null,
+    currentEngineType: currentInteraction?.engineType ?? null,
+    currentPrompt,
     submittedCount,
     eligibleParticipantCount,
     submissions,
+    standings,
+    preparedQuestions,
   };
 }

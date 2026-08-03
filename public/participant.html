@@ -2,18 +2,24 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Level 33 — Play</title>
+<title>URBANO Gaming — Level 33</title>
 <style>
   :root {
-    --ink: #1a1a2e;
+    --ink: #16162b;
     --muted: #6b7280;
     --line: #e5e7eb;
     --accent: #4f46e5;
+    --accent-dark: #3730a3;
     --accent-ink: #ffffff;
+    --gold: #d97706;
+    --gold-bg: #fffbeb;
     --done: #16a34a;
+    --done-bg: #f0fdf4;
+    --wrong: #dc2626;
+    --wrong-bg: #fef2f2;
     --upcoming: #d1d5db;
     --bg-card: #ffffff;
-    --bg-page: #f7f7fb;
+    --bg-page: #f5f5fb;
     --own: #eef2ff;
     --danger: #b91c1c;
     --danger-bg: #fef2f2;
@@ -27,7 +33,15 @@
     margin: 24px auto;
     padding: 0 16px 60px;
   }
-  h1 { font-size: 20px; margin-bottom: 4px; }
+  .brand {
+    display: inline-flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  }
+  .brand-badge {
+    background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+    color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
   .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 20px; font-size: 14px; }
 
   .stepper { display: flex; justify-content: space-between; margin: 24px 0; }
@@ -48,10 +62,38 @@
   .step-done .step-label { color: var(--done); }
 
   .card {
-    background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px;
-    padding: 16px 18px; margin-bottom: 14px;
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(16,16,40,0.03);
   }
   .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 10px; }
+
+  .option-btn-list { display: flex; flex-direction: column; gap: 10px; }
+  .option-btn {
+    display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+    font-family: inherit; font-size: 16px; padding: 14px 16px; border-radius: 10px;
+    border: 2px solid var(--line); background: #fff; cursor: pointer;
+  }
+  .option-btn:active { transform: scale(0.99); }
+  .option-btn.selected { border-color: var(--accent); background: var(--own); font-weight: 600; }
+  .option-btn.is-correct { border-color: var(--done); background: var(--done-bg); font-weight: 700; }
+  .option-btn.is-wrong-selected { border-color: var(--wrong); background: var(--wrong-bg); }
+  .option-btn:disabled {
+    cursor: default; opacity: 1; color: var(--ink); -webkit-text-fill-color: var(--ink);
+  }
+  .option-btn.is-correct:disabled { color: var(--done); -webkit-text-fill-color: var(--done); }
+  .option-index-badge {
+    display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border-radius: 50%; background: var(--upcoming); font-size: 13px; font-weight: 700; flex-shrink: 0;
+  }
+  .option-btn.selected .option-index-badge { background: var(--accent); color: #fff; }
+  .option-btn.is-correct .option-index-badge {
+    background: var(--done); color: #fff; -webkit-text-fill-color: #fff;
+  }
+  .correctness-banner {
+    text-align: center; font-weight: 700; padding: 12px; border-radius: 10px; margin-bottom: 12px; font-size: 16px;
+  }
+  .correctness-banner.correct { background: var(--done-bg); color: var(--done); border: 1px solid var(--done); }
+  .correctness-banner.wrong { background: var(--wrong-bg); color: var(--wrong); border: 1px solid var(--wrong); }
 
   input, textarea {
     font-family: inherit; font-size: 15px; width: 100%; padding: 10px 12px;
@@ -76,9 +118,25 @@
 
   .result-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
   .result-card.own { background: var(--own); border-color: var(--accent); }
+  .result-card.is-correct { border-color: var(--done); background: var(--done-bg); }
+  .result-card.is-wrong { border-color: var(--wrong); background: var(--wrong-bg); }
   .result-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
   .result-name .you { color: var(--accent); }
   .result-text { font-size: 15px; }
+
+  .standing-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .standing-row:last-child { border-bottom: none; }
+  .standing-row.own { color: var(--accent); font-weight: 600; }
+  .standing-name { flex: 1; font-size: 14px; }
+  .standing-score { font-weight: 700; font-size: 16px; color: var(--gold); }
+  .winner-banner {
+    margin-top: 12px; padding: 12px 14px; border-radius: 8px; font-weight: 700;
+    text-align: center; background: var(--gold-bg); color: var(--gold); border: 1px solid var(--gold);
+    font-size: 15px;
+  }
 
   button {
     font-family: inherit; font-size: 14px; padding: 10px 16px; border-radius: 8px;
@@ -103,8 +161,9 @@
 </head>
 <body>
 
-<h1>Level 33 — Play</h1>
-<p class="subtitle">Developer validation interface. Plays the game; does not control the session.</p>
+<div class="brand"><span class="brand-badge">URBANO Gaming</span></div>
+<h1>Level 33</h1>
+<p class="subtitle">Plays the game; does not control the session.</p>
 
 <div id="status-banner" class="notice" style="display:none;" role="alert"></div>
 
@@ -134,6 +193,12 @@
     <button class="btn-primary" onclick="submitResponse()">Submit / Revise Response</button>
   </div>
 
+  <div class="card" id="optionsCard" style="display:none;">
+    <div id="ownCorrectnessBanner"></div>
+    <div class="submitted-note" id="optionsSubmittedNote" style="display:none;">Answer locked in — tap another option to change it until submissions close.</div>
+    <div class="option-btn-list" id="optionsList"></div>
+  </div>
+
   <div class="card" id="progressCard" style="display:none;">
     <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
     <div class="progress-label" id="progressLabel"></div>
@@ -142,6 +207,12 @@
   <div class="card" id="resultsCard" style="display:none;">
     <h2>Results</h2>
     <div id="resultsList"></div>
+  </div>
+
+  <div class="card" id="standingsCard" style="display:none;">
+    <h2>Standings</h2>
+    <div id="standingsList"></div>
+    <div id="winnerBanner" class="winner-banner" style="display:none;"></div>
   </div>
 
   <button class="btn-ghost" onclick="participantRefresh()">Check for updates</button>
@@ -192,6 +263,17 @@ let lastSeenInteractionNumber = null;
 // state (see renderResults) so it does not also bridge the unrelated
 // gap when a new interaction starts.
 let lastKnownSubmissions = null;
+// Slice 002 (Scored Multi-Round Experience). The session's own raw
+// state (LOBBY_OPEN | LOBBY_LOCKED | SESSION_COMPLETE) — needed
+// separately from computeEffectiveState's combined stage name, since
+// the winner banner must key specifically off SESSION_COMPLETE.
+let currentSessionState = null;
+// Slice 003 (Second Interaction Engine). Which option this participant
+// has selected for the current Multiple Choice interaction — tracked
+// client-side only, exactly the same way the Open Response textarea's
+// draft text is client-side only; GET_SESSION never exposes a
+// participant's own submission before RESULT_REVEAL.
+let selectedOptionIndex = null;
 
 function saveParticipantState() {
   sessionStorage.setItem(PARTICIPANT_STORAGE_KEY, JSON.stringify(participantState));
@@ -258,6 +340,7 @@ const KNOWN_ERRORS = [
   { test: (m) => m === "Response cannot be empty.", text: "Please enter a response before submitting." },
   { test: (m) => m === "Response cannot exceed 1000 characters.", text: "That response is too long — please shorten it." },
   { test: (m) => m === "This token does not grant access to this session.", text: "You don't have access to this session." },
+  { test: (m) => m === "Selected option is not valid for this question.", text: "That option isn't valid for this question — try refreshing." },
 ];
 
 function translateKnownError(raw) {
@@ -336,25 +419,109 @@ function renderStateCard(state) {
   el.innerHTML = `<div class="waiting"><span class="big">${msg[0]}</span>${msg[1]}</div>`;
 }
 
+// Slice 003 (Second Interaction Engine). currentPrompt.options is
+// populated only for a Multiple Choice interaction — that branch
+// replaces the free-text form with tappable option buttons rather
+// than adding a parallel UI; correctOptionIndex stays null until
+// RESULT_REVEAL (see getSession.ts), so it is never rendered before
+// that regardless of which branch below executes.
 function renderPrompt(state, currentPrompt) {
   const promptCard = document.getElementById("promptCard");
   const submitCard = document.getElementById("submitCard");
+  const optionsCard = document.getElementById("optionsCard");
+  const isMultipleChoice = !!(currentPrompt && currentPrompt.options);
 
   if (state === "PROMPT_ACTIVE" && currentPrompt) {
     promptCard.style.display = "block";
-    submitCard.style.display = "block";
     document.getElementById("promptText").textContent = currentPrompt.text;
-    document.getElementById("submittedNote").style.display = hasSubmittedThisPageLoad ? "block" : "none";
+    if (isMultipleChoice) {
+      submitCard.style.display = "none";
+      optionsCard.style.display = "block";
+      renderOptionButtons(currentPrompt, null, true);
+    } else {
+      submitCard.style.display = "block";
+      optionsCard.style.display = "none";
+      document.getElementById("submittedNote").style.display = hasSubmittedThisPageLoad ? "block" : "none";
+    }
   } else if (currentPrompt && (state === "SUBMISSIONS_CLOSED" || state === "RESULT_REVEAL" || state === "SESSION_COMPLETE")) {
     // Prompt stays visible as context once past PROMPT_ACTIVE; the
     // response form does not, since submissions are no longer open.
     promptCard.style.display = "block";
     document.getElementById("promptText").textContent = currentPrompt.text;
     submitCard.style.display = "none";
+    if (isMultipleChoice) {
+      optionsCard.style.display = "block";
+      const revealed = state === "RESULT_REVEAL" || state === "SESSION_COMPLETE";
+      renderOptionButtons(currentPrompt, revealed ? currentPrompt.correctOptionIndex : null, false);
+    } else {
+      optionsCard.style.display = "none";
+    }
   } else {
     promptCard.style.display = "none";
     submitCard.style.display = "none";
+    optionsCard.style.display = "none";
   }
+}
+
+function renderOptionButtons(currentPrompt, revealedCorrectIndex, clickable) {
+  const list = document.getElementById("optionsList");
+  document.getElementById("optionsSubmittedNote").style.display =
+    clickable && hasSubmittedThisPageLoad ? "block" : "none";
+
+  list.innerHTML = currentPrompt.options
+    .map((option, i) => {
+      let cls = "option-btn";
+      if (selectedOptionIndex === i) cls += " selected";
+      if (revealedCorrectIndex !== null && revealedCorrectIndex === i) cls += " is-correct";
+      if (
+        revealedCorrectIndex !== null &&
+        selectedOptionIndex === i &&
+        selectedOptionIndex !== revealedCorrectIndex
+      ) {
+        cls += " is-wrong-selected";
+      }
+      return `<button class="${cls}" ${clickable ? "" : "disabled"} onclick="selectOption(${i})">
+        <span class="option-index-badge">${i + 1}</span><span>${option}</span>
+      </button>`;
+    })
+    .join("");
+}
+
+async function selectOption(index) {
+  const previous = selectedOptionIndex;
+  selectedOptionIndex = index;
+  const r = await postJson(
+    `/api/sessions/${participantState.sessionId}/submit`,
+    { text: String(index) },
+    participantState.participantToken
+  );
+  show("SUBMIT_RESPONSE (option) (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    renderNotice(null);
+    hasSubmittedThisPageLoad = true;
+  } else {
+    renderNotice(classifyError(r));
+    selectedOptionIndex = previous;
+  }
+  await participantRefresh();
+}
+
+// Own-correctness moment, derived from GET_SESSION's authoritative
+// submissions (not from selectedOptionIndex, which is only ever this
+// client's local, possibly-unconfirmed intent) — shown only once the
+// interaction is actually revealed.
+function renderOwnCorrectnessBanner(submissions, state) {
+  const el = document.getElementById("ownCorrectnessBanner");
+  const revealed = state === "RESULT_REVEAL" || state === "SESSION_COMPLETE";
+  const own = submissions ? submissions.find((s) => s.participantId === participantState.participantId) : null;
+
+  if (!revealed || !own || own.isCorrect === null || own.isCorrect === undefined) {
+    el.innerHTML = "";
+    return;
+  }
+  el.innerHTML = own.isCorrect
+    ? `<div class="correctness-banner correct">✓ Correct!</div>`
+    : `<div class="correctness-banner wrong">✗ Not quite — the correct answer is highlighted below.</div>`;
 }
 
 function renderProgress(submittedCount, eligibleParticipantCount) {
@@ -382,12 +549,71 @@ function renderResults(submissions, sessionState) {
   document.getElementById("resultsList").innerHTML = effective
     .map((s) => {
       const isOwn = s.participantId === participantState.participantId;
-      return `<div class="result-card ${isOwn ? "own" : ""}">
-        <div class="result-name">${s.displayName}${isOwn ? ' <span class="you">(you)</span>' : ""}</div>
+      // Slice 003: isCorrect is null for Open Response, a boolean for
+      // Multiple Choice — resolved by GET_SESSION's automatic evaluation.
+      const correctnessClass = s.isCorrect === true ? "is-correct" : s.isCorrect === false ? "is-wrong" : "";
+      const badge = s.isCorrect === true ? " ✓" : s.isCorrect === false ? " ✗" : "";
+      return `<div class="result-card ${isOwn ? "own" : ""} ${correctnessClass}">
+        <div class="result-name">${s.displayName}${isOwn ? ' <span class="you">(you)</span>' : ""}${badge}</div>
         <div class="result-text">${s.text}</div>
       </div>`;
     })
     .join("") || `<div class="waiting">No responses were submitted.</div>`;
+}
+
+// Slice 002 (Scored Multi-Round Experience). Read-only for
+// participants — the host is the only role that can award points.
+// Standings are always present in GET_SESSION and have their own
+// visibility rule independent of results/prompt: they stay visible at
+// SESSION_COMPLETE, since final standings must remain shown once the
+// session ends.
+function renderStandings(standings) {
+  const card = document.getElementById("standingsCard");
+  if (!standings || standings.length === 0) {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+
+  const sorted = [...standings].sort((a, b) => b.score - a.score);
+
+  document.getElementById("standingsList").innerHTML = sorted
+    .map((s) => {
+      const isOwn = s.participantId === participantState.participantId;
+      return `<div class="standing-row ${isOwn ? "own" : ""}">
+        <div class="standing-name">${s.displayName}${isOwn ? ' <span class="you">(you)</span>' : ""}</div>
+        <div class="standing-score">${s.score}</div>
+      </div>`;
+    })
+    .join("");
+
+  renderWinnerBanner(sorted);
+}
+
+// Client-derived presentation rule (Slice 002), mirroring host.html:
+// if no point award exists for anyone, every score is 0 and no one is
+// declared a joint winner merely because every score equals that
+// maximum of 0. Points are always positive (server-enforced), so "the
+// highest score is 0" and "no point award exists" are equivalent.
+function renderWinnerBanner(sortedStandings) {
+  const el = document.getElementById("winnerBanner");
+  if (currentSessionState !== "SESSION_COMPLETE") {
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "block";
+
+  const maxScore = sortedStandings.length > 0 ? sortedStandings[0].score : 0;
+  if (maxScore === 0) {
+    el.textContent = "No winner determined — no points were awarded.";
+    return;
+  }
+  const winners = sortedStandings.filter((s) => s.score === maxScore);
+  const names = winners.map((w) => w.displayName).join(" & ");
+  el.textContent =
+    winners.length > 1
+      ? `Joint winners: ${names} (${maxScore} pts)`
+      : `Winner: ${names} (${maxScore} pts)`;
 }
 
 // Slice 001: GET_SESSION's `state` is now only the session's own
@@ -424,15 +650,22 @@ function applySessionSnapshot(data) {
     hasSubmittedThisPageLoad = false;
     document.getElementById("p-text").value = "";
     lastKnownSubmissions = null;
+    selectedOptionIndex = null;
     lastSeenInteractionNumber = data.interactionNumber;
   }
+
+  currentSessionState = data.state;
 
   const effectiveState = computeEffectiveState(data.state, data.interactionState);
   renderStepper(effectiveState);
   renderStateCard(effectiveState);
   renderPrompt(effectiveState, data.currentPrompt);
   if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
-  if ("submissions" in data) renderResults(data.submissions, data.state);
+  if ("submissions" in data) {
+    renderResults(data.submissions, data.state);
+    renderOwnCorrectnessBanner(data.submissions, effectiveState);
+  }
+  if ("standings" in data) renderStandings(data.standings);
 }
 
 async function joinSession() {

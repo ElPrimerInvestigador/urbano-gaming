@@ -7,6 +7,7 @@ import {
   PromptNotActiveError,
   EmptyResponseError,
   ResponseTooLongError,
+  InvalidOptionSelectionError,
 } from "@/lib/session/types";
 
 /**
@@ -81,7 +82,11 @@ export async function POST(
     if (err instanceof PromptNotActiveError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
-    if (err instanceof EmptyResponseError || err instanceof ResponseTooLongError) {
+    if (
+      err instanceof EmptyResponseError ||
+      err instanceof ResponseTooLongError ||
+      err instanceof InvalidOptionSelectionError
+    ) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
 

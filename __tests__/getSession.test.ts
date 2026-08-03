@@ -23,6 +23,16 @@ describe("GET_SESSION", () => {
     expect(result.participants).toEqual([]);
   });
 
+  it("returns an empty standings array and a null currentInteractionInstanceId for a fresh session (Slice 002)", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+
+    const result = await getSession(repo, session.sessionId, session.hostToken);
+
+    expect(result.standings).toEqual([]);
+    expect(result.currentInteractionInstanceId).toBeNull();
+  });
+
   it("returns the participant list with display names, ordered by join time, and no tokens", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
@@ -38,6 +48,22 @@ describe("GET_SESSION", () => {
     for (const participant of result.participants) {
       expect(participant).not.toHaveProperty("participantToken");
     }
+  });
+
+  it("returns every participant in standings at a score of 0 before any award exists (Slice 002)", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+    const alex = await joinSession(repo, session.roomCode, "Alex");
+    const jordan = await joinSession(repo, session.roomCode, "Jordan");
+
+    const result = await getSession(repo, session.sessionId, session.hostToken);
+
+    expect(result.standings).toEqual(
+      expect.arrayContaining([
+        { participantId: alex.participantId, displayName: "Alex", score: 0 },
+        { participantId: jordan.participantId, displayName: "Jordan", score: 0 },
+      ])
+    );
   });
 
   it("does not include hostToken anywhere in the result", async () => {

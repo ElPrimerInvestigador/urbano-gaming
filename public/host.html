@@ -2,20 +2,26 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Level 33 — Host</title>
+<title>URBANO Gaming — Level 33 Host</title>
 <style>
   :root {
-    --ink: #1a1a2e;
+    --ink: #16162b;
     --muted: #6b7280;
     --line: #e5e7eb;
     --accent: #4f46e5;
+    --accent-dark: #3730a3;
     --accent-ink: #ffffff;
+    --gold: #d97706;
+    --gold-bg: #fffbeb;
     --done: #16a34a;
+    --done-bg: #f0fdf4;
+    --wrong: #dc2626;
+    --wrong-bg: #fef2f2;
     --upcoming: #d1d5db;
     --danger: #b91c1c;
     --danger-bg: #fef2f2;
     --bg-card: #ffffff;
-    --bg-page: #f7f7fb;
+    --bg-page: #f5f5fb;
   }
   * { box-sizing: border-box; }
   body {
@@ -26,7 +32,15 @@
     margin: 24px auto;
     padding: 0 16px 60px;
   }
-  h1 { font-size: 20px; margin-bottom: 4px; }
+  .brand {
+    display: inline-flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  }
+  .brand-badge {
+    background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+    color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
   .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 20px; font-size: 14px; }
 
   .stepper { display: flex; justify-content: space-between; margin: 24px 0; }
@@ -47,10 +61,49 @@
   .step-done .step-label { color: var(--done); }
 
   .card {
-    background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px;
-    padding: 16px 18px; margin-bottom: 14px;
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(16,16,40,0.03);
   }
   .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 10px; }
+
+  .option-list { list-style: none; padding: 0; margin: 0 0 8px; }
+  .option-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 6px;
+    border: 1px solid var(--line); border-radius: 8px; font-size: 14px;
+  }
+  .option-row.is-correct { border-color: var(--done); background: var(--done-bg); }
+  .option-row.is-wrong-selected { border-color: var(--wrong); background: var(--wrong-bg); }
+  .option-index-badge {
+    display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+    border-radius: 50%; background: var(--upcoming); font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .option-row.is-correct .option-index-badge { background: var(--done); color: #fff; }
+  .correct-tag { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--done); }
+
+  .question-form-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .question-form-row input[type="text"], .question-form-row input[type="number"] {
+    font-family: inherit; font-size: 14px; padding: 8px 10px; border-radius: 6px;
+    border: 1px solid var(--line); flex: 1;
+  }
+  .points-input { width: 72px !important; flex: 0 0 auto !important; }
+  .draft-question-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 6px;
+    border: 1px solid var(--line); border-radius: 8px; font-size: 13px; background: #fafaff;
+  }
+  .draft-question-text { flex: 1; }
+  .prepared-question-row {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin-bottom: 6px;
+    border: 1px solid var(--line); border-radius: 8px; font-size: 13px;
+  }
+  .prepared-question-row.consumed { opacity: 0.5; }
+  .ordinal-badge {
+    display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
+    border-radius: 6px; background: #eef2ff; color: var(--accent); font-weight: 700; font-size: 12px; flex-shrink: 0;
+  }
+  .engine-tag {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
+    padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: var(--accent); margin-left: 8px;
+  }
 
   .room-code {
     font-family: "SF Mono", Menlo, monospace; font-size: 40px; font-weight: 700;
@@ -76,8 +129,29 @@
   .progress-label { font-size: 13px; color: var(--muted); }
 
   .result-card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; }
-  .result-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .result-card.is-correct { border-color: var(--done); background: var(--done-bg); }
+  .result-card.is-wrong { border-color: var(--wrong); background: var(--wrong-bg); }
+  .result-name { font-weight: 600; font-size: 13px; margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
   .result-text { font-size: 15px; }
+  .correctness-badge { font-size: 12px; }
+
+  .standing-row {
+    display: flex; align-items: center; gap: 8px; padding: 8px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .standing-row:last-child { border-bottom: none; }
+  .standing-name { flex: 1; font-size: 14px; }
+  .standing-score { font-weight: 700; font-size: 16px; min-width: 40px; text-align: right; color: var(--gold); }
+  .award-input {
+    width: 64px; font-family: inherit; font-size: 13px; padding: 6px 8px;
+    border-radius: 6px; border: 1px solid var(--line);
+  }
+  .award-btn { padding: 6px 10px; font-size: 13px; margin: 0; }
+  .winner-banner {
+    margin-top: 12px; padding: 12px 14px; border-radius: 8px; font-weight: 700;
+    text-align: center; background: var(--gold-bg); color: var(--gold); border: 1px solid var(--gold);
+    font-size: 15px;
+  }
 
   button {
     font-family: inherit; font-size: 14px; padding: 10px 16px; border-radius: 8px;
@@ -104,8 +178,9 @@
 </head>
 <body>
 
+<div class="brand"><span class="brand-badge">URBANO Gaming</span></div>
 <h1>Level 33 — Host</h1>
-<p class="subtitle">Developer validation interface. Drives the session forward; does not participate.</p>
+<p class="subtitle">Drives the session forward; does not participate.</p>
 
 <div id="status-banner" class="notice" style="display:none;" role="alert"></div>
 
@@ -135,9 +210,26 @@
     <ul class="participant-list" id="participantList"></ul>
   </div>
 
+  <div class="card">
+    <h2>Trivia Questions</h2>
+    <div class="question-form-row">
+      <input type="text" id="qf-prompt" placeholder="Question text (e.g. What's the best pizza topping?)" />
+    </div>
+    <ul class="option-list" id="qf-options"></ul>
+    <div class="question-form-row">
+      <button class="btn-ghost" id="qf-add-option" onclick="addOptionInput()">+ Add option</button>
+      <input type="number" id="qf-points" class="points-input" min="1" max="10000" placeholder="10 pts" />
+    </div>
+    <button class="btn-secondary" onclick="addDraftQuestion()">Add to Queue</button>
+    <div id="draftQuestionList" style="margin-top:10px;"></div>
+    <button class="btn-primary" id="btn-save-questions" onclick="saveQuestions()" style="display:none;">Save Questions</button>
+    <div id="preparedQueueList" style="margin-top:14px;"></div>
+  </div>
+
   <div class="card" id="promptCard" style="display:none;">
-    <h2>Current Prompt</h2>
+    <h2>Current Question<span id="engineTag"></span></h2>
     <div class="prompt-text" id="promptText"></div>
+    <ul class="option-list" id="promptOptionsList" style="margin-top:10px;"></ul>
   </div>
 
   <div class="card" id="progressCard" style="display:none;">
@@ -151,13 +243,20 @@
     <div id="resultsList"></div>
   </div>
 
+  <div class="card" id="standingsCard" style="display:none;">
+    <h2>Standings</h2>
+    <div id="standingsList"></div>
+    <div id="winnerBanner" class="winner-banner" style="display:none;"></div>
+  </div>
+
   <div class="card">
     <h2>Actions</h2>
     <button class="btn-primary" id="btn-lock" onclick="lockLobby()">Lock Lobby</button>
-    <div style="margin: 10px 0;">
-      <textarea id="promptTextInput" rows="2" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line);" placeholder="Prompt for the next interaction (e.g. What's your favorite pizza topping?)"></textarea>
+    <button class="btn-primary" id="btn-start-next-question" onclick="startNextQuestion()" style="display:none;">Start Next Question</button>
+    <div id="openResponseStartForm" style="margin: 10px 0;">
+      <textarea id="promptTextInput" rows="2" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line);" placeholder="Or ask an ad-hoc open-response question…"></textarea>
     </div>
-    <button class="btn-primary" id="btn-start" onclick="startSession()">Start Interaction</button>
+    <button class="btn-primary" id="btn-start" onclick="startSession()">Start Open-Response Interaction</button>
     <button class="btn-primary" id="btn-close" onclick="closeSubmissions()">Close Submissions</button>
     <button class="btn-primary" id="btn-reveal" onclick="revealResults()">Reveal Results</button>
     <br/>
@@ -211,6 +310,33 @@ let interactionNumber = null;
 // completed would wrongly resurface an earlier interaction's cached
 // results under the current interaction's prompt.
 let lastSeenInteractionNumber = null;
+// Slice 002 (Scored Multi-Round Experience). The explicit id AWARD_POINTS
+// targets — captured from GET_SESSION's currentInteractionInstanceId
+// (or refreshed immediately after START_SESSION/REVEAL_RESULTS via
+// hostRefresh) rather than inferred, per the accepted design.
+let currentInteractionInstanceId = null;
+let lastKnownStandings = [];
+// Slice 003 (Second Interaction Engine). Which engine produced the
+// current interaction — gates whether manual award controls should
+// show at all (Multiple Choice scores itself automatically at reveal).
+let currentEngineType = null;
+// Host-only field from GET_SESSION: the session's full prepared
+// Multiple Choice question queue, including correct answers not yet
+// asked — never sent to a participant.
+let preparedQuestions = [];
+// Local-only, not yet saved to the server — questions the host has
+// added to the authoring form but not yet submitted via
+// PREPARE_QUESTIONS.
+let draftQuestions = [];
+// Maps participantId -> the idempotency key for that participant's
+// in-flight award request, for exactly as long as it is pending. One
+// key is generated per logical award action and reused for the
+// lifetime of that action only; a new click after this resolves
+// generates a fresh key, which is correctly treated as a new,
+// independent award under the accepted ledger model — this map exists
+// to disable a specific participant's control while its own request is
+// pending, not to deduplicate distinct actions.
+let awardInFlight = {};
 
 function saveHostState() {
   sessionStorage.setItem(HOST_STORAGE_KEY, JSON.stringify(hostState));
@@ -278,6 +404,13 @@ const KNOWN_ERRORS = [
   { test: (m) => m === "Session is already complete.", text: "This session has already ended." },
   { test: (m) => m === "Prompt text cannot be empty.", text: "Enter a prompt before starting the interaction." },
   { test: (m) => m === "Prompt text cannot exceed 1000 characters.", text: "Prompt is too long — please shorten it to 1000 characters or fewer." },
+  { test: (m) => m === "The supplied interaction is not the session's current, revealed interaction.", text: "Points can only be awarded for the current, revealed interaction — check for updates and try again." },
+  { test: (m) => m === "This participant does not belong to this session.", text: "This participant isn't part of this session." },
+  { test: (m) => m === "Points must be a positive integer no greater than 10000.", text: "Enter a whole number of points from 1 to 10000." },
+  { test: (m) => m === "A question must supply at least two distinct, non-empty options.", text: "Each question needs at least two distinct, non-empty options." },
+  { test: (m) => m === "correctOptionIndex must be a valid index into options.", text: "Select a valid correct answer for this question." },
+  { test: (m) => m === "No prepared question exists for this id in this session.", text: "That question isn't part of this session's queue — try refreshing." },
+  { test: (m) => m === "This prepared question has already been started.", text: "That question was already asked — refreshing the queue." },
 ];
 
 function translateKnownError(raw) {
@@ -323,6 +456,161 @@ function showSessionPanels() {
   document.getElementById("roomCodeDisplay").textContent = hostState.roomCode || "——————";
   document.getElementById("sessionIdDisplay").textContent = hostState.sessionId || "—";
   document.getElementById("hostTokenDisplay").textContent = hostState.hostToken || "—";
+}
+
+// Slice 003 (Second Interaction Engine). The question-authoring form
+// keeps its own transient DOM state (option rows) independent of
+// draftQuestions — nothing here is persisted until addDraftQuestion()
+// reads it, and nothing is sent to the server until saveQuestions().
+const MAX_OPTIONS = 6;
+let optionRowCount = 0;
+
+function renderOptionInputs() {
+  const list = document.getElementById("qf-options");
+  list.innerHTML = "";
+  for (let i = 0; i < optionRowCount; i++) {
+    const li = document.createElement("li");
+    li.className = "option-row";
+    li.innerHTML = `
+      <input type="radio" name="qf-correct" value="${i}" ${i === 0 ? "checked" : ""} title="Correct answer" />
+      <span class="option-index-badge">${i + 1}</span>
+      <input type="text" id="qf-option-${i}" placeholder="Option ${i + 1}" style="flex:1; border:none; font-family:inherit; font-size:14px;" />
+    `;
+    list.appendChild(li);
+  }
+  document.getElementById("qf-add-option").disabled = optionRowCount >= MAX_OPTIONS;
+}
+
+function addOptionInput() {
+  if (optionRowCount >= MAX_OPTIONS) return;
+  optionRowCount += 1;
+  renderOptionInputs();
+}
+
+function resetQuestionForm() {
+  document.getElementById("qf-prompt").value = "";
+  document.getElementById("qf-points").value = "";
+  optionRowCount = 2;
+  renderOptionInputs();
+}
+
+function addDraftQuestion() {
+  const promptText = document.getElementById("qf-prompt").value.trim();
+  const options = [];
+  for (let i = 0; i < optionRowCount; i++) {
+    const el = document.getElementById(`qf-option-${i}`);
+    if (el) options.push(el.value.trim());
+  }
+  const correctRadio = document.querySelector('input[name="qf-correct"]:checked');
+  const correctOptionIndex = correctRadio ? parseInt(correctRadio.value, 10) : 0;
+  const pointsRaw = document.getElementById("qf-points").value;
+  const points = pointsRaw ? parseInt(pointsRaw, 10) : undefined;
+
+  if (!promptText) {
+    renderNotice({ category: "validation", message: "Enter the question text before adding it to the queue." });
+    return;
+  }
+  const trimmedOptions = options.filter((o) => o.length > 0);
+  if (trimmedOptions.length < 2 || trimmedOptions.length !== options.length) {
+    renderNotice({ category: "validation", message: "Every option needs text, and at least two options are required." });
+    return;
+  }
+  if (new Set(trimmedOptions).size !== trimmedOptions.length) {
+    renderNotice({ category: "validation", message: "Options must be distinct — remove the duplicate." });
+    return;
+  }
+
+  draftQuestions.push({ promptText, options: trimmedOptions, correctOptionIndex, points });
+  renderNotice(null);
+  resetQuestionForm();
+  renderDraftQuestions();
+}
+
+function removeDraftQuestion(index) {
+  draftQuestions.splice(index, 1);
+  renderDraftQuestions();
+}
+
+function renderDraftQuestions() {
+  const list = document.getElementById("draftQuestionList");
+  const saveBtn = document.getElementById("btn-save-questions");
+  if (draftQuestions.length === 0) {
+    list.innerHTML = "";
+    saveBtn.style.display = "none";
+    return;
+  }
+  saveBtn.style.display = "inline-block";
+  list.innerHTML = draftQuestions
+    .map(
+      (q, i) => `<div class="draft-question-row">
+        <div class="draft-question-text">${q.promptText} <span style="color:var(--muted);">(${q.options.length} options, correct: “${q.options[q.correctOptionIndex]}”)</span></div>
+        <button class="btn-ghost" onclick="removeDraftQuestion(${i})">Remove</button>
+      </div>`
+    )
+    .join("");
+}
+
+async function saveQuestions() {
+  if (draftQuestions.length === 0) return;
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/prepared-questions`, {
+    hostToken: hostState.hostToken,
+    questions: draftQuestions,
+  });
+  show("PREPARE_QUESTIONS (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    renderNotice(null);
+    draftQuestions = [];
+    renderDraftQuestions();
+    await hostRefresh();
+  } else {
+    renderNotice(classifyError(r));
+  }
+}
+
+function renderPreparedQueue(questions) {
+  const list = document.getElementById("preparedQueueList");
+  if (!questions || questions.length === 0) {
+    list.innerHTML = "";
+    return;
+  }
+  const sorted = [...questions].sort((a, b) => a.ordinal - b.ordinal);
+  list.innerHTML =
+    `<h2 style="margin-top:14px;">Question Queue</h2>` +
+    sorted
+      .map((q) => {
+        const status = q.consumedAt ? "Asked" : "Waiting";
+        return `<div class="prepared-question-row ${q.consumedAt ? "consumed" : ""}">
+          <span class="ordinal-badge">${q.ordinal}</span>
+          <div style="flex:1;">${q.promptText} <span style="color:var(--muted);">(correct: “${q.options[q.correctOptionIndex]}”, ${q.pointsForCorrect} pts)</span></div>
+          <span style="font-size:12px; color:var(--muted);">${status}</span>
+        </div>`;
+      })
+      .join("");
+}
+
+// Slice 003. The host presses one button; this resolves which
+// specific prepared question to start rather than the server
+// inferring it — see startSession's explicit preparedQuestionId design.
+function lowestUnconsumedPreparedQuestion() {
+  const unconsumed = preparedQuestions.filter((q) => !q.consumedAt);
+  if (unconsumed.length === 0) return null;
+  return unconsumed.reduce((a, b) => (a.ordinal < b.ordinal ? a : b));
+}
+
+async function startNextQuestion() {
+  const next = lowestUnconsumedPreparedQuestion();
+  if (!next) return;
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, {
+    hostToken: hostState.hostToken,
+    preparedQuestionId: next.preparedQuestionId,
+  });
+  show("START_SESSION (Multiple Choice) (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    renderNotice(null);
+    await hostRefresh();
+  } else {
+    renderNotice(classifyError(r));
+  }
 }
 
 // Slice 001: the stepper's 6 visual steps still read left-to-right as
@@ -371,15 +659,25 @@ function renderInteractionLabel() {
 }
 
 function updateActionAvailability() {
+  const canStart =
+    sessionLifecycleState === "LOBBY_LOCKED" &&
+    (interactionLifecycleState === null || interactionLifecycleState === "RESULT_REVEAL");
+
   document.getElementById("btn-lock").disabled = sessionLifecycleState !== "LOBBY_OPEN";
   // Start is re-invocable: available once per interaction, any number
   // of times, as long as the session is LOBBY_LOCKED and there is no
   // current interaction still in flight (none yet, or the last one has
   // already reached RESULT_REVEAL).
-  document.getElementById("btn-start").disabled = !(
-    sessionLifecycleState === "LOBBY_LOCKED" &&
-    (interactionLifecycleState === null || interactionLifecycleState === "RESULT_REVEAL")
-  );
+  document.getElementById("btn-start").disabled = !canStart;
+  document.getElementById("btn-start-next-question").disabled = !canStart;
+
+  // Slice 003: when a prepared Multiple Choice question is waiting,
+  // lead with "Start Next Question" and keep the Open Response form
+  // available underneath as a secondary, always-available path — the
+  // host is never blocked from asking an ad-hoc question even mid-queue.
+  const hasUnconsumed = lowestUnconsumedPreparedQuestion() !== null;
+  document.getElementById("btn-start-next-question").style.display = hasUnconsumed ? "inline-block" : "none";
+
   document.getElementById("btn-close").disabled = !(
     sessionLifecycleState === "LOBBY_LOCKED" && interactionLifecycleState === "PROMPT_ACTIVE"
   );
@@ -396,13 +694,38 @@ function renderParticipants(participants) {
     .join("");
 }
 
-function renderPrompt(currentPrompt) {
+// Slice 003 (Second Interaction Engine). currentPrompt.options is
+// populated only for a Multiple Choice interaction; correctOptionIndex
+// stays null until RESULT_REVEAL regardless of caller role — this is
+// the platform's first genuinely private-until-reveal field, and this
+// function must not render it before GET_SESSION itself reveals it.
+function renderPrompt(currentPrompt, engineType) {
   const card = document.getElementById("promptCard");
-  if (currentPrompt) {
-    card.style.display = "block";
-    document.getElementById("promptText").textContent = currentPrompt.text;
-  } else {
+  const optionsList = document.getElementById("promptOptionsList");
+  const engineTag = document.getElementById("engineTag");
+
+  if (!currentPrompt) {
     card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+  document.getElementById("promptText").textContent = currentPrompt.text;
+  engineTag.innerHTML =
+    engineType === "MULTIPLE_CHOICE" ? '<span class="engine-tag">Multiple Choice</span>' : "";
+
+  if (currentPrompt.options) {
+    optionsList.innerHTML = currentPrompt.options
+      .map((option, i) => {
+        const isCorrect = currentPrompt.correctOptionIndex === i;
+        return `<li class="option-row ${isCorrect ? "is-correct" : ""}">
+          <span class="option-index-badge">${i + 1}</span>
+          <span>${option}</span>
+          ${isCorrect ? '<span class="correct-tag">✓ Correct</span>' : ""}
+        </li>`;
+      })
+      .join("");
+  } else {
+    optionsList.innerHTML = "";
   }
 }
 
@@ -453,13 +776,99 @@ function renderResults(submissions) {
   }
   card.style.display = "block";
   document.getElementById("resultsList").innerHTML = effective
-    .map((s) => `<div class="result-card"><div class="result-name">${s.displayName}</div><div class="result-text">${s.text}</div></div>`)
+    .map((s) => {
+      // Slice 003: isCorrect is null for Open Response (no correctness
+      // concept at all) and a boolean for Multiple Choice, resolved by
+      // GET_SESSION's automatic evaluation.
+      const cls = s.isCorrect === true ? "is-correct" : s.isCorrect === false ? "is-wrong" : "";
+      const badge = s.isCorrect === true ? '<span class="correctness-badge">✓</span>' : s.isCorrect === false ? '<span class="correctness-badge">✗</span>' : "";
+      return `<div class="result-card ${cls}"><div class="result-name">${s.displayName}${badge}</div><div class="result-text">${s.text}</div></div>`;
+    })
     .join("") || `<div class="waiting">No responses were submitted.</div>`;
+}
+
+// Slice 002 (Scored Multi-Round Experience). Standings are always
+// present in GET_SESSION (one entry per participant, defaulting to 0)
+// and have their own visibility rule independent of results/prompt:
+// unlike submissions, they remain visible at SESSION_COMPLETE, since
+// final standings must stay shown once the session ends.
+function renderStandings(standings) {
+  lastKnownStandings = standings || [];
+  const card = document.getElementById("standingsCard");
+
+  if (lastKnownStandings.length === 0) {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+
+  // Slice 003: a Multiple Choice interaction already scored itself
+  // automatically as part of REVEAL_RESULTS — manual award controls
+  // only make sense for Open Response, where the host is still the
+  // scoring-rule authority (see 03_Slice_Design.md's ownership table).
+  const canAward =
+    sessionLifecycleState === "LOBBY_LOCKED" &&
+    interactionLifecycleState === "RESULT_REVEAL" &&
+    currentEngineType !== "MULTIPLE_CHOICE";
+
+  const sorted = [...lastKnownStandings].sort((a, b) => b.score - a.score);
+
+  document.getElementById("standingsList").innerHTML = sorted
+    .map((s) => {
+      const pending = Boolean(awardInFlight[s.participantId]);
+      const controls = canAward
+        ? `<input type="number" min="1" max="10000" step="1" class="award-input" id="awardInput-${s.participantId}" placeholder="pts" ${pending ? "disabled" : ""} />
+           <button class="btn-secondary award-btn" ${pending ? "disabled" : ""} onclick="awardPoints('${s.participantId}')">${pending ? "Awarding…" : "Award"}</button>`
+        : "";
+      return `<div class="standing-row">
+        <div class="standing-name">${s.displayName}</div>
+        <div class="standing-score">${s.score}</div>
+        ${controls}
+      </div>`;
+    })
+    .join("");
+
+  renderWinnerBanner(sorted);
+}
+
+// Client-derived presentation rule (Slice 002): if no point award
+// exists for anyone, every score is 0 and no one should be declared a
+// joint winner merely because every score equals that maximum of 0.
+// Since points are always positive (server-enforced), "the highest
+// score is 0" and "no point award exists" are exactly equivalent — no
+// separate signal is needed to distinguish them.
+function renderWinnerBanner(sortedStandings) {
+  const el = document.getElementById("winnerBanner");
+  if (sessionLifecycleState !== "SESSION_COMPLETE") {
+    el.style.display = "none";
+    return;
+  }
+  el.style.display = "block";
+
+  const maxScore = sortedStandings.length > 0 ? sortedStandings[0].score : 0;
+  if (maxScore === 0) {
+    el.textContent = "No winner determined — no points were awarded.";
+    return;
+  }
+  const winners = sortedStandings.filter((s) => s.score === maxScore);
+  const names = winners.map((w) => w.displayName).join(" & ");
+  el.textContent =
+    winners.length > 1
+      ? `Joint winners: ${names} (${maxScore} pts)`
+      : `Winner: ${names} (${maxScore} pts)`;
 }
 
 function applySessionSnapshot(data) {
   sessionLifecycleState = data.state;
   if ("interactionState" in data) interactionLifecycleState = data.interactionState;
+  if ("currentInteractionInstanceId" in data) {
+    currentInteractionInstanceId = data.currentInteractionInstanceId;
+  }
+  if ("currentEngineType" in data) currentEngineType = data.currentEngineType;
+  if ("preparedQuestions" in data && data.preparedQuestions) {
+    preparedQuestions = data.preparedQuestions;
+    renderPreparedQueue(preparedQuestions);
+  }
   if ("interactionNumber" in data) {
     // A new interaction beginning must not let a stale cached
     // results set from an earlier interaction resurface later under
@@ -475,9 +884,10 @@ function applySessionSnapshot(data) {
   renderInteractionLabel();
   updateActionAvailability();
   if (data.participants) renderParticipants(data.participants);
-  if ("currentPrompt" in data) renderPrompt(data.currentPrompt);
+  if ("currentPrompt" in data) renderPrompt(data.currentPrompt, currentEngineType);
   if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
   if ("submissions" in data) renderResults(data.submissions);
+  if ("standings" in data) renderStandings(data.standings);
 }
 
 async function createSession() {
@@ -487,8 +897,26 @@ async function createSession() {
     renderNotice(null);
     hostState = { sessionId: json.sessionId, roomCode: json.roomCode, hostToken: json.hostToken };
     saveHostState();
+
+    // Reset every client-side cache carried over from a previous
+    // session in this same tab — CREATE_SESSION's own response has no
+    // way to signal "forget the old queue/standings", and this tab may
+    // have just finished rendering a completed session's results.
+    // Without this, a host creating a second session without reloading
+    // the page would briefly see the previous session's trivia queue,
+    // standings, and winner banner under the new room code.
+    draftQuestions = [];
+    preparedQuestions = [];
+    lastKnownStandings = [];
+    lastKnownSubmissions = null;
+    lastSeenInteractionNumber = null;
+    currentEngineType = null;
+    awardInFlight = {};
+    resetQuestionForm();
+    renderDraftQuestions();
+
     showSessionPanels();
-    applySessionSnapshot(json);
+    await hostRefresh();
   } else {
     renderNotice(classifyError({ status, json }));
   }
@@ -541,10 +969,62 @@ async function revealResults() {
   else renderNotice(classifyError(r));
 }
 
+// Slice 002 (Scored Multi-Round Experience). Idempotency-key lifecycle:
+// one key is generated when this logical award action begins and is
+// reused for every retry of that same action; the triggering control
+// is disabled for the duration. A later, separate click — even for the
+// same participant — starts a new action with a new key, which the
+// accepted ledger model treats as a legitimate independent award, not
+// a duplicate. Disabling the control is a UX mitigation against
+// accidental double-submission, not a correctness guarantee: nothing
+// here, or in the database, treats two genuinely distinct clicks as an
+// error, because the ledger permits multiple independent awards for
+// the same participant and interaction.
+async function awardPoints(participantId) {
+  if (awardInFlight[participantId]) return;
+
+  const input = document.getElementById(`awardInput-${participantId}`);
+  const points = input ? parseInt(input.value, 10) : NaN;
+  if (!Number.isInteger(points) || points <= 0) {
+    renderNotice({ category: "validation", message: "Enter a whole number of points from 1 to 10000 before awarding." });
+    return;
+  }
+
+  const idempotencyKey = crypto.randomUUID();
+  awardInFlight[participantId] = idempotencyKey;
+  renderStandings(lastKnownStandings);
+
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/award-points`, {
+    hostToken: hostState.hostToken,
+    interactionInstanceId: currentInteractionInstanceId,
+    participantId,
+    points,
+    idempotencyKey,
+  });
+  show("AWARD_POINTS (" + r.status + ")", r.json);
+
+  delete awardInFlight[participantId];
+
+  if (r.status === 200) {
+    renderNotice(null);
+    await hostRefresh();
+  } else {
+    renderNotice(classifyError(r));
+    renderStandings(lastKnownStandings);
+  }
+}
+
 async function completeSession() {
   const r = await postJson(`/api/sessions/${hostState.sessionId}/complete`, { hostToken: hostState.hostToken });
   show("COMPLETE_SESSION (" + r.status + ")", r.json);
-  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); }
+  // COMPLETE_SESSION's own response is {sessionId, state, stateVersion}
+  // only — applying it directly would leave standings/winnerBanner
+  // stale (renderWinnerBanner only ever runs from within
+  // renderStandings, which needs a real `standings` array). Refresh via
+  // GET_SESSION instead, matching every other action here, so the
+  // final winner is shown immediately rather than only after the host
+  // happens to click "Check for updates" again.
+  if (r.status === 200) { renderNotice(null); await hostRefresh(); }
   else renderNotice(classifyError(r));
 }
 
@@ -555,6 +1035,7 @@ async function hostRefresh() {
   else renderNotice(classifyError(r));
 }
 
+resetQuestionForm();
 restoreState();
 if (hostState.sessionId) hostRefresh();
 </script>

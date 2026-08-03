@@ -219,6 +219,15 @@ describe("SupabaseSessionRepository contract", () => {
  */
 describe("SupabaseSessionRepository contract — full lifecycle against live Postgres", () => {
   it("exercises every remaining atomic function through one complete, realistic session lifecycle, including a second sequential interaction", async () => {
+    // This test performs roughly a dozen sequential live round trips to
+    // Supabase, which occasionally exceeds vitest's default 5000ms
+    // per-test timeout depending on network conditions — a pre-existing
+    // property of this test's shape (unrelated to any Slice 002 change),
+    // surfaced while running the full contract suite live for Slice 002.
+    // Extending the timeout rather than restructuring the test, since
+    // the sequential round trips are the point: proving the full
+    // Slice 001 lifecycle actually works end to end against real
+    // Postgres, not a synthetic shortcut.
     // CREATE_SESSION
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
@@ -380,5 +389,466 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
     // room code is no longer resolvable as active.
     const resolvedAfterComplete = await repository.getActiveSessionByRoomCode(session.roomCode);
     expect(resolvedAfterComplete).toBeNull();
+  }, 20000);
+});
+
+/**
+ * Slice 002 (Scored Multi-Round Experience). award_points_atomically
+ * has two behaviors that specifically cannot be proven by the
+ * in-memory double, which is single-threaded and cannot race two
+ * requests against each other: (1) idempotent replay after the
+ * session has genuinely progressed, verified here against a second,
+ * real interaction instance and a real COMPLETE_SESSION transition,
+ * not a simulated one; (2) two concurrent requests carrying the same
+ * (session_id, idempotency_key) racing against Postgres's actual
+ * unique constraint and ON CONFLICT handling, which only exists once
+ * this runs against a real database with real transaction isolation.
+ */
+describe("SupabaseSessionRepository contract — AWARD_POINTS against live Postgres", () => {
+  it("awards points, replays idempotently after the session progresses and completes, and never creates a second row", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const participant = buildParticipantRecord(session.sessionId);
+    await repository.joinParticipant(participant, buildJoinedEvent(participant));
+
+    await repository.lockLobby(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "LOBBY_LOCKED",
+      payload: {},
+    });
+
+    const firstInteraction = await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "Award-points contract prompt"
+    );
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+
+    const idempotencyKey = randomUUID();
+    const firstAward = await repository.awardPoints(
+      session.sessionId,
+      session.hostToken,
+      firstInteraction.interactionInstanceId,
+      participant.participantId,
+      10,
+      idempotencyKey
+    );
+    expect(firstAward.points).toBe(10);
+    expect(firstAward.interactionInstanceId).toBe(firstInteraction.interactionInstanceId);
+
+    // Progress the session to a second interaction — the original
+    // interaction is no longer current.
+    const secondInteraction = await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "Second award-points contract prompt"
+    );
+
+    // Replay: identical (sessionId, idempotencyKey), every other
+    // argument deliberately wrong. Must return the original award
+    // unchanged rather than erroring or re-validating.
+    const replayDuringSecondInteraction = await repository.awardPoints(
+      session.sessionId,
+      session.hostToken,
+      secondInteraction.interactionInstanceId,
+      participant.participantId,
+      999,
+      idempotencyKey
+    );
+    expect(replayDuringSecondInteraction).toEqual(firstAward);
+
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+    await repository.completeSession(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SESSION_COMPLETED",
+      payload: {},
+    });
+
+    // Replay again, now after SESSION_COMPLETE — still returns the
+    // original award unchanged.
+    const replayAfterCompletion = await repository.awardPoints(
+      session.sessionId,
+      "wrong-host-token",
+      "11111111-1111-1111-1111-111111111111",
+      participant.participantId,
+      -50,
+      idempotencyKey
+    );
+    expect(replayAfterCompletion).toEqual(firstAward);
+
+    const allAwards = await repository.getPointAwardsForSession(session.sessionId);
+    expect(allAwards).toHaveLength(1);
+  });
+
+  it("two concurrent requests with the same idempotency key produce exactly one row and both return the same result", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const participant = buildParticipantRecord(session.sessionId);
+    await repository.joinParticipant(participant, buildJoinedEvent(participant));
+
+    await repository.lockLobby(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "LOBBY_LOCKED",
+      payload: {},
+    });
+
+    const interaction = await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "Concurrent award-points contract prompt"
+    );
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+
+    const idempotencyKey = randomUUID();
+    const [first, second] = await Promise.all([
+      repository.awardPoints(
+        session.sessionId,
+        session.hostToken,
+        interaction.interactionInstanceId,
+        participant.participantId,
+        15,
+        idempotencyKey
+      ),
+      repository.awardPoints(
+        session.sessionId,
+        session.hostToken,
+        interaction.interactionInstanceId,
+        participant.participantId,
+        15,
+        idempotencyKey
+      ),
+    ]);
+
+    expect(first).toEqual(second);
+
+    const allAwards = await repository.getPointAwardsForSession(session.sessionId);
+    expect(allAwards).toHaveLength(1);
+  });
+
+  it("allows multiple independent awards for the same participant and interaction, and derives the correct sum", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const participant = buildParticipantRecord(session.sessionId);
+    await repository.joinParticipant(participant, buildJoinedEvent(participant));
+
+    await repository.lockLobby(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "LOBBY_LOCKED",
+      payload: {},
+    });
+
+    const interaction = await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "Multiple-awards contract prompt"
+    );
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+
+    await repository.awardPoints(
+      session.sessionId,
+      session.hostToken,
+      interaction.interactionInstanceId,
+      participant.participantId,
+      10,
+      randomUUID()
+    );
+    await repository.awardPoints(
+      session.sessionId,
+      session.hostToken,
+      interaction.interactionInstanceId,
+      participant.participantId,
+      7,
+      randomUUID()
+    );
+
+    const allAwards = await repository.getPointAwardsForSession(session.sessionId);
+    expect(allAwards).toHaveLength(2);
+    expect(allAwards.reduce((sum, a) => sum + a.points, 0)).toBe(17);
+  });
+});
+
+/**
+ * Slice 003 (Second Interaction Engine). reveal_results_atomically now
+ * evaluates and scores Multiple Choice submissions inside the exact
+ * same transaction as the RESULT_REVEAL state transition (see 0027).
+ * The property that specifically cannot be proven by the single-
+ * threaded in-memory double is that this is genuinely one atomic unit
+ * against a real database — a concurrent reveal race and the
+ * deterministic md5-derived idempotency key both only mean something
+ * against Postgres's actual transaction and uniqueness guarantees.
+ */
+describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+evaluate against live Postgres", () => {
+  it("scores correct participants automatically as part of REVEAL_RESULTS, in the same call", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const alex = buildParticipantRecord(session.sessionId, { displayName: "Alex-MC" });
+    const jordan = buildParticipantRecord(session.sessionId, { displayName: "Jordan-MC" });
+    await repository.joinParticipant(alex, buildJoinedEvent(alex));
+    await repository.joinParticipant(jordan, buildJoinedEvent(jordan));
+
+    await repository.lockLobby(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "LOBBY_LOCKED",
+      payload: {},
+    });
+
+    const [prepared] = await repository.createPreparedQuestions(session.sessionId, [
+      {
+        promptText: "Best pizza topping?",
+        options: ["Pepperoni", "Mushroom", "Pineapple"],
+        correctOptionIndex: 0,
+        pointsForCorrect: 25,
+      },
+    ]);
+
+    const interaction = await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "",
+      prepared.preparedQuestionId
+    );
+    expect(interaction.engineType).toBe("MULTIPLE_CHOICE");
+
+    await repository.submitResponse(
+      session.sessionId,
+      alex.participantId,
+      alex.participantToken,
+      "0"
+    );
+    await repository.submitResponse(
+      session.sessionId,
+      jordan.participantId,
+      jordan.participantToken,
+      "1"
+    );
+
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+
+    const awards = await repository.getPointAwardsForSession(session.sessionId);
+    const alexAward = awards.find((a) => a.participantId === alex.participantId);
+    const jordanAward = awards.find((a) => a.participantId === jordan.participantId);
+
+    expect(alexAward?.points).toBe(25);
+    expect(jordanAward).toBeUndefined();
+  });
+
+  it("does not double-award if REVEAL_RESULTS were somehow invoked twice for the same already-revealed interaction", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const alex = buildParticipantRecord(session.sessionId, { displayName: "Alex-MC-retry" });
+    await repository.joinParticipant(alex, buildJoinedEvent(alex));
+
+    await repository.lockLobby(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "LOBBY_LOCKED",
+      payload: {},
+    });
+
+    const [prepared] = await repository.createPreparedQuestions(session.sessionId, [
+      {
+        promptText: "Cats or dogs?",
+        options: ["Cats", "Dogs"],
+        correctOptionIndex: 1,
+        pointsForCorrect: 15,
+      },
+    ]);
+
+    const interaction = await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "",
+      prepared.preparedQuestionId
+    );
+
+    await repository.submitResponse(
+      session.sessionId,
+      alex.participantId,
+      alex.participantToken,
+      "1"
+    );
+
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+
+    // A second call is rejected by the SUBMISSIONS_CLOSED precondition
+    // (the interaction is already RESULT_REVEAL) — proving reveal
+    // itself is not blindly re-runnable — but this also confirms, via
+    // getPointAwardsForSession below, that the first call's scoring
+    // was not left in some partial state a retry would need to repair.
+    await expect(
+      repository.revealResults(session.sessionId, session.hostToken, {
+        sessionId: session.sessionId,
+        eventType: "RESULTS_REVEALED",
+        payload: {},
+      })
+    ).rejects.toThrow();
+
+    const awards = await repository.getPointAwardsForSession(session.sessionId);
+    const alexAwards = awards.filter(
+      (a) => a.interactionInstanceId === interaction.interactionInstanceId
+    );
+    expect(alexAwards).toHaveLength(1);
+    expect(alexAwards[0].points).toBe(15);
+  });
+
+  it("leaves point_awards empty when no participant answers correctly", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const alex = buildParticipantRecord(session.sessionId, { displayName: "Alex-MC-wrong" });
+    await repository.joinParticipant(alex, buildJoinedEvent(alex));
+
+    await repository.lockLobby(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "LOBBY_LOCKED",
+      payload: {},
+    });
+
+    const [prepared] = await repository.createPreparedQuestions(session.sessionId, [
+      {
+        promptText: "Capital of France?",
+        options: ["London", "Berlin", "Paris"],
+        correctOptionIndex: 2,
+        pointsForCorrect: 10,
+      },
+    ]);
+
+    await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "",
+      prepared.preparedQuestionId
+    );
+
+    await repository.submitResponse(
+      session.sessionId,
+      alex.participantId,
+      alex.participantToken,
+      "0"
+    );
+
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+
+    const awards = await repository.getPointAwardsForSession(session.sessionId);
+    expect(awards).toHaveLength(0);
+  });
+
+  it("does not score an Open Response interaction — automatic evaluation is Multiple-Choice-only", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const alex = buildParticipantRecord(session.sessionId, { displayName: "Alex-OR-untouched" });
+    await repository.joinParticipant(alex, buildJoinedEvent(alex));
+
+    await repository.lockLobby(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "LOBBY_LOCKED",
+      payload: {},
+    });
+
+    await repository.startSession(
+      session.sessionId,
+      session.hostToken,
+      "An ordinary Open Response prompt"
+    );
+
+    await repository.submitResponse(
+      session.sessionId,
+      alex.participantId,
+      alex.participantToken,
+      "A free-text answer"
+    );
+
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+
+    const awards = await repository.getPointAwardsForSession(session.sessionId);
+    expect(awards).toHaveLength(0);
   });
 });

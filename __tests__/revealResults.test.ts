@@ -94,8 +94,18 @@ describe("REVEAL_RESULTS", () => {
     expect(result.interactionState).toBe("RESULT_REVEAL");
     expect(result.submissions).toEqual(
       expect.arrayContaining([
-        { participantId: alex.participantId, displayName: "Alex", text: "Alex's answer" },
-        { participantId: jordan.participantId, displayName: "Jordan", text: "Jordan's answer" },
+        {
+          participantId: alex.participantId,
+          displayName: "Alex",
+          text: "Alex's answer",
+          isCorrect: null,
+        },
+        {
+          participantId: jordan.participantId,
+          displayName: "Jordan",
+          text: "Jordan's answer",
+          isCorrect: null,
+        },
       ])
     );
   });
@@ -168,8 +178,18 @@ describe("REVEAL_RESULTS", () => {
       expect(result.interactionNumber).toBe(2);
       expect(result.submissions).toEqual(
         expect.arrayContaining([
-          { participantId: alex.participantId, displayName: "Alex", text: "Alex round 2" },
-          { participantId: jordan.participantId, displayName: "Jordan", text: "Jordan round 2" },
+          {
+            participantId: alex.participantId,
+            displayName: "Alex",
+            text: "Alex round 2",
+            isCorrect: null,
+          },
+          {
+            participantId: jordan.participantId,
+            displayName: "Jordan",
+            text: "Jordan round 2",
+            isCorrect: null,
+          },
         ])
       );
 

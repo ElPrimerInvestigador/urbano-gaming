@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { SessionRecord, InteractionState } from "../types";
+import type { SessionRecord, InteractionState, EngineType } from "../types";
 import {
   RoomCodeCollisionError,
   DisplayNameTakenError,
@@ -14,6 +14,11 @@ import {
   PreviousInteractionNotRevealedError,
   EmptyPromptTextError,
   PromptTextTooLongError,
+  InteractionInstanceNotEligibleError,
+  ParticipantNotInSessionError,
+  InvalidPointsError,
+  PreparedQuestionNotFoundError,
+  PreparedQuestionAlreadyConsumedError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -26,8 +31,13 @@ import type {
   SubmissionRecord,
   SubmissionsClosedEventRecord,
   ResultsRevealedEventRecord,
+  PointAwardRecord,
+  MultipleChoiceDetailsRecord,
+  PreparedQuestionRecord,
   SessionRepository,
 } from "./sessionRepository";
+
+const MAX_POINTS = 10000;
 
 const MAX_PROMPT_TEXT_LENGTH = 1000;
 
@@ -60,6 +70,37 @@ export class InMemorySessionRepository implements SessionRepository {
    * created dynamically from host-supplied text via startSession.
    */
   private interactionInstances = new Map<string, InteractionInstanceRecord>();
+
+  /**
+   * Slice 002 (Scored Multi-Round Experience). Keyed by pointAwardId,
+   * not by (sessionId, idempotencyKey) — the idempotency lookup below
+   * scans values, mirroring how getCurrentInteractionInstance scans
+   * rather than maintaining a second index, since this test double
+   * prioritizes fidelity to the atomic function's logic over raw
+   * performance.
+   */
+  private pointAwards = new Map<string, PointAwardRecord>();
+
+  /**
+   * Idempotency index: `${sessionId}:${idempotencyKey}` -> pointAwardId.
+   * Kept separate from PointAwardRecord itself since idempotencyKey is
+   * an internal deduplication detail, not part of the record the
+   * domain layer or GET_SESSION ever sees.
+   */
+  private pointAwardIdempotencyIndex = new Map<string, string>();
+
+  /**
+   * Slice 003 (Second Interaction Engine). Multiple Choice's own data
+   * for one interaction instance — a 1:1 extension, keyed by
+   * interactionInstanceId, mirroring multiple_choice_details.
+   */
+  private multipleChoiceDetails = new Map<string, MultipleChoiceDetailsRecord>();
+
+  /**
+   * Slice 003. A session's pre-authored Multiple Choice question
+   * queue, keyed by preparedQuestionId.
+   */
+  private preparedQuestions = new Map<string, PreparedQuestionRecord>();
 
   /**
    * The current interaction instance for a session is "the most
@@ -310,11 +351,13 @@ export class InMemorySessionRepository implements SessionRepository {
   async startSession(
     sessionId: string,
     hostToken: string,
-    promptText: string
+    promptText: string,
+    preparedQuestionId?: string | null
   ): Promise<{
     interactionInstanceId: string;
     promptId: string;
     state: InteractionState;
+    engineType: EngineType;
   }> {
     // Authoritative host-token and session-state re-check, independent of
     // any earlier application-layer lookup. Mirrors
@@ -334,8 +377,6 @@ export class InMemorySessionRepository implements SessionRepository {
       throw new LobbyNotLockedError(session.state);
     }
 
-    const trimmedPromptText = this.validateAndTrimPromptText(promptText);
-
     // Re-invocable precondition: the session's current interaction
     // instance, if any, must already be RESULT_REVEAL before another
     // one may begin.
@@ -345,8 +386,33 @@ export class InMemorySessionRepository implements SessionRepository {
     }
 
     const now = new Date().toISOString();
+    let promptTextToStore: string;
+    let engineType: EngineType;
+    let preparedQuestionToConsume: PreparedQuestionRecord | undefined;
+
+    if (preparedQuestionId) {
+      // Slice 003: explicit prepared-question target — the caller
+      // names the exact question, this method never infers one.
+      const prepared = this.preparedQuestions.get(preparedQuestionId);
+
+      if (!prepared || prepared.sessionId !== sessionId) {
+        throw new PreparedQuestionNotFoundError();
+      }
+
+      if (prepared.consumedAt !== null) {
+        throw new PreparedQuestionAlreadyConsumedError();
+      }
+
+      promptTextToStore = prepared.promptText;
+      engineType = "MULTIPLE_CHOICE";
+      preparedQuestionToConsume = prepared;
+    } else {
+      promptTextToStore = this.validateAndTrimPromptText(promptText);
+      engineType = "OPEN_RESPONSE";
+    }
+
     const promptId = randomUUID();
-    this.prompts.set(promptId, { promptId, text: trimmedPromptText });
+    this.prompts.set(promptId, { promptId, text: promptTextToStore });
 
     const interactionInstanceId = randomUUID();
     const interactionInstance: InteractionInstanceRecord = {
@@ -354,21 +420,37 @@ export class InMemorySessionRepository implements SessionRepository {
       sessionId,
       promptId,
       state: "PROMPT_ACTIVE",
+      engineType,
       createdAt: now,
       updatedAt: now,
     };
     this.interactionInstances.set(interactionInstanceId, interactionInstance);
 
+    if (preparedQuestionToConsume) {
+      this.multipleChoiceDetails.set(interactionInstanceId, {
+        interactionInstanceId,
+        options: preparedQuestionToConsume.options,
+        correctOptionIndex: preparedQuestionToConsume.correctOptionIndex,
+        pointsForCorrect: preparedQuestionToConsume.pointsForCorrect,
+      });
+
+      this.preparedQuestions.set(preparedQuestionToConsume.preparedQuestionId, {
+        ...preparedQuestionToConsume,
+        consumedAt: now,
+      });
+    }
+
     this.events.push({
       sessionId,
       eventType: "INTERACTION_STARTED",
-      payload: { interactionInstanceId, promptId },
+      payload: { interactionInstanceId, promptId, engineType },
     });
 
     return {
       interactionInstanceId,
       promptId,
       state: "PROMPT_ACTIVE",
+      engineType,
     };
   }
 
@@ -536,10 +618,172 @@ export class InMemorySessionRepository implements SessionRepository {
       payload: { ...event.payload },
     });
 
+    // Slice 003 (Second Interaction Engine): for a Multiple Choice
+    // interaction, automatic scoring happens here, in the same
+    // synchronous call as the state transition above — mirroring
+    // reveal_results_atomically's single-transaction guarantee (see
+    // 0027's migration comment). A single-threaded in-memory double
+    // cannot demonstrate the atomicity property itself (nothing here
+    // can partially fail), but the *shape* — evaluation as an
+    // inseparable step of reveal, not a later independent call — is
+    // reproduced faithfully so in-memory tests exercise the same logic
+    // a live contract test verifies is transactional.
+    const details = this.multipleChoiceDetails.get(updated.interactionInstanceId);
+    if (details) {
+      const submissions = await this.getSubmissionsForInteractionInstance(
+        updated.interactionInstanceId
+      );
+
+      for (const submission of submissions) {
+        if (submission.text !== String(details.correctOptionIndex)) {
+          continue;
+        }
+
+        // Deterministic per-(interaction, participant) key so this
+        // step can never double-award if ever re-run. Unlike
+        // award_points_atomically's real-Postgres counterpart, this
+        // in-memory idempotency_key has no uuid-column constraint to
+        // satisfy, so the readable form is used directly rather than
+        // hashed.
+        const idempotencyKey = `mc-auto:${updated.interactionInstanceId}:${submission.participantId}`;
+        const indexKey = `${sessionId}:${idempotencyKey}`;
+
+        if (this.pointAwardIdempotencyIndex.has(indexKey)) {
+          continue;
+        }
+
+        const pointAwardId = randomUUID();
+        const award: PointAwardRecord = {
+          pointAwardId,
+          sessionId,
+          interactionInstanceId: updated.interactionInstanceId,
+          participantId: submission.participantId,
+          points: details.pointsForCorrect,
+          createdAt: new Date().toISOString(),
+        };
+
+        this.pointAwards.set(pointAwardId, award);
+        this.pointAwardIdempotencyIndex.set(indexKey, pointAwardId);
+
+        this.events.push({
+          sessionId,
+          eventType: "POINTS_AWARDED",
+          payload: {
+            pointAwardId,
+            interactionInstanceId: updated.interactionInstanceId,
+            participantId: submission.participantId,
+            points: details.pointsForCorrect,
+          },
+        });
+      }
+    }
+
     return {
       interactionInstanceId: updated.interactionInstanceId,
       state: updated.state,
     };
+  }
+
+  async awardPoints(
+    sessionId: string,
+    hostToken: string,
+    interactionInstanceId: string,
+    participantId: string,
+    points: number,
+    idempotencyKey: string
+  ): Promise<PointAwardRecord> {
+    // Step 1: idempotency-first resolution, scoped to this session. No
+    // other check runs if a match is found — this is what lets a
+    // retry succeed identically even after the session has since
+    // progressed past the interaction this award targeted.
+    const indexKey = `${sessionId}:${idempotencyKey}`;
+    const existingId = this.pointAwardIdempotencyIndex.get(indexKey);
+    if (existingId) {
+      const existing = this.pointAwards.get(existingId);
+      if (existing) {
+        return existing;
+      }
+    }
+
+    // Step 2: new-award path — full validation, reached only when the
+    // idempotency key is genuinely new for this session.
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    if (session.hostToken !== hostToken) {
+      throw new HostTokenMismatchError();
+    }
+
+    if (session.state !== "LOBBY_LOCKED") {
+      throw new LobbyNotLockedError(session.state);
+    }
+
+    const currentInteraction = this.getCurrentInteractionInstance(sessionId);
+
+    if (
+      !currentInteraction ||
+      currentInteraction.interactionInstanceId !== interactionInstanceId ||
+      currentInteraction.state !== "RESULT_REVEAL"
+    ) {
+      throw new InteractionInstanceNotEligibleError();
+    }
+
+    const participant = this.participants.get(participantId);
+    if (!participant || participant.sessionId !== sessionId) {
+      throw new ParticipantNotInSessionError();
+    }
+
+    if (!Number.isInteger(points) || points <= 0 || points > MAX_POINTS) {
+      throw new InvalidPointsError();
+    }
+
+    // Step 3: insert. A genuine race between two concurrent requests
+    // carrying the same (sessionId, idempotencyKey) cannot occur
+    // within a single-threaded in-memory double the way it can against
+    // real Postgres — this re-check exists so the logic mirrors the
+    // atomic function's shape exactly, not because JS needs it here.
+    const raceWinnerId = this.pointAwardIdempotencyIndex.get(indexKey);
+    if (raceWinnerId) {
+      const winner = this.pointAwards.get(raceWinnerId);
+      if (winner) {
+        return winner;
+      }
+    }
+
+    const pointAwardId = randomUUID();
+    const record: PointAwardRecord = {
+      pointAwardId,
+      sessionId,
+      interactionInstanceId,
+      participantId,
+      points,
+      createdAt: new Date().toISOString(),
+    };
+
+    this.pointAwards.set(pointAwardId, record);
+    this.pointAwardIdempotencyIndex.set(indexKey, pointAwardId);
+
+    this.events.push({
+      sessionId,
+      eventType: "POINTS_AWARDED",
+      payload: { pointAwardId, interactionInstanceId, participantId, points },
+    });
+
+    return record;
+  }
+
+  async getPointAwardsForSession(sessionId: string): Promise<PointAwardRecord[]> {
+    return [...this.pointAwards.values()].filter(
+      (award) => award.sessionId === sessionId
+    );
+  }
+
+  /** Test-only helper, not part of the repository interface. */
+  _allPointAwards() {
+    return [...this.pointAwards.values()];
   }
 
   /** Test-only helper, not part of the repository interface. */
@@ -586,5 +830,68 @@ export class InMemorySessionRepository implements SessionRepository {
   /** Test-only helper, not part of the repository interface. */
   _allInteractionInstances() {
     return [...this.interactionInstances.values()];
+  }
+
+  async createPreparedQuestions(
+    sessionId: string,
+    questions: Array<{
+      promptText: string;
+      options: string[];
+      correctOptionIndex: number;
+      pointsForCorrect: number;
+    }>
+  ): Promise<PreparedQuestionRecord[]> {
+    const existing = await this.getPreparedQuestionsForSession(sessionId);
+    let nextOrdinal =
+      existing.length > 0
+        ? Math.max(...existing.map((q) => q.ordinal)) + 1
+        : 1;
+
+    const created: PreparedQuestionRecord[] = [];
+    const now = new Date().toISOString();
+
+    for (const question of questions) {
+      const record: PreparedQuestionRecord = {
+        preparedQuestionId: randomUUID(),
+        sessionId,
+        ordinal: nextOrdinal,
+        promptText: question.promptText,
+        options: question.options,
+        correctOptionIndex: question.correctOptionIndex,
+        pointsForCorrect: question.pointsForCorrect,
+        consumedAt: null,
+        createdAt: now,
+      };
+
+      this.preparedQuestions.set(record.preparedQuestionId, record);
+      created.push(record);
+      nextOrdinal += 1;
+    }
+
+    return created;
+  }
+
+  async getPreparedQuestionsForSession(
+    sessionId: string
+  ): Promise<PreparedQuestionRecord[]> {
+    return [...this.preparedQuestions.values()]
+      .filter((question) => question.sessionId === sessionId)
+      .sort((a, b) => a.ordinal - b.ordinal);
+  }
+
+  async getMultipleChoiceDetailsForInteraction(
+    interactionInstanceId: string
+  ): Promise<MultipleChoiceDetailsRecord | null> {
+    return this.multipleChoiceDetails.get(interactionInstanceId) ?? null;
+  }
+
+  /** Test-only helper, not part of the repository interface. */
+  _allPreparedQuestions() {
+    return [...this.preparedQuestions.values()];
+  }
+
+  /** Test-only helper, not part of the repository interface. */
+  _allMultipleChoiceDetails() {
+    return [...this.multipleChoiceDetails.values()];
   }
 }

@@ -6,6 +6,7 @@ import {
   PromptNotActiveError,
   EmptyResponseError,
   ResponseTooLongError,
+  InvalidOptionSelectionError,
 } from "./types";
 
 const MAX_RESPONSE_LENGTH = 1000;
@@ -15,6 +16,9 @@ const MAX_RESPONSE_LENGTH = 1000;
  * at least one visible character after trimming, at most
  * MAX_RESPONSE_LENGTH characters after trimming. A deliberately
  * generous, adjustable placeholder — not a considered product limit.
+ *
+ * Open Response only — see validateOptionSelection for Multiple
+ * Choice's engine-specific validation.
  */
 function validateAndTrimResponse(text: string): string {
   const trimmed = text.trim();
@@ -25,6 +29,32 @@ function validateAndTrimResponse(text: string): string {
 
   if (trimmed.length > MAX_RESPONSE_LENGTH) {
     throw new ResponseTooLongError();
+  }
+
+  return trimmed;
+}
+
+/**
+ * Slice 003 (Second Interaction Engine). A Multiple Choice submission
+ * reuses the exact same submissions table and SUBMIT_RESPONSE command
+ * as Open Response — no schema change was needed for this — but its
+ * `text` value means something different: the selected option's index
+ * (as a string), not free text. Open Response's length-floor
+ * validation is meaningless here and would silently accept a
+ * submission that can never evaluate as correct; this instead confirms
+ * the value is actually one of this specific question's legal indices.
+ */
+function validateOptionSelection(text: string, optionCount: number): string {
+  const trimmed = text.trim();
+  const index = Number(trimmed);
+
+  if (
+    !Number.isInteger(index) ||
+    String(index) !== trimmed ||
+    index < 0 ||
+    index >= optionCount
+  ) {
+    throw new InvalidOptionSelectionError();
   }
 
   return trimmed;
@@ -69,8 +99,6 @@ export async function submitResponse(
   participantToken: string,
   text: string
 ): Promise<SubmitResponseResult> {
-  const trimmedText = validateAndTrimResponse(text);
-
   const session = await repo.getSessionById(sessionId);
   if (!session) {
     throw new SessionNotFoundError();
@@ -99,6 +127,19 @@ export async function submitResponse(
     currentInteraction.state !== "PROMPT_ACTIVE"
   ) {
     throw new PromptNotActiveError(currentInteraction?.state);
+  }
+
+  // Slice 003: which validation applies depends on the current
+  // interaction's engine — resolved here, not assumed, since this
+  // command no longer has exactly one possible shape of "text".
+  let trimmedText: string;
+  if (currentInteraction.engineType === "MULTIPLE_CHOICE") {
+    const details = await repo.getMultipleChoiceDetailsForInteraction(
+      currentInteraction.interactionInstanceId
+    );
+    trimmedText = validateOptionSelection(text, details?.options.length ?? 0);
+  } else {
+    trimmedText = validateAndTrimResponse(text);
   }
 
   const result = await repo.submitResponse(

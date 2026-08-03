@@ -1,7 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { SessionRecord, SessionState, InteractionState } from "../types";
+import type {
+  SessionRecord,
+  SessionState,
+  InteractionState,
+  EngineType,
+} from "../types";
 import {
   RoomCodeCollisionError,
   DisplayNameTakenError,
@@ -15,6 +20,11 @@ import {
   SubmissionsNotClosedError,
   PreviousInteractionNotRevealedError,
   EmptyPromptTextError,
+  InteractionInstanceNotEligibleError,
+  ParticipantNotInSessionError,
+  InvalidPointsError,
+  PreparedQuestionNotFoundError,
+  PreparedQuestionAlreadyConsumedError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -27,6 +37,9 @@ import type {
   SubmissionRecord,
   SubmissionsClosedEventRecord,
   ResultsRevealedEventRecord,
+  PointAwardRecord,
+  MultipleChoiceDetailsRecord,
+  PreparedQuestionRecord,
   SessionRepository,
 } from "./sessionRepository";
 
@@ -358,6 +371,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       sessionId: row.session_id,
       promptId: row.prompt_id,
       state: row.state as InteractionState,
+      engineType: row.engine_type as EngineType,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -366,16 +380,19 @@ export class SupabaseSessionRepository implements SessionRepository {
   async startSession(
     sessionId: string,
     hostToken: string,
-    promptText: string
+    promptText: string,
+    preparedQuestionId?: string | null
   ): Promise<{
     interactionInstanceId: string;
     promptId: string;
     state: InteractionState;
+    engineType: EngineType;
   }> {
     const { data, error } = await this.client.rpc("start_session_atomically", {
       p_session_id: sessionId,
       p_host_token: hostToken,
       p_prompt_text: promptText,
+      p_prepared_question_id: preparedQuestionId ?? null,
     });
 
     if (error) {
@@ -421,6 +438,22 @@ export class SupabaseSessionRepository implements SessionRepository {
         throw new EmptyPromptTextError();
       }
 
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("PREPARED_QUESTION_NOT_FOUND")
+      ) {
+        throw new PreparedQuestionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("PREPARED_QUESTION_ALREADY_CONSUMED")
+      ) {
+        throw new PreparedQuestionAlreadyConsumedError();
+      }
+
       throw error;
     }
 
@@ -430,6 +463,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       interactionInstanceId: row.interaction_instance_id,
       promptId: row.prompt_id,
       state: row.state as InteractionState,
+      engineType: row.engine_type as EngineType,
     };
   }
 
@@ -610,6 +644,206 @@ export class SupabaseSessionRepository implements SessionRepository {
     return {
       interactionInstanceId: row.interaction_instance_id,
       state: row.state as InteractionState,
+    };
+  }
+
+  async awardPoints(
+    sessionId: string,
+    hostToken: string,
+    interactionInstanceId: string,
+    participantId: string,
+    points: number,
+    idempotencyKey: string
+  ): Promise<PointAwardRecord> {
+    const { data, error } = await this.client.rpc("award_points_atomically", {
+      p_session_id: sessionId,
+      p_host_token: hostToken,
+      p_interaction_instance_id: interactionInstanceId,
+      p_participant_id: participantId,
+      p_points: points,
+      p_idempotency_key: idempotencyKey,
+    });
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("HOST_TOKEN_MISMATCH")
+      ) {
+        throw new HostTokenMismatchError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("LOBBY_NOT_LOCKED")
+      ) {
+        throw new LobbyNotLockedError(extractStateFromGuardMessage(error.message));
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("INTERACTION_NOT_ELIGIBLE")
+      ) {
+        throw new InteractionInstanceNotEligibleError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("PARTICIPANT_NOT_IN_SESSION")
+      ) {
+        throw new ParticipantNotInSessionError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("INVALID_POINTS")
+      ) {
+        throw new InvalidPointsError();
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      pointAwardId: row.point_award_id,
+      sessionId,
+      interactionInstanceId: row.interaction_instance_id,
+      participantId: row.participant_id,
+      points: row.points,
+      createdAt: row.created_at,
+    };
+  }
+
+  async getPointAwardsForSession(sessionId: string): Promise<PointAwardRecord[]> {
+    const { data, error } = await this.client
+      .from("point_awards")
+      .select("*")
+      .eq("session_id", sessionId);
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      pointAwardId: row.point_award_id,
+      sessionId: row.session_id,
+      interactionInstanceId: row.interaction_instance_id,
+      participantId: row.participant_id,
+      points: row.points,
+      createdAt: row.created_at,
+    }));
+  }
+
+  /**
+   * Slice 003. No stored procedure — authoring a prepared question has
+   * no concurrent invariant to protect (see the interface doc comment).
+   * The next ordinal is computed from the current maximum for this
+   * session, then assigned sequentially across the batch being
+   * inserted in one call.
+   */
+  async createPreparedQuestions(
+    sessionId: string,
+    questions: Array<{
+      promptText: string;
+      options: string[];
+      correctOptionIndex: number;
+      pointsForCorrect: number;
+    }>
+  ): Promise<PreparedQuestionRecord[]> {
+    const { data: existing, error: existingError } = await this.client
+      .from("prepared_questions")
+      .select("ordinal")
+      .eq("session_id", sessionId)
+      .order("ordinal", { ascending: false })
+      .limit(1);
+
+    if (existingError) throw existingError;
+
+    let nextOrdinal =
+      existing && existing.length > 0 ? existing[0].ordinal + 1 : 1;
+
+    const rows = questions.map((question) => ({
+      session_id: sessionId,
+      ordinal: nextOrdinal++,
+      prompt_text: question.promptText,
+      options: question.options,
+      correct_option_index: question.correctOptionIndex,
+      points_for_correct: question.pointsForCorrect,
+    }));
+
+    const { data, error } = await this.client
+      .from("prepared_questions")
+      .insert(rows)
+      .select("*");
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      preparedQuestionId: row.prepared_question_id,
+      sessionId: row.session_id,
+      ordinal: row.ordinal,
+      promptText: row.prompt_text,
+      options: row.options,
+      correctOptionIndex: row.correct_option_index,
+      pointsForCorrect: row.points_for_correct,
+      consumedAt: row.consumed_at,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async getPreparedQuestionsForSession(
+    sessionId: string
+  ): Promise<PreparedQuestionRecord[]> {
+    const { data, error } = await this.client
+      .from("prepared_questions")
+      .select("*")
+      .eq("session_id", sessionId)
+      .order("ordinal", { ascending: true });
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      preparedQuestionId: row.prepared_question_id,
+      sessionId: row.session_id,
+      ordinal: row.ordinal,
+      promptText: row.prompt_text,
+      options: row.options,
+      correctOptionIndex: row.correct_option_index,
+      pointsForCorrect: row.points_for_correct,
+      consumedAt: row.consumed_at,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async getMultipleChoiceDetailsForInteraction(
+    interactionInstanceId: string
+  ): Promise<MultipleChoiceDetailsRecord | null> {
+    const { data, error } = await this.client
+      .from("multiple_choice_details")
+      .select("*")
+      .eq("interaction_instance_id", interactionInstanceId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      interactionInstanceId: data.interaction_instance_id,
+      options: data.options,
+      correctOptionIndex: data.correct_option_index,
+      pointsForCorrect: data.points_for_correct,
     };
   }
 }
