@@ -190,6 +190,22 @@ export async function getSession(
       }))
     : null;
 
+  // Session Continuity slice: a successor can only exist once this
+  // session is SESSION_COMPLETE (CREATE_SUCCESSOR_SESSION requires it),
+  // so the lookup is skipped for every other state rather than adding
+  // a query to the hot, frequently-polled path for sessions still in
+  // progress. Visible to host and participant alike — see
+  // GetSessionResult's doc comment for why this needs no role gating.
+  let successorSessionId: string | null = null;
+  let successorRoomCode: string | null = null;
+  if (session.state === "SESSION_COMPLETE") {
+    const successor = await repo.getSuccessorSessionByPredecessorId(sessionId);
+    if (successor) {
+      successorSessionId = successor.sessionId;
+      successorRoomCode = successor.roomCode;
+    }
+  }
+
   return {
     sessionId: session.sessionId,
     state: session.state,
@@ -208,5 +224,7 @@ export async function getSession(
     submissions,
     standings,
     preparedQuestions,
+    successorSessionId,
+    successorRoomCode,
   };
 }

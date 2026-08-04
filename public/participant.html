@@ -221,6 +221,31 @@
     <div id="winnerBanner" class="winner-banner" style="display:none;"></div>
   </div>
 
+  <!-- Session Continuity slice. One unified post-completion panel: a
+       rematch prompt (visible only when the host has created one) and
+       a manual room-code entry (always visible), per the accepted
+       design — two entry points into the same "what's next" screen
+       rather than two disconnected features. Joining via either path
+       always requires an explicit tap here; nothing in this card ever
+       auto-navigates or auto-joins on the participant's behalf. -->
+  <div class="card" id="continuationCard" style="display:none;">
+    <div id="joinNextSection" style="display:none; margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid var(--line);">
+      <h2>Join Next Session</h2>
+      <p style="margin-top:0; color:var(--muted); font-size:14px;">A new game is available.</p>
+      <label>Your name</label>
+      <input id="jn-displayName" placeholder="e.g. Alex" />
+      <button class="btn-primary" onclick="joinNextSession()">Join Next Session</button>
+    </div>
+    <div>
+      <h2>Join Another Session</h2>
+      <label>Room code</label>
+      <input id="ja-roomCode" placeholder="e.g. AB23CD" />
+      <label>Your name</label>
+      <input id="ja-displayName" placeholder="e.g. Alex" />
+      <button class="btn-primary" onclick="joinAnotherSession()">Join</button>
+    </div>
+  </div>
+
   <button class="btn-ghost" onclick="sessionSync.refreshNow()" title="Manual refresh — the game normally syncs automatically; use this if you suspect it's stalled.">Check for updates</button>
 </div>
 
@@ -340,6 +365,17 @@ let currentSessionState = null;
 // draft text is client-side only; GET_SESSION never exposes a
 // participant's own submission before RESULT_REVEAL.
 let selectedOptionIndex = null;
+// Session Continuity slice. Populated from GET_SESSION only once this
+// session reaches SESSION_COMPLETE (see getSession.ts) — null until
+// then, and null if the host never creates a rematch.
+let successorSessionId = null;
+let successorRoomCode = null;
+// Guards the one-time display-name pre-fill in renderContinuation()
+// so a later poll tick (sync now keeps running through
+// SESSION_COMPLETE — see participantRefresh) never overwrites text
+// the participant is actively editing. Reset whenever this screen is
+// left, so arriving at a *later* SESSION_COMPLETE pre-fills again.
+let continuationPrefilled = false;
 
 function saveParticipantState() {
   sessionStorage.setItem(PARTICIPANT_STORAGE_KEY, JSON.stringify(participantState));
@@ -668,6 +704,33 @@ function renderStandings(standings) {
   renderWinnerBanner(sorted);
 }
 
+// Session Continuity slice. successorRoomCode's presence, not any
+// separate flag, is what decides whether "Join Next Session" shows —
+// it is null until the host actually creates a rematch, which may
+// happen well after this participant first reaches SESSION_COMPLETE
+// (this is exactly why polling no longer stops at SESSION_COMPLETE —
+// see participantRefresh). "Join Another Session" is always available
+// here, independent of whether a successor exists, per the explicit
+// requirement that it work as a general reset even when a different
+// person becomes the next host.
+function renderContinuation() {
+  const card = document.getElementById("continuationCard");
+  if (currentSessionState !== "SESSION_COMPLETE") {
+    card.style.display = "none";
+    continuationPrefilled = false;
+    return;
+  }
+  card.style.display = "block";
+
+  document.getElementById("joinNextSection").style.display = successorRoomCode ? "block" : "none";
+
+  if (!continuationPrefilled) {
+    document.getElementById("jn-displayName").value = participantState.displayName || "";
+    document.getElementById("ja-displayName").value = participantState.displayName || "";
+    continuationPrefilled = true;
+  }
+}
+
 // Client-derived presentation rule (Slice 002), mirroring host.html:
 // if no point award exists for anyone, every score is 0 and no one is
 // declared a joint winner merely because every score equals that
@@ -733,6 +796,8 @@ function applySessionSnapshot(data) {
   }
 
   currentSessionState = data.state;
+  if ("successorSessionId" in data) successorSessionId = data.successorSessionId;
+  if ("successorRoomCode" in data) successorRoomCode = data.successorRoomCode;
 
   const effectiveState = computeEffectiveState(data.state, data.interactionState);
   renderStepper(effectiveState);
@@ -744,6 +809,42 @@ function applySessionSnapshot(data) {
     renderOwnCorrectnessBanner(data.submissions, effectiveState);
   }
   if ("standings" in data) renderStandings(data.standings);
+  renderContinuation();
+}
+
+// Shared by joinSession(), joinNextSession(), and joinAnotherSession():
+// all three produce an identically-shaped JoinSessionResult, and all
+// three mean the same thing from this tab's point of view — "forget
+// whatever session was on screen, this is a fresh participant
+// identity in a different session." Full reset of every previous-
+// session cache, mirroring host.html's switchToNewSession() — the
+// explicit "no state leaking" requirement applies here exactly as it
+// does there.
+function switchToJoinedSession(json) {
+  participantState = {
+    sessionId: json.sessionId,
+    participantId: json.participantId,
+    participantToken: json.participantToken,
+    displayName: json.displayName,
+  };
+  saveParticipantState();
+
+  hasSubmittedThisPageLoad = false;
+  lastSeenInteractionNumber = null;
+  lastKnownSubmissions = null;
+  currentSessionState = null;
+  selectedOptionIndex = null;
+  successorSessionId = null;
+  successorRoomCode = null;
+  continuationPrefilled = false;
+  document.getElementById("p-text").value = "";
+  document.getElementById("jn-displayName").value = "";
+  document.getElementById("ja-roomCode").value = "";
+  document.getElementById("ja-displayName").value = "";
+
+  showGamePanels();
+  sessionSync.start();
+  renderSyncDebug();
 }
 
 async function joinSession() {
@@ -753,16 +854,46 @@ async function joinSession() {
   show("JOIN_SESSION (" + r.status + ")", r.json);
   if (r.status === 201) {
     renderNotice(null);
-    participantState = {
-      sessionId: r.json.sessionId,
-      participantId: r.json.participantId,
-      participantToken: r.json.participantToken,
-      displayName: r.json.displayName,
-    };
-    saveParticipantState();
-    showGamePanels();
-    sessionSync.start();
-    renderSyncDebug();
+    switchToJoinedSession(r.json);
+    await participantRefresh();
+  } else {
+    renderNotice(classifyError(r));
+  }
+}
+
+// Session Continuity slice. Explicit-confirmation rematch join: the
+// participant taps this button themselves — nothing here is ever
+// triggered automatically by a poll tick, only made *visible* by one
+// (see renderContinuation). successorRoomCode comes from this
+// session's own now-stale GET_SESSION data, not from anything the
+// participant typed, but the join itself goes through the completely
+// ordinary JOIN_SESSION path with no special-casing on the server.
+async function joinNextSession() {
+  if (!successorRoomCode) return;
+  const displayName = document.getElementById("jn-displayName").value.trim();
+  const r = await postJson(`/api/sessions/${successorRoomCode}/join`, { displayName });
+  show("JOIN_SESSION (next session) (" + r.status + ")", r.json);
+  if (r.status === 201) {
+    renderNotice(null);
+    switchToJoinedSession(r.json);
+    await participantRefresh();
+  } else {
+    renderNotice(classifyError(r));
+  }
+}
+
+// Session Continuity slice. The general reset-and-rejoin path — works
+// identically whether resuming a rematch the host didn't offer via
+// Join Next Session, or joining an entirely unrelated session run by a
+// different host with a different room code.
+async function joinAnotherSession() {
+  const roomCode = document.getElementById("ja-roomCode").value.trim();
+  const displayName = document.getElementById("ja-displayName").value.trim();
+  const r = await postJson(`/api/sessions/${roomCode}/join`, { displayName });
+  show("JOIN_SESSION (another session) (" + r.status + ")", r.json);
+  if (r.status === 201) {
+    renderNotice(null);
+    switchToJoinedSession(r.json);
     await participantRefresh();
   } else {
     renderNotice(classifyError(r));
@@ -795,12 +926,14 @@ async function participantRefresh() {
   if (r.status === 200) {
     renderNotice(null);
     applySessionSnapshot(r.json);
-    // Slice 004: nothing further can change once the session has
-    // ended — stop the automatic loop rather than polling forever
-    // after the game is over.
-    if (r.json.state === "SESSION_COMPLETE") {
-      sessionSync.stop();
-    }
+    // Session Continuity slice: Slice 004 stopped polling here on the
+    // premise that "nothing further can change once the session has
+    // ended." That premise no longer holds — the host may create a
+    // successor session well after this session completes, and a
+    // still-watching participant is only notified automatically
+    // because this loop keeps running to pick it up (see
+    // renderContinuation). Polling now only ever stops on a genuinely
+    // terminal error, below — never on SESSION_COMPLETE itself.
   } else {
     renderNotice(classifyError(r));
     if (isTerminalSyncError(r.json)) {

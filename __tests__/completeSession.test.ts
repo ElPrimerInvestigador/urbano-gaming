@@ -179,6 +179,7 @@ describe("COMPLETE_SESSION", () => {
             stateVersion: 1,
             pauseReason: null,
             currentPromptId: null,
+            predecessorSessionId: null,
             createdAt: now,
             updatedAt: now,
           },

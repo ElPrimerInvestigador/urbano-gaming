@@ -19,6 +19,7 @@ import {
   InvalidPointsError,
   PreparedQuestionNotFoundError,
   PreparedQuestionAlreadyConsumedError,
+  PredecessorAlreadyHasSuccessorError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -146,6 +147,19 @@ export class InMemorySessionRepository implements SessionRepository {
       throw new RoomCodeCollisionError();
     }
 
+    // Mirrors sessions_predecessor_session_id_unique (0028): at most
+    // one session may name a given predecessor. Null predecessors
+    // never collide with each other, matching Postgres unique-index
+    // semantics for null values.
+    if (
+      record.predecessorSessionId !== null &&
+      [...this.sessions.values()].some(
+        (session) => session.predecessorSessionId === record.predecessorSessionId
+      )
+    ) {
+      throw new PredecessorAlreadyHasSuccessorError();
+    }
+
     if (this.sessions.has(record.sessionId)) {
       throw new Error("Duplicate session_id insert.");
     }
@@ -232,6 +246,16 @@ export class InMemorySessionRepository implements SessionRepository {
 
   async getSessionById(sessionId: string): Promise<SessionRecord | null> {
     return this.sessions.get(sessionId) ?? null;
+  }
+
+  async getSuccessorSessionByPredecessorId(
+    predecessorSessionId: string
+  ): Promise<SessionRecord | null> {
+    const match = [...this.sessions.values()].find(
+      (session) => session.predecessorSessionId === predecessorSessionId
+    );
+
+    return match ?? null;
   }
 
   async lockLobby(

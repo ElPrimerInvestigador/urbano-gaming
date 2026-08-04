@@ -192,7 +192,15 @@ export interface SessionRepository {
    * Implementations must:
    * - commit both records or neither record;
    * - enforce active room-code uniqueness;
-   * - throw RoomCodeCollisionError only when room_code collides.
+   * - throw RoomCodeCollisionError only when room_code collides;
+   * - when record.predecessorSessionId is non-null, persist it verbatim
+   *   (this method does not itself verify the predecessor exists or is
+   *   SESSION_COMPLETE — that is CREATE_SUCCESSOR_SESSION's
+   *   responsibility, since it is permanently true once checked and
+   *   never re-verified for the same reason completeSession never
+   *   needs to guard against a session un-completing) and throw
+   *   PredecessorAlreadyHasSuccessorError only when
+   *   predecessor_session_id collides with an existing session.
    */
   createSession(
     record: SessionRecord,
@@ -222,6 +230,22 @@ export interface SessionRepository {
 
   /** Used by tests and validation to confirm a session round-trips. */
   getSessionById(sessionId: string): Promise<SessionRecord | null>;
+
+  /**
+   * Session Continuity slice. Resolve the (at most one) session whose
+   * predecessorSessionId equals the given session id — i.e. "does this
+   * session have a successor, and if so, which one." Used by
+   * CREATE_SUCCESSOR_SESSION as a fast-path check before attempting to
+   * create a second successor (the authoritative guard is still
+   * sessions_predecessor_session_id_unique, per 0028 — this is a
+   * clean-error convenience, not the sole enforcement), and by
+   * GET_SESSION to populate successorSessionId/successorRoomCode once
+   * a session reaches SESSION_COMPLETE. Returns null if no session
+   * names this one as its predecessor.
+   */
+  getSuccessorSessionByPredecessorId(
+    predecessorSessionId: string
+  ): Promise<SessionRecord | null>;
 
   /**
    * Atomically re-verify the supplied host token and that the session is

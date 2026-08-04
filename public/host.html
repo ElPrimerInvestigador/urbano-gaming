@@ -269,6 +269,8 @@
     <button class="btn-ghost" onclick="sessionSync.refreshNow()" title="Manual refresh — the game normally syncs automatically; use this if you suspect it's stalled.">Check for updates</button>
     <button class="btn-danger" id="btn-complete" onclick="completeSession()">End Session</button>
     <button class="btn-primary" id="btn-new-session" onclick="createSession()" style="display:none;">Create New Session</button>
+    <button class="btn-primary" id="btn-rematch" onclick="createSuccessorSession()" style="display:none;">Create Rematch</button>
+    <div id="rematchHint" class="room-code-hint" style="display:none;"></div>
   </div>
 </div>
 
@@ -391,6 +393,12 @@ let currentEngineType = null;
 // Multiple Choice question queue, including correct answers not yet
 // asked — never sent to a participant.
 let preparedQuestions = [];
+// Session Continuity slice. Populated from GET_SESSION only once this
+// session reaches SESSION_COMPLETE (see getSession.ts) — null until
+// then, and null forever if no rematch is ever created from this
+// session.
+let successorSessionId = null;
+let successorRoomCode = null;
 // Local-only, not yet saved to the server — questions the host has
 // added to the authoring form but not yet submitted via
 // PREPARE_QUESTIONS.
@@ -478,6 +486,8 @@ const KNOWN_ERRORS = [
   { test: (m) => m === "correctOptionIndex must be a valid index into options.", text: "Select a valid correct answer for this question." },
   { test: (m) => m === "No prepared question exists for this id in this session.", text: "That question isn't part of this session's queue — try refreshing." },
   { test: (m) => m === "This prepared question has already been started.", text: "That question was already asked — refreshing the queue." },
+  { test: (m) => m.startsWith("Predecessor session is"), text: "This session hasn't ended yet — end it before creating a rematch." },
+  { test: (m) => m === "This session already has a successor session.", text: "A new session was already created from this one." },
 ];
 
 function translateKnownError(raw) {
@@ -792,6 +802,25 @@ function updateActionAvailability() {
   // can't be clicked mid-game by mistake.
   document.getElementById("btn-new-session").style.display =
     sessionLifecycleState === "SESSION_COMPLETE" ? "inline-block" : "none";
+
+  // Session Continuity slice: the rematch button is hidden once a
+  // successor already exists for this session — the write-once
+  // predecessor_session_id constraint (0028) means a second rematch
+  // from the same completed session is not possible, so offering the
+  // button again would only produce a confusing error. The hint below
+  // tells the host where the rematch went instead.
+  document.getElementById("btn-rematch").style.display =
+    sessionLifecycleState === "SESSION_COMPLETE" && !successorSessionId
+      ? "inline-block"
+      : "none";
+
+  const rematchHint = document.getElementById("rematchHint");
+  if (sessionLifecycleState === "SESSION_COMPLETE" && successorSessionId) {
+    rematchHint.style.display = "block";
+    rematchHint.textContent = `A rematch was already created from this session — room code ${successorRoomCode}.`;
+  } else {
+    rematchHint.style.display = "none";
+  }
 }
 
 function renderParticipants(participants) {
@@ -972,6 +1001,8 @@ function applySessionSnapshot(data) {
     currentInteractionInstanceId = data.currentInteractionInstanceId;
   }
   if ("currentEngineType" in data) currentEngineType = data.currentEngineType;
+  if ("successorSessionId" in data) successorSessionId = data.successorSessionId;
+  if ("successorRoomCode" in data) successorRoomCode = data.successorRoomCode;
   if ("preparedQuestions" in data && data.preparedQuestions) {
     preparedQuestions = data.preparedQuestions;
     renderPreparedQueue(preparedQuestions);
@@ -997,37 +1028,66 @@ function applySessionSnapshot(data) {
   if ("standings" in data) renderStandings(data.standings);
 }
 
+// Shared by createSession() and createSuccessorSession(): both produce
+// an identically-shaped CreateSessionResult and both mean the same
+// thing from this tab's point of view — "abandon whatever session was
+// on screen, this is a brand new one." Reset every client-side cache
+// carried over from a previous session in this same tab — neither
+// command's response has any way to signal "forget the old
+// queue/standings", and this tab may have just finished rendering a
+// completed session's results. Without this, switching sessions
+// without reloading the page would briefly show the previous session's
+// trivia queue, standings, and winner banner under the new room code.
+function switchToNewSession(json) {
+  hostState = { sessionId: json.sessionId, roomCode: json.roomCode, hostToken: json.hostToken };
+  saveHostState();
+
+  draftQuestions = [];
+  preparedQuestions = [];
+  lastKnownStandings = [];
+  lastKnownSubmissions = null;
+  lastSeenInteractionNumber = null;
+  currentEngineType = null;
+  successorSessionId = null;
+  successorRoomCode = null;
+  awardInFlight = {};
+  resetQuestionForm();
+  renderDraftQuestions();
+
+  showSessionPanels();
+  sessionSync.start();
+  renderSyncDebug();
+}
+
 async function createSession() {
   const { status, json } = await postJson("/api/sessions", {});
   show("CREATE_SESSION (" + status + ")", json);
   if (status === 201) {
     renderNotice(null);
-    hostState = { sessionId: json.sessionId, roomCode: json.roomCode, hostToken: json.hostToken };
-    saveHostState();
-
-    // Reset every client-side cache carried over from a previous
-    // session in this same tab — CREATE_SESSION's own response has no
-    // way to signal "forget the old queue/standings", and this tab may
-    // have just finished rendering a completed session's results.
-    // Without this, a host creating a second session without reloading
-    // the page would briefly see the previous session's trivia queue,
-    // standings, and winner banner under the new room code.
-    draftQuestions = [];
-    preparedQuestions = [];
-    lastKnownStandings = [];
-    lastKnownSubmissions = null;
-    lastSeenInteractionNumber = null;
-    currentEngineType = null;
-    awardInFlight = {};
-    resetQuestionForm();
-    renderDraftQuestions();
-
-    showSessionPanels();
-    sessionSync.start();
-    renderSyncDebug();
+    switchToNewSession(json);
     await hostRefresh();
   } else {
     renderNotice(classifyError({ status, json }));
+  }
+}
+
+// Session Continuity slice. Same-shaped result as CREATE_SESSION — the
+// host's own view switches to the new session immediately, exactly
+// like a plain "Create New Session". The point of setting
+// predecessorSessionId (done server-side, not here) is for *this*
+// session's still-polling participants to see a "Join Next Session"
+// prompt on their own screens, not for this host tab specifically.
+async function createSuccessorSession() {
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/successor`, {
+    hostToken: hostState.hostToken,
+  });
+  show("CREATE_SUCCESSOR_SESSION (" + r.status + ")", r.json);
+  if (r.status === 201) {
+    renderNotice(null);
+    switchToNewSession(r.json);
+    await hostRefresh();
+  } else {
+    renderNotice(classifyError(r));
   }
 }
 

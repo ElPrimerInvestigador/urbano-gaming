@@ -8,6 +8,7 @@ import { SupabaseSessionRepository } from "../lib/session/db/supabaseSessionRepo
 import type { ParticipantRecord } from "../lib/session/db/sessionRepository";
 import {
   RoomCodeCollisionError,
+  PredecessorAlreadyHasSuccessorError,
   type SessionRecord,
 } from "../lib/session/types";
 const env = loadEnv("development", process.cwd(), "");
@@ -57,6 +58,7 @@ function buildSessionRecord(
     stateVersion: 1,
     pauseReason: null,
     currentPromptId: null,
+    predecessorSessionId: null,
     createdAt: now,
     updatedAt: now,
     ...overrides,
@@ -850,5 +852,110 @@ describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+e
 
     const awards = await repository.getPointAwardsForSession(session.sessionId);
     expect(awards).toHaveLength(0);
+  });
+});
+
+/**
+ * Session Continuity slice. These tests exist for the same reason the
+ * lifecycle suite above does: prove the extended create_session_atomically
+ * (0029) and the new schema constraints (0028) actually behave as
+ * intended against real Postgres, since none of that is exercisable by
+ * the in-memory double. createSuccessorSession.test.ts already covers
+ * the domain-layer decision logic exhaustively — this suite only
+ * covers what only Postgres itself can prove: constraint enforcement
+ * and the new RPC parameter actually persisting.
+ */
+describe("SupabaseSessionRepository contract — Session Continuity (predecessor_session_id)", () => {
+  it("persists predecessor_session_id via the extended create_session_atomically", async () => {
+    const predecessor = buildSessionRecord();
+    createdSessionIds.push(predecessor.sessionId);
+    await repository.createSession(predecessor, buildInitialEvent(predecessor));
+
+    const successor = buildSessionRecord({
+      predecessorSessionId: predecessor.sessionId,
+    });
+    createdSessionIds.push(successor.sessionId);
+    await repository.createSession(successor, buildInitialEvent(successor));
+
+    const stored = await repository.getSessionById(successor.sessionId);
+    expect(stored?.predecessorSessionId).toBe(predecessor.sessionId);
+  });
+
+  it("resolves the successor via getSuccessorSessionByPredecessorId", async () => {
+    const predecessor = buildSessionRecord();
+    createdSessionIds.push(predecessor.sessionId);
+    await repository.createSession(predecessor, buildInitialEvent(predecessor));
+
+    const successor = buildSessionRecord({
+      predecessorSessionId: predecessor.sessionId,
+    });
+    createdSessionIds.push(successor.sessionId);
+    await repository.createSession(successor, buildInitialEvent(successor));
+
+    const resolved = await repository.getSuccessorSessionByPredecessorId(
+      predecessor.sessionId
+    );
+    expect(resolved?.sessionId).toBe(successor.sessionId);
+  });
+
+  it("returns null from getSuccessorSessionByPredecessorId when no successor exists", async () => {
+    const predecessor = buildSessionRecord();
+    createdSessionIds.push(predecessor.sessionId);
+    await repository.createSession(predecessor, buildInitialEvent(predecessor));
+
+    const resolved = await repository.getSuccessorSessionByPredecessorId(
+      predecessor.sessionId
+    );
+    expect(resolved).toBeNull();
+  });
+
+  it("does not collide two independent sessions that both have a null predecessor_session_id", async () => {
+    const first = buildSessionRecord();
+    createdSessionIds.push(first.sessionId);
+    const second = buildSessionRecord();
+    createdSessionIds.push(second.sessionId);
+
+    await expect(
+      Promise.all([
+        repository.createSession(first, buildInitialEvent(first)),
+        repository.createSession(second, buildInitialEvent(second)),
+      ])
+    ).resolves.not.toThrow();
+  });
+
+  it("translates a predecessor_session_id unique violation into PredecessorAlreadyHasSuccessorError", async () => {
+    const predecessor = buildSessionRecord();
+    createdSessionIds.push(predecessor.sessionId);
+    await repository.createSession(predecessor, buildInitialEvent(predecessor));
+
+    const firstSuccessor = buildSessionRecord({
+      predecessorSessionId: predecessor.sessionId,
+    });
+    createdSessionIds.push(firstSuccessor.sessionId);
+    await repository.createSession(firstSuccessor, buildInitialEvent(firstSuccessor));
+
+    const secondSuccessor = buildSessionRecord({
+      predecessorSessionId: predecessor.sessionId,
+    });
+    createdSessionIds.push(secondSuccessor.sessionId);
+
+    await expect(
+      repository.createSession(secondSuccessor, buildInitialEvent(secondSuccessor))
+    ).rejects.toBeInstanceOf(PredecessorAlreadyHasSuccessorError);
+
+    const failedSession = await repository.getSessionById(secondSuccessor.sessionId);
+    expect(failedSession).toBeNull();
+  });
+
+  it("rejects a session naming itself as its own predecessor (sessions_predecessor_not_self)", async () => {
+    const selfReferencing = buildSessionRecord();
+    selfReferencing.predecessorSessionId = selfReferencing.sessionId;
+
+    await expect(
+      repository.createSession(selfReferencing, buildInitialEvent(selfReferencing))
+    ).rejects.toMatchObject({ code: "23514" });
+
+    const stored = await repository.getSessionById(selfReferencing.sessionId);
+    expect(stored).toBeNull();
   });
 });

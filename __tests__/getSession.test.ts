@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { createSuccessorSession } from "../lib/session/createSuccessorSession";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
+import { completeSession } from "../lib/session/completeSession";
 import { getSession } from "../lib/session/getSession";
 import { InMemorySessionRepository } from "../lib/session/db/inMemorySessionRepository";
 import {
@@ -167,5 +169,66 @@ describe("GET_SESSION", () => {
 
     expect(result.state).toBe("LOBBY_LOCKED");
     expect(result.participants).toHaveLength(1);
+  });
+
+  describe("successorSessionId / successorRoomCode (Session Continuity slice)", () => {
+    it("are both null before the session is SESSION_COMPLETE", async () => {
+      const repo = new InMemorySessionRepository();
+      const session = await createSession(repo);
+      await lockLobby(repo, session.sessionId, session.hostToken);
+
+      const result = await getSession(repo, session.sessionId, session.hostToken);
+
+      expect(result.successorSessionId).toBeNull();
+      expect(result.successorRoomCode).toBeNull();
+    });
+
+    it("are both null once SESSION_COMPLETE if no successor was ever created", async () => {
+      const repo = new InMemorySessionRepository();
+      const session = await createSession(repo);
+      await completeSession(repo, session.sessionId, session.hostToken);
+
+      const result = await getSession(repo, session.sessionId, session.hostToken);
+
+      expect(result.successorSessionId).toBeNull();
+      expect(result.successorRoomCode).toBeNull();
+    });
+
+    it("populate once a successor exists, visible to the host", async () => {
+      const repo = new InMemorySessionRepository();
+      const session = await createSession(repo);
+      await completeSession(repo, session.sessionId, session.hostToken);
+      const successor = await createSuccessorSession(
+        repo,
+        session.sessionId,
+        session.hostToken
+      );
+
+      const result = await getSession(repo, session.sessionId, session.hostToken);
+
+      expect(result.successorSessionId).toBe(successor.sessionId);
+      expect(result.successorRoomCode).toBe(successor.roomCode);
+    });
+
+    it("populate identically for a participant — no role gating on this field", async () => {
+      const repo = new InMemorySessionRepository();
+      const session = await createSession(repo);
+      const participant = await joinSession(repo, session.roomCode, "Sam");
+      await completeSession(repo, session.sessionId, session.hostToken);
+      const successor = await createSuccessorSession(
+        repo,
+        session.sessionId,
+        session.hostToken
+      );
+
+      const result = await getSession(
+        repo,
+        session.sessionId,
+        participant.participantToken
+      );
+
+      expect(result.successorSessionId).toBe(successor.sessionId);
+      expect(result.successorRoomCode).toBe(successor.roomCode);
+    });
   });
 });

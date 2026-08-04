@@ -107,4 +107,48 @@ This means **Addendum 1's fix was independently correct and remains necessary �
 
 One note distinct from the application code, from the Claude Browser automation tool used for this round of *my own* verification (separate from, and not a substitute for, an actual device — noted here for completeness, not as device evidence): it exhibits real Chrome background-tab timer throttling when attention shifts to a different tab within the same multi-tab session (ticks slow to roughly once a minute) without always producing a catchable `visibilitychange` event this tool can react to. Calling `resume()` directly at any point during that throttled state immediately restored full, accurate state in every case tried. That's reassuring evidence from automated reproduction, not proof against a real phone — which, as of this writing, has still never run any version of this code and remains the actual open question.
 
+## Addendum 3: First Valid Deployment and Production Smoke Test
+
+Commit `23a1db1` (`feat: add passive session synchronization (Slice 004)`) pushed to `origin/main` as a clean fast-forward from `c839132`, then deployed to production via `vercel --prod`, aliased to the existing playtest URL: **`https://level33-mvp-playtest.vercel.app`**. This is the first time any version of `sessionSync.js` has existed on that server, or on any server — every prior "real-device" report in Addenda 1 and 2 predates this by definition (see the Correction above).
+
+**Pre-smoke-test verification**, direct against the live URL, not assumed:
+
+```
+curl -s -o /dev/null -w "%{http_code}\n" https://level33-mvp-playtest.vercel.app/sessionSync.js
+→ 200
+
+curl -s https://level33-mvp-playtest.vercel.app/sessionSync.js | grep -o "Correction [0-9]"
+→ Correction 1
+→ Correction 2
+
+curl -s https://level33-mvp-playtest.vercel.app/host.html | grep -o "sessionSync\.js\|syncDebugPanel\|btn-new-session\|race-fix-1" | sort -u
+→ btn-new-session
+→ race-fix-1
+→ sessionSync.js
+→ syncDebugPanel
+```
+
+Build marker confirmed live: **`race-fix-1`**.
+
+**Production smoke test** (live browser, host + participant, both freshly loaded against the production domain with `sessionStorage` cleared first):
+
+| Step | Result |
+|---|---|
+| Fresh load, before any session | `ticks: 0`, `status: not started` — confirms no premature tick on this domain either |
+| Host creates a session | Room code issued, sync loop starts |
+| Participant joins | — |
+| **Host detects the participant automatically** | Confirmed with zero manual refresh — `PARTICIPANTS (1) Alex` appeared after ticks climbed on their own |
+| Host starts a question | — |
+| **Participant advances automatically** | Confirmed with zero manual refresh — prompt and submission form appeared on their own |
+| Participant submits | — |
+| **Host sees submission progress automatically** | Confirmed — "0 of 1" → "1 of 1 submitted" with zero manual refresh |
+| Host closes and reveals | — |
+| **Participant sees the reveal automatically** | Confirmed — results and standings appeared with zero manual refresh |
+| Host completes the session | "Create New Session" appeared |
+| **Host creates a second session from the same tab** | Confirmed via a real DOM `.click()` — new room code, new session id, zero leftover participants/queue/standings, sync loop still running for the new session |
+
+**Difference between local and production behavior:** none observed. The same Claude Browser automation tool limitation noted in Addenda 1 and 2 (background-tab timer throttling without a reliably catchable `visibilitychange` event in this specific multi-tab harness) applies identically here — calling `resume()` directly immediately and correctly restored ticking every time it was needed during this test, exactly as in every prior automated verification. This is a property of the testing tool, observed on this domain exactly as it was on `localhost`; it is not a production-specific issue and not new information.
+
+**What remains genuinely unverified:** an actual mobile device backgrounding/foregrounding cycle against this live deployment. Every check above ran through deliberate action or the automation tool's `resume()` API, not a real phone lock/unlock. That is the test this deployment now makes possible for the first time — described in the retest procedure below.
+
 No claim of architectural or constitutional acceptance is made by this document.

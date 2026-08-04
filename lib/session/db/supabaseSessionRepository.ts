@@ -25,6 +25,7 @@ import {
   InvalidPointsError,
   PreparedQuestionNotFoundError,
   PreparedQuestionAlreadyConsumedError,
+  PredecessorAlreadyHasSuccessorError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -105,6 +106,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       p_updated_at: record.updatedAt,
       p_event_type: initialEvent.eventType,
       p_event_payload: initialEvent.payload,
+      p_predecessor_session_id: record.predecessorSessionId,
     });
 
     if (error) {
@@ -113,6 +115,13 @@ export class SupabaseSessionRepository implements SessionRepository {
         error.message.includes("sessions_room_code_active_unique")
       ) {
         throw new RoomCodeCollisionError();
+      }
+
+      if (
+        error.code === "23505" &&
+        error.message.includes("sessions_predecessor_session_id_unique")
+      ) {
+        throw new PredecessorAlreadyHasSuccessorError();
       }
 
       throw error;
@@ -185,6 +194,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       stateVersion: data.state_version,
       pauseReason: data.pause_reason,
       currentPromptId: data.current_prompt_id,
+      predecessorSessionId: data.predecessor_session_id,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };
@@ -208,6 +218,37 @@ export class SupabaseSessionRepository implements SessionRepository {
       stateVersion: data.state_version,
       pauseReason: data.pause_reason,
       currentPromptId: data.current_prompt_id,
+      predecessorSessionId: data.predecessor_session_id,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  /**
+   * Session Continuity slice. predecessor_session_id carries the
+   * unique index (0028), so at most one row can ever match.
+   */
+  async getSuccessorSessionByPredecessorId(
+    predecessorSessionId: string
+  ): Promise<SessionRecord | null> {
+    const { data, error } = await this.client
+      .from("sessions")
+      .select("*")
+      .eq("predecessor_session_id", predecessorSessionId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) return null;
+
+    return {
+      sessionId: data.session_id,
+      roomCode: data.room_code,
+      hostToken: data.host_token,
+      state: data.state,
+      stateVersion: data.state_version,
+      pauseReason: data.pause_reason,
+      currentPromptId: data.current_prompt_id,
+      predecessorSessionId: data.predecessor_session_id,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
     };

@@ -54,6 +54,16 @@ export interface SessionRecord {
    * prompt selection instead of the session row directly.
    */
   currentPromptId: string | null;
+  /**
+   * Session Continuity slice. Null for every session except one
+   * created via CREATE_SUCCESSOR_SESSION, in which case this is the
+   * (already SESSION_COMPLETE) session it continues from. Set once, at
+   * creation, and never revised afterward — this session's own row is
+   * the one that changes over its lifetime, never the predecessor's.
+   * See 0028's migration comment for why this describes a session's
+   * own origin rather than a forward pointer on the earlier session.
+   */
+  predecessorSessionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -283,6 +293,16 @@ export interface PrepareQuestionsResult {
  * call GET_SESSION at all. `currentPrompt.options` / `correctOptionIndex`
  * and `submissions[].isCorrect` are the Multiple Choice-specific fields
  * described on their own types above.
+ *
+ * Session Continuity slice: `successorSessionId` / `successorRoomCode`
+ * describe whether *this* session has a successor — even though the
+ * column that makes that knowable (predecessor_session_id) lives on
+ * the successor's own row, not this one (see 0028's migration
+ * comment). Both are null until a successor exists, and a successor
+ * can only exist once this session is SESSION_COMPLETE. Visible to
+ * host and participant alike, with no role gating: unlike
+ * preparedQuestions' correct answers, there is nothing to protect
+ * about the existence or room code of a next game.
  */
 export interface GetSessionResult {
   sessionId: string;
@@ -299,6 +319,8 @@ export interface GetSessionResult {
   submissions: SubmissionSummary[] | null;
   standings: ParticipantStanding[];
   preparedQuestions: PreparedQuestionSummary[] | null;
+  successorSessionId: string | null;
+  successorRoomCode: string | null;
 }
 
 /** Raised when a generated room code collides with an active session. */
@@ -641,5 +663,38 @@ export class InvalidOptionSelectionError extends Error {
   constructor() {
     super("Selected option is not valid for this question.");
     this.name = "InvalidOptionSelectionError";
+  }
+}
+
+/**
+ * Session Continuity slice. Raised by CREATE_SUCCESSOR_SESSION when
+ * the named predecessor session exists but has not yet reached
+ * SESSION_COMPLETE. A rematch can only be created after its
+ * predecessor's game has actually ended.
+ */
+export class PredecessorSessionNotCompleteError extends Error {
+  constructor(currentState?: SessionState) {
+    super(
+      currentState
+        ? `Predecessor session is in ${currentState}, not SESSION_COMPLETE.`
+        : "Predecessor session is not yet SESSION_COMPLETE."
+    );
+    this.name = "PredecessorSessionNotCompleteError";
+  }
+}
+
+/**
+ * Session Continuity slice. Raised by CREATE_SUCCESSOR_SESSION when
+ * the named predecessor session already has a successor —
+ * sessions_predecessor_session_id_unique (0028) permits at most one
+ * direct successor per session. Not a signal to retry with a new
+ * predecessor (unlike RoomCodeCollisionError's regenerate-and-retry):
+ * the operation itself is invalid a second time for the same
+ * predecessor.
+ */
+export class PredecessorAlreadyHasSuccessorError extends Error {
+  constructor() {
+    super("This session already has a successor session.");
+    this.name = "PredecessorAlreadyHasSuccessorError";
   }
 }

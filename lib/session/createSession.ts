@@ -34,6 +34,7 @@ export async function createSession(
       stateVersion: 1,
       pauseReason: null,
       currentPromptId: null,
+      predecessorSessionId: null,
       createdAt: now,
       updatedAt: now,
     };
