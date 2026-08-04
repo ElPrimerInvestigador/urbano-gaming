@@ -167,6 +167,12 @@
 
 <div id="status-banner" class="notice" style="display:none;" role="alert"></div>
 
+<!-- Slice 004 real-device investigation: temporary, always-visible
+     diagnostic panel — mobile console access is limited, so this
+     surfaces the same information on-screen instead. Safe to remove
+     once passive sync is confirmed stable on a real device. -->
+<div id="syncDebugPanel" style="font-family:'SF Mono',Menlo,monospace; font-size:11px; line-height:1.5; background:#111; color:#4ade80; padding:8px 10px; border-radius:6px; margin-bottom:14px; white-space:pre-wrap;">(sync debug loading…)</div>
+
 <div id="join-panel" class="card">
   <h2>Join a session</h2>
   <label>Room code</label>
@@ -215,7 +221,7 @@
     <div id="winnerBanner" class="winner-banner" style="display:none;"></div>
   </div>
 
-  <button class="btn-ghost" onclick="participantRefresh()">Check for updates</button>
+  <button class="btn-ghost" onclick="sessionSync.refreshNow()" title="Manual refresh — the game normally syncs automatically; use this if you suspect it's stalled.">Check for updates</button>
 </div>
 
 <details>
@@ -223,6 +229,7 @@
   <pre id="output">(nothing yet)</pre>
 </details>
 
+<script src="/sessionSync.js"></script>
 <script>
 // Developer-harness-only credential persistence, via sessionStorage:
 // survives a refresh of this tab, but never shared with any other tab
@@ -247,6 +254,65 @@ const STATE_LABELS = {
   RESULT_REVEAL: "Results",
   SESSION_COMPLETE: "Complete",
 };
+
+// Slice 004 real-device investigation: temporary on-screen diagnostics
+// (see syncDebugPanel in the HTML). SYNC_DEBUG_BUILD is bumped by hand
+// on every edit specifically so a stale cached copy of this file is
+// visually obvious rather than silently indistinguishable from the
+// current one.
+const SYNC_DEBUG_BUILD = "race-fix-1";
+let syncTickCount = 0;
+let syncLastTickAt = null;
+let syncLastResult = null;
+
+function renderSyncDebug() {
+  const el = document.getElementById("syncDebugPanel");
+  if (!el) return;
+  const s = sessionSync.getStatus();
+  const state = s.stopped
+    ? "stopped"
+    : !s.started
+    ? "not started"
+    : s.ticking
+    ? "ticking now"
+    : s.hasActiveTimer
+    ? "running"
+    : "paused";
+  el.textContent =
+    "[SYNC DEBUG " + SYNC_DEBUG_BUILD + "] role: participant\n" +
+    "status: " + state + "\n" +
+    "ticks: " + syncTickCount + "\n" +
+    "last tick: " + (syncLastTickAt || "never") + "\n" +
+    "last result: " + (syncLastResult || "none") + "\n" +
+    "session: " + (participantState.sessionId || "none");
+}
+// Purely cosmetic — re-paints the panel every second so "ticks"
+// visibly stalling is obvious without needing another tick to land.
+// Independent of the sync mechanism itself; cannot mask or affect it.
+setInterval(renderSyncDebug, 1000);
+
+// Slice 004 (Passive Session Synchronization). One shared polling
+// lifecycle (see sessionSync.js), driving the exact same
+// participantRefresh() that "Check for updates" already called
+// manually — this is not a second, independent synchronization
+// mechanism, just an automatic trigger for the one that already
+// existed. The callback returns participantRefresh()'s promise so
+// sessionSync's overlap guard can see when it actually finishes.
+const sessionSync = createSessionSync(function () {
+  syncTickCount++;
+  syncLastTickAt = new Date().toLocaleTimeString();
+  renderSyncDebug();
+  return participantRefresh().then(
+    function () {
+      syncLastResult = "ok";
+      renderSyncDebug();
+    },
+    function (e) {
+      syncLastResult = "exception: " + e;
+      renderSyncDebug();
+    }
+  );
+}, 2000);
 
 let participantState = { sessionId: null, participantId: null, participantToken: null, displayName: null };
 let hasSubmittedThisPageLoad = false;
@@ -346,6 +412,18 @@ const KNOWN_ERRORS = [
 function translateKnownError(raw) {
   const match = KNOWN_ERRORS.find((e) => e.test(raw));
   return match ? match.text : null;
+}
+
+// Slice 004. sessionSync itself has no concept of "session" or
+// "error" — it only knows start/stop/pause/resume. Deciding when an
+// error means "this will never resolve by polling again" stays here,
+// where the rest of this page's error semantics already live.
+function isTerminalSyncError(json) {
+  const raw = json && typeof json.error === "string" ? json.error : "";
+  return (
+    raw === "No active session found." ||
+    raw === "This token does not grant access to this session."
+  );
 }
 
 // Single point deciding what a failed request means for the user:
@@ -683,6 +761,8 @@ async function joinSession() {
     };
     saveParticipantState();
     showGamePanels();
+    sessionSync.start();
+    renderSyncDebug();
     await participantRefresh();
   } else {
     renderNotice(classifyError(r));
@@ -703,14 +783,39 @@ async function submitResponse() {
 }
 
 async function participantRefresh() {
-  const r = await getJson(`/api/sessions/${participantState.sessionId}`, participantState.participantToken);
+  // Slice 004 race fix: capture which session this request is *for*
+  // before awaiting — see hostRefresh()'s identical guard for the
+  // full explanation of the race this closes.
+  const requestedSessionId = participantState.sessionId;
+  const r = await getJson(`/api/sessions/${requestedSessionId}`, participantState.participantToken);
+  if (requestedSessionId !== participantState.sessionId) {
+    return;
+  }
   show("GET_SESSION as participant (" + r.status + ")", r.json);
-  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); }
-  else renderNotice(classifyError(r));
+  if (r.status === 200) {
+    renderNotice(null);
+    applySessionSnapshot(r.json);
+    // Slice 004: nothing further can change once the session has
+    // ended — stop the automatic loop rather than polling forever
+    // after the game is over.
+    if (r.json.state === "SESSION_COMPLETE") {
+      sessionSync.stop();
+    }
+  } else {
+    renderNotice(classifyError(r));
+    if (isTerminalSyncError(r.json)) {
+      sessionSync.stop();
+    }
+  }
 }
 
 restoreState();
-if (participantState.sessionId) participantRefresh();
+renderSyncDebug();
+if (participantState.sessionId) {
+  sessionSync.start();
+  renderSyncDebug();
+  participantRefresh();
+}
 </script>
 </body>
 </html>

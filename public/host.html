@@ -184,6 +184,12 @@
 
 <div id="status-banner" class="notice" style="display:none;" role="alert"></div>
 
+<!-- Slice 004 real-device investigation: temporary, always-visible
+     diagnostic panel — mobile console access is limited, so this
+     surfaces the same information on-screen instead. Safe to remove
+     once passive sync is confirmed stable on a real device. -->
+<div id="syncDebugPanel" style="font-family:'SF Mono',Menlo,monospace; font-size:11px; line-height:1.5; background:#111; color:#4ade80; padding:8px 10px; border-radius:6px; margin-bottom:14px; white-space:pre-wrap;">(sync debug loading…)</div>
+
 <div id="stepper" class="stepper"></div>
 <div id="interactionLabel" class="room-code-hint" style="display:none;"></div>
 
@@ -260,8 +266,9 @@
     <button class="btn-primary" id="btn-close" onclick="closeSubmissions()">Close Submissions</button>
     <button class="btn-primary" id="btn-reveal" onclick="revealResults()">Reveal Results</button>
     <br/>
-    <button class="btn-ghost" onclick="hostRefresh()">Check for updates</button>
+    <button class="btn-ghost" onclick="sessionSync.refreshNow()" title="Manual refresh — the game normally syncs automatically; use this if you suspect it's stalled.">Check for updates</button>
     <button class="btn-danger" id="btn-complete" onclick="completeSession()">End Session</button>
+    <button class="btn-primary" id="btn-new-session" onclick="createSession()" style="display:none;">Create New Session</button>
   </div>
 </div>
 
@@ -270,6 +277,7 @@
   <pre id="output">(nothing yet)</pre>
 </details>
 
+<script src="/sessionSync.js"></script>
 <script>
 // Developer-harness-only credential persistence, via sessionStorage:
 // survives a refresh of this tab, but never shared with any other tab
@@ -293,6 +301,65 @@ const STATE_LABELS = {
   RESULT_REVEAL: "Results",
   SESSION_COMPLETE: "Complete",
 };
+
+// Slice 004 real-device investigation: temporary on-screen diagnostics
+// (see syncDebugPanel in the HTML). SYNC_DEBUG_BUILD is bumped by hand
+// on every edit specifically so a stale cached copy of this file is
+// visually obvious rather than silently indistinguishable from the
+// current one.
+const SYNC_DEBUG_BUILD = "race-fix-1";
+let syncTickCount = 0;
+let syncLastTickAt = null;
+let syncLastResult = null;
+
+function renderSyncDebug() {
+  const el = document.getElementById("syncDebugPanel");
+  if (!el) return;
+  const s = sessionSync.getStatus();
+  const state = s.stopped
+    ? "stopped"
+    : !s.started
+    ? "not started"
+    : s.ticking
+    ? "ticking now"
+    : s.hasActiveTimer
+    ? "running"
+    : "paused";
+  el.textContent =
+    "[SYNC DEBUG " + SYNC_DEBUG_BUILD + "] role: host\n" +
+    "status: " + state + "\n" +
+    "ticks: " + syncTickCount + "\n" +
+    "last tick: " + (syncLastTickAt || "never") + "\n" +
+    "last result: " + (syncLastResult || "none") + "\n" +
+    "session: " + (hostState.sessionId || "none");
+}
+// Purely cosmetic — re-paints the panel every second so "ticks"
+// visibly stalling is obvious without needing another tick to land.
+// Independent of the sync mechanism itself; cannot mask or affect it.
+setInterval(renderSyncDebug, 1000);
+
+// Slice 004 (Passive Session Synchronization). One shared polling
+// lifecycle (see sessionSync.js), driving the exact same hostRefresh()
+// that "Check for updates" already called manually — this is not a
+// second, independent synchronization mechanism, just an automatic
+// trigger for the one that already existed. The callback returns
+// hostRefresh()'s promise so sessionSync's overlap guard can see when
+// it actually finishes, not just when it was called.
+const sessionSync = createSessionSync(function () {
+  syncTickCount++;
+  syncLastTickAt = new Date().toLocaleTimeString();
+  renderSyncDebug();
+  return hostRefresh().then(
+    function () {
+      syncLastResult = "ok";
+      renderSyncDebug();
+    },
+    function (e) {
+      syncLastResult = "exception: " + e;
+      renderSyncDebug();
+    }
+  );
+}, 2000);
 
 let hostState = { sessionId: null, roomCode: null, hostToken: null };
 // Slice 001 (Session / Interaction separation): the session's own
@@ -418,6 +485,18 @@ function translateKnownError(raw) {
   return match ? match.text : null;
 }
 
+// Slice 004. sessionSync itself has no concept of "session" or
+// "error" — it only knows start/stop/pause/resume. Deciding when an
+// error means "this will never resolve by polling again" stays here,
+// where the rest of this page's error semantics already live.
+function isTerminalSyncError(json) {
+  const raw = json && typeof json.error === "string" ? json.error : "";
+  return (
+    raw === "No active session found." ||
+    raw === "This token does not grant access to this session."
+  );
+}
+
 // Single point deciding what a failed request means for the user:
 // unreachable server, a known/translated validation rejection, or an
 // unrecognized response. Kept separate from renderNotice() so future
@@ -465,26 +544,42 @@ function showSessionPanels() {
 const MAX_OPTIONS = 6;
 let optionRowCount = 0;
 
+// Root cause of the "adding an option clears what I already typed"
+// defect: this used to be the only way any option row ever appeared —
+// renderOptionInputs() cleared the whole list and rebuilt every row
+// from scratch (list.innerHTML = "" then a fresh loop), including the
+// ones that already existed. Calling it just to add one more row threw
+// away every already-typed value and always re-checked option 1's
+// radio, regardless of what the host had actually selected. It is now
+// used only for a genuine full reset (resetQuestionForm, where there
+// is nothing to preserve); adding a row appends exactly one new
+// element and never touches the existing ones.
+function createOptionRow(index) {
+  const li = document.createElement("li");
+  li.className = "option-row";
+  li.innerHTML = `
+    <input type="radio" name="qf-correct" value="${index}" ${index === 0 ? "checked" : ""} title="Correct answer" />
+    <span class="option-index-badge">${index + 1}</span>
+    <input type="text" id="qf-option-${index}" placeholder="Option ${index + 1}" style="flex:1; border:none; font-family:inherit; font-size:14px;" />
+  `;
+  return li;
+}
+
 function renderOptionInputs() {
   const list = document.getElementById("qf-options");
   list.innerHTML = "";
   for (let i = 0; i < optionRowCount; i++) {
-    const li = document.createElement("li");
-    li.className = "option-row";
-    li.innerHTML = `
-      <input type="radio" name="qf-correct" value="${i}" ${i === 0 ? "checked" : ""} title="Correct answer" />
-      <span class="option-index-badge">${i + 1}</span>
-      <input type="text" id="qf-option-${i}" placeholder="Option ${i + 1}" style="flex:1; border:none; font-family:inherit; font-size:14px;" />
-    `;
-    list.appendChild(li);
+    list.appendChild(createOptionRow(i));
   }
   document.getElementById("qf-add-option").disabled = optionRowCount >= MAX_OPTIONS;
 }
 
 function addOptionInput() {
   if (optionRowCount >= MAX_OPTIONS) return;
+  const newIndex = optionRowCount;
   optionRowCount += 1;
-  renderOptionInputs();
+  document.getElementById("qf-options").appendChild(createOptionRow(newIndex));
+  document.getElementById("qf-add-option").disabled = optionRowCount >= MAX_OPTIONS;
 }
 
 function resetQuestionForm() {
@@ -685,6 +780,18 @@ function updateActionAvailability() {
     sessionLifecycleState === "LOBBY_LOCKED" && interactionLifecycleState === "SUBMISSIONS_CLOSED"
   );
   document.getElementById("btn-complete").disabled = sessionLifecycleState === "SESSION_COMPLETE" || !sessionLifecycleState;
+
+  // Slice 004 (client-lifecycle fix): the only way back to
+  // createSession() used to be the #pre-create button, which
+  // showSessionPanels() hides permanently the moment any session
+  // begins — there was never a path back to it without reloading the
+  // page. createSession() itself already resets every client-side
+  // cache this app carries (see its own comment) and re-arms
+  // sessionSync via start(); the only missing piece was a visible
+  // trigger. Shown only once the session has actually ended, so it
+  // can't be clicked mid-game by mistake.
+  document.getElementById("btn-new-session").style.display =
+    sessionLifecycleState === "SESSION_COMPLETE" ? "inline-block" : "none";
 }
 
 function renderParticipants(participants) {
@@ -916,6 +1023,8 @@ async function createSession() {
     renderDraftQuestions();
 
     showSessionPanels();
+    sessionSync.start();
+    renderSyncDebug();
     await hostRefresh();
   } else {
     renderNotice(classifyError({ status, json }));
@@ -1029,15 +1138,44 @@ async function completeSession() {
 }
 
 async function hostRefresh() {
-  const r = await getJson(`/api/sessions/${hostState.sessionId}`, hostState.hostToken);
+  // Slice 004 race fix: capture which session this request is *for*
+  // before awaiting. If hostState.sessionId has since changed (e.g. a
+  // new session was created while this request was still in flight —
+  // the exact race that caused sync to silently die on a real phone),
+  // this response no longer describes the current session. Ignore it
+  // entirely rather than risk applying stale data or, worse, stopping
+  // sync for a session that isn't even the current one anymore.
+  const requestedSessionId = hostState.sessionId;
+  const r = await getJson(`/api/sessions/${requestedSessionId}`, hostState.hostToken);
+  if (requestedSessionId !== hostState.sessionId) {
+    return;
+  }
   show("GET_SESSION as host (" + r.status + ")", r.json);
-  if (r.status === 200) { renderNotice(null); applySessionSnapshot(r.json); }
-  else renderNotice(classifyError(r));
+  if (r.status === 200) {
+    renderNotice(null);
+    applySessionSnapshot(r.json);
+    // Slice 004: nothing further can change once the session has
+    // ended — stop the automatic loop rather than polling forever
+    // after the game is over.
+    if (r.json.state === "SESSION_COMPLETE") {
+      sessionSync.stop();
+    }
+  } else {
+    renderNotice(classifyError(r));
+    if (isTerminalSyncError(r.json)) {
+      sessionSync.stop();
+    }
+  }
 }
 
 resetQuestionForm();
 restoreState();
-if (hostState.sessionId) hostRefresh();
+renderSyncDebug();
+if (hostState.sessionId) {
+  sessionSync.start();
+  renderSyncDebug();
+  hostRefresh();
+}
 </script>
 </body>
 </html>
