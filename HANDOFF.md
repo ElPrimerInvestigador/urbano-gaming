@@ -6,39 +6,81 @@ prior sessions so it doesn't need to be rediscovered.
 
 ## Repository state
 
-- Branch: `integrate/join-session`
-- Latest commit: `7ac0d11` — "feat: separate Session and Interaction
-  lifecycles, enabling sequential interactions" (Slice 001, following
-  `a2dc68a`).
-- Slice 001 (Session / Interaction separation) is implemented, tested,
-  live-verified, architecture-reviewed, and **constitutionally
-  accepted**. The events this document previously said were still
-  pending — the multi-human playtest, and any implementation slice
-  chosen from its findings — have both happened; see below.
-- No implementation slice is currently authorized. Do not begin one
-  without explicit user instruction — this document exists to
-  orient a fresh session accurately, not to greenlight new work.
-- The complete Slice 001 history (Feature Genesis, Slice Selection,
-  Slice Design, Implementation & Validation, Constitutional
-  Acceptance) is permanently preserved in the constitutional
-  repository at `Level 33/History/Slices/Slice_001/`. This file
-  stays a working summary for continuing the software session; that
-  location is the canonical historical record.
+- Branch: `integrate/join-session`, pushed to `origin/main` as a clean
+  fast-forward after every accepted slice — never a force-push.
+- Latest committed slice: `2675067` — "feat: add Authoring Workspace
+  for Multiple Choice content" (Slice 006).
+- **Currently uncommitted**: UI Convergence, Tier 1 (the Constitutional
+  Layer — Brandbook palette, typography, mark, mobile viewport,
+  debug-surface gating) is implemented and verified but held
+  uncommitted pending a repository synchronization pass and a final
+  constitutional consistency check. See `UI_CONVERGENCE_IMPLEMENTATION_RECORD.md`.
+- Slices 001 and 002 are **constitutionally accepted**, with full
+  history at `Level 33/History/Slices/Slice_001/` and `.../Slice_002/`.
+  Slices 003–006 are implemented, tested, and live-verified in
+  production, but have **not** been through that formal ceremony, and
+  **do not have** `History/Slices/` folders yet. This is a deliberate,
+  explicit deferral (governance artifact, not implementation artifact)
+  — do not reconstruct them without explicit user instruction.
+- Implementation record files use two naming conventions:
+  `SLICE_00N_IMPLEMENTATION_RECORD.md` (002–004) and descriptive names
+  (`SESSION_CONTINUITY_IMPLEMENTATION_RECORD.md`,
+  `AUTHORING_WORKSPACE_IMPLEMENTATION_RECORD.md` for 005–006, which
+  were never assigned slice numbers in conversation). This
+  inconsistency is known and **explicitly deferred** — it will be
+  addressed as part of a later architectural exercise reviewing the
+  Level 33 → URBANO Gaming repository transition, not fixed
+  incidentally. Do not rename these files without explicit instruction.
+- `SLICE_003_IMPLEMENTATION_RECORD.md` is a known, byte-for-byte
+  duplicate of Section 1 of `SLICE_003_REVIEW_PACKAGE.md` (both added
+  in the same commit, never diverged). Flagged, not yet resolved —
+  the standalone file is the one matching every other slice's naming
+  convention.
 
-## Implemented gameplay lifecycle
+## Implemented capabilities (Slices 001–006)
 
-A complete, playable Level 33 loop is implemented end to end, and a
-Session may now run any number of sequential interactions before
-completing (Slice 001):
+Full detail — problem solved, validating evidence, what future
+Interaction Engines inherit for free, and what architectural risk
+remains open for each — is in `PLATFORM_CAPABILITY_REVIEW.md`. Summary:
 
-`CREATE_SESSION → JOIN_SESSION → LOCK_LOBBY →`
-`[ START_SESSION (host-defined prompt, re-invocable) →`
-`SUBMIT_RESPONSE (with revision) → CLOSE_SUBMISSIONS → REVEAL_RESULTS ] × N →`
-`COMPLETE_SESSION`
+1. **Sequential Interaction lifecycle** (Slice 001) — a Session runs
+   any number of interactions in sequence; each owns its own
+   PROMPT_ACTIVE/SUBMISSIONS_CLOSED/RESULT_REVEAL state independent of
+   the Session's own LOBBY_OPEN/LOBBY_LOCKED/SESSION_COMPLETE state.
+2. **Cross-engine scoring** (Slice 002) — a session-scoped
+   `point_awards` ledger, written to automatically (Multiple Choice's
+   own reveal) or by host discretion (Open Response), producing one
+   standings list regardless of which engine(s) ran.
+3. **Multi-engine architecture** (Slice 003) — Multiple Choice trivia
+   as a second Interaction Engine (`engine_type` + an extension table,
+   `multiple_choice_details`), validating — for two structurally
+   *similar* engines — the generic-instance-plus-extension pattern and
+   the transactional reveal-and-score pattern.
+4. **Passive synchronization** (Slice 004) — `sessionSync.js`, a
+   shared, session-agnostic polling capability (`start/stop/pause/
+   resume/refreshNow`) consumed identically by host and participant.
+   "Check for updates" is now a manual recovery tool, not part of
+   normal play.
+5. **Session Continuity** (Slice 005) — `sessions.predecessor_session_id`
+   lets a host create a linked successor session (a rematch);
+   still-connected participants discover it through the same passive
+   poll and must explicitly confirm joining — never a silent transfer.
+   Independently, `participant.html` supports leaving any session and
+   joining an unrelated one.
+6. **Authoring Workspace** (Slice 006) — Create/Import/Review content
+   authoring for Multiple Choice, with `ITEM_EDITORS[engineType]` as
+   the one seam a future engine would extend; the workspace itself
+   never references a Multiple-Choice-specific field.
 
-`START_SESSION` may be called again once the current interaction
-reaches `RESULT_REVEAL` — this is what makes multiple sequential
-interactions possible per Session.
+Current gameplay lifecycle end to end:
+
+```
+CREATE_SESSION → JOIN_SESSION → LOCK_LOBBY →
+[ START_SESSION (Multiple Choice from a prepared queue, or an
+  ad-hoc Open Response prompt) → SUBMIT_RESPONSE (with revision) →
+  CLOSE_SUBMISSIONS → REVEAL_RESULTS (auto-scores Multiple Choice) ] × N →
+COMPLETE_SESSION [ → CREATE_SUCCESSOR_SESSION (rematch) ]
+```
 
 Architecture per command: transport-agnostic domain function
 (`lib/session/*.ts`) → `SessionRepository` interface → two
@@ -46,156 +88,139 @@ implementations (`InMemorySessionRepository` test double,
 `SupabaseSessionRepository` production) → thin Next.js API route
 (`app/api/sessions/...`). Atomicity is enforced in Postgres via
 `SELECT ... FOR UPDATE` row-locking RPC functions
-(`supabase/migrations/`), with domain-typed errors translated from
-named Postgres exceptions (`errcode = 'P0001'`). Slice 001 added a new
-`interaction_instances` table (migrations `0015`-`0020`) that owns the
-PROMPT_ACTIVE/SUBMISSIONS_CLOSED/RESULT_REVEAL lifecycle independently
-of the Session's own (now narrower) LOBBY_OPEN/LOBBY_LOCKED/
-SESSION_COMPLETE lifecycle — see ADR-006 (Accepted and Validated) and
-`Architecture/Session_Architecture.md` / `State_Architecture.md`'s
-"Current MVP Mapping" / "Current MVP State Model" sections.
+(`supabase/migrations/`, currently through `0029`), with domain-typed
+errors translated from named Postgres exceptions.
 
-Current MVP product rules (explicitly temporary, not permanent
-gameplay rules — see prior Decision Reviews):
-- Free-text-only submissions.
-- One submission per participant per interaction instance; a second
-  submission **overwrites** the first ("last write wins"), enforced
-  via `ON CONFLICT` upsert in Postgres.
-- Participant-only auth for `SUBMIT_RESPONSE` (bearer
-  `participantToken`); no host fallback.
-- Host-only, explicit `CLOSE_SUBMISSIONS` / `REVEAL_RESULTS` — no
-  timers, no automatic transitions.
-- Results show all responses attributed by display name — no
-  anonymity, no voting, no scoring, no AI, no `SOCIAL_PAUSE`. Multiple
-  *sequential* rounds are now supported (Slice 001); a generalized
-  multi-engine/Game-level model is still not.
+## Current product rules (still explicit MVP decisions, not permanent)
+
+- "Last write wins" on a resubmitted response — revisit only with
+  product evidence.
+- No persistent participant or host identity across sessions, by
+  design — see "Deferred architectural questions" below. This is the
+  single constraint most likely to matter for any future capability
+  involving content reuse or returning players.
+- A completed session may have at most one direct successor
+  (write-once, enforced by a database constraint) — a chain, not a
+  tree. Deliberate, matches the accepted Session Continuity design.
+- `points_for_correct` remains a raw per-award number, not a real
+  "scoring rule" concept — explicitly named across two slice records
+  as a stand-in for an Experience Template that does not yet exist as
+  software. See `PLATFORM_CAPABILITY_REVIEW.md`'s Experience
+  Composition candidate.
 
 ## Validation status
 
-- **In-memory behavioral suite**: 121 tests passing across 9 files
-  (`npm test`), covering every command's exhaustive edge cases and
-  error paths against `InMemorySessionRepository`, including dedicated
-  sequential-interaction scenarios added for Slice 001.
-- **Live Supabase contract suite** (`npm run test:contract`):
-  separately scoped — proves each atomic Postgres RPC function
-  actually executes correctly against a real database (not a
-  re-coverage of in-memory edge cases), including a full two-interaction
-  lifecycle. Found and fixed real live-only SQL bugs across two
-  slices: ambiguous-column-reference bugs in `RETURNS TABLE` functions
-  (migrations 0013/0014), and — during Slice 001 — a `RETURNS TABLE`
-  shape change that `CREATE OR REPLACE` cannot apply in place,
-  requiring `DROP FUNCTION` + `CREATE FUNCTION` instead (migrations
-  0017-0019, mirroring the fix already used in 0020). Neither bug
-  class was ever visible to in-memory tests, since SQL identifier
-  resolution and function-replacement rules don't exist in a plain JS
-  test double.
-- **Type-check** (`npx tsc --noEmit`): clean.
-- **Production build** (`npm run build`): clean. Known hazard —
-  never run a production build while `npm run dev` is running
-  against the same `.next/` directory; it corrupts the dev server's
-  module cache. Always stop the dev server first.
-- **Harness-split Operational Simulation (pre-Slice-001)**: fully
-  completed against the live backend across two separate sessions
-  (interrupted once by an external Supabase Cloudflare 522 outage,
-  later resumed cleanly from a preserved checkpoint — see "Validation
-  status categories" in memory). Confirmed: full lifecycle
-  correctness, host Results rendering, participant reveal view with
-  "(you)" own-response highlight, `completeSession()` transition, and
-  the `lastKnownSubmissions` client-side cache correctly keeping the
-  Results card visible after the backend's `submissions` field
-  reverts to `null` at `SESSION_COMPLETE`.
-- **Multi-human playtest of the role-separated interfaces**: has since
-  happened. It found a systemic silent-error defect (no visible
-  feedback on failed requests), remediated in commit `9e89f7e` before
-  Slice 001 began.
-- **Two-interaction Operational Simulation (Slice 001)**: run live
-  through the actual `host.html`/`participant.html` harness (one host
-  tab, two participant tabs) — full two-round lifecycle, including
-  re-invoking `START_SESSION` after a reveal. This caught a real bug:
-  a participant tab that missed an interaction's own reveal (only
-  refreshing after the *next* interaction started, or after
-  `COMPLETE_SESSION`) could show a *prior* interaction's cached
-  results under the *current* interaction's prompt. Fixed by
-  invalidating `lastKnownSubmissions` whenever `interactionNumber`
-  advances, in both harness files; the fix was reproduced and
-  re-verified live before the slice was accepted.
+- **In-memory behavioral suite**: 192 tests across 12 files under
+  plain `vitest run`; `npm test` currently runs only 181 of these,
+  because `package.json`'s `test` script is an explicit file list that
+  was never updated to include `createSuccessorSession.test.ts`. Known,
+  unresolved, low-priority — flagged again here so it isn't lost.
+- **Live Supabase contract suite** (`npm run test:contract`): proves
+  every atomic Postgres RPC function against a real database.
+- `npx tsc --noEmit` and `npm run build`: clean as of the latest
+  commit and as of the uncommitted Tier 1 work.
+- **Production playtests**: a real multi-game playtest with real
+  participants validated Slices through 005 end to end (passive sync,
+  Multiple Choice trivia, automatic and manual scoring, rematches,
+  independent rejoining, multiple consecutive games). Slice 006 was
+  separately verified in production via direct API/browser
+  verification plus a dedicated first-time-host UX walkthrough that
+  found and fixed two real defects before commit (a silently
+  pre-selected "correct" answer default, and a save-confirmation
+  message being wiped by the next automatic sync tick).
 
-## Current harness architecture
+## Current UI architecture
 
-- `public/host.html` — host interface. Drives state transitions
-  only (create, lock, start with a prompt-text input, close, reveal,
-  complete); never submits. Shows room code prominently, a 6-step
-  lifecycle stepper (now computed from the Session's and the current
-  interaction's state combined — see `computeStepIndex()`), an
-  "Interaction #N" label, participant list, current prompt, results
-  (once revealed), and state-gated action buttons. `Start Interaction`
-  is re-invocable: enabled again once the current interaction reaches
-  `RESULT_REVEAL`.
-- `public/participant.html` — participant interface. Joins, waits,
-  submits/revises, views reveal; never controls session state. Shows
-  the same combined stepper, friendly per-state waiting messages, the
-  current interaction's prompt, a submission progress bar, and a
-  reveal list with the participant's own response visually
-  distinguished. Resets its "already submitted" note and draft
-  response text whenever a new interaction begins (detected via
-  `interactionNumber` changing).
-- Both use `sessionStorage` (not `localStorage`) to persist
-  host/participant credentials across a tab refresh — deliberately
-  per-tab, not shared, so multiple tabs can stand in for multiple
-  independent humans. This is a **developer-harness-only** mechanism;
-  it does not solve real participant-identity recovery and both files
-  display bearer tokens on screen in plaintext — acceptable only in
-  this isolated, unbundled, dev-only context.
-- Shared-code decision: evaluated introducing `harness-common.js`,
-  rejected it — the divergent per-role rendering logic didn't
-  justify the abstraction. Accepted small, independent duplication
-  between the two files instead.
-- The original single-page combined harness is preserved (not
-  deleted) at `archive/play.v1.html` — it proved the first complete
-  gameplay loop and the human playtest that found the migrations
-  0013/0014 bugs, and is kept for historical reference. It is no
-  longer served from `public/` and is not maintained.
+`public/host.html` and `public/participant.html` are no longer a
+generic-styled engineering harness — as of the uncommitted UI
+Convergence Tier 1 work, both implement the URBANO Brandbook's actual
+visual identity: charcoal (`#0A0A0A`) / gold (`#D4AF37`) / ivory
+(`#F5F1E8`), Montserrat, and the real "U" mark (`public/urbano-mark.svg`).
+Primary buttons are deliberately ivory-filled, not gold-filled — gold
+stays a rare accent (room code, standings, winner banner), matching
+the Brandbook's own restraint discipline rather than a mechanical
+color substitution. Full reasoning and the roadmap this came from are
+in `UI_CONVERGENCE_REVIEW.md`; exactly what was implemented and
+verified is in `UI_CONVERGENCE_IMPLEMENTATION_RECORD.md`.
 
-## Deferred architectural questions (explicitly out of current MVP scope)
+**Two layers, deliberately kept separate — operationally, not just
+conceptually:**
 
-- **Three-layer identity distinction** (preserve as an architectural
-  observation, not a task): (1) backend session identity
-  (`participantToken`/`hostToken`), (2) client continuity
-  (`sessionStorage`, dev-harness-only), (3) eventual real human
-  identity (accounts, cross-device recovery). These must stay
-  conceptually separate. Per the user's most recent explicit
-  instruction: **do not** treat product-level identity recovery or a
-  broader authentication system as the next implementation slice —
-  there is not yet sufficient product evidence to justify permanent
-  accounts or cross-device recovery.
-- **"Last write wins" submission-revision policy** is an explicit MVP
-  implementation decision, not a permanent gameplay rule — revisit
-  only with product evidence.
-- **Invalid/expired room-code handling** on `participant.html` is a
-  real, still-unimplemented gap (no dedicated error state beyond the
-  generic error banner). The multi-human playtest this was folded
-  into (see `PLAYTEST_PROTOCOL.md` — now historical; the playtest ran
-  and fed into the constitutional process that selected Slice 001,
-  not this gap) has already happened; this specific gap was not the
-  finding that was acted on. It remains open and unactioned — not
-  currently scheduled, not currently forbidden.
-- **Generalized Interaction Engine framework, Voting/Multiple Choice,
-  Experience Templates, Shared Game State, Party Mode, Authentication,
-  AI, Realtime sync, parallel interactions, interaction history/replay
-  UI** — all explicitly out of scope for Slice 001; still open.
+- **Constitutional Layer** (Tier 1, implemented): direct application
+  of already-ratified Brandbook rules. Not provisional.
+- **Experience Layer** (Tier 2, **not started**): a purple accent for
+  gameplay moments, reveal/celebration animation, dimming, glow, and
+  eventually sound/haptics. Explicitly treated as a set of individual,
+  falsifiable hypotheses (hypothesis / expected emotional outcome /
+  implementation / validation criteria / playtest observations / final
+  decision each), not brand decisions — the purple accent specifically
+  is confirmed as an *experiment*, not a Brandbook amendment, per
+  explicit user instruction. **Does not begin until Tier 1 is
+  validated by a real playtest** — protecting the evidence by
+  protecting the sequence was an explicit, deliberate choice, not an
+  arbitrary gate.
 
-## Current phase — post-Slice-001 synchronization
+Developer-only diagnostics (the passive-sync debug panel, the raw
+last-response viewer, and — host-only — the raw `sessionId`/
+`hostToken` display) are hidden by default in both files; append
+`?debug=1` to see them. The underlying mechanisms are fully intact —
+only default visibility changed.
 
-Slice 001 is implemented, verified, and constitutionally accepted (see
-"Repository state" above). The repository has just been brought back
-into sync: implementation-facing documentation across the
-constitutional repo (`Architecture/`, `Implementation/`) and this
-software repo (this file, `README.md`, `PROJECT_STATUS.md`) has been
-updated to reflect it, following the same process used for prior
-slices (`33a9afe`).
+`sessionStorage` (not `localStorage`) still holds host/participant
+credentials per-tab; this remains a development-appropriate mechanism,
+not a real cross-device identity story — see below.
 
-No next implementation slice has been selected or authorized. Do not
-propose or begin one without an explicit user instruction to do so —
-if asked what's next, the established process is the same stress-test-
-ranked Next Slice Selection used to choose Slice 001, not a unilateral
-pick.
+## Deferred architectural questions (explicitly out of current scope)
+
+- **No persistent identity across sessions.** Reaffirmed at every
+  slice since 001. There is still no operational evidence (no host has
+  asked to be remembered, no participant has asked for cross-session
+  continuity) justifying accounts or cross-device recovery. **Do not**
+  treat this as the next capability without new evidence — this
+  guidance has held for six slices and should keep holding until
+  something concrete changes it.
+- **`History/Slices/` reconstruction for Slices 003–006.** Explicitly
+  deferred — a governance/constitutional-acceptance exercise, not an
+  implementation-synchronization one. Do not begin it without explicit
+  instruction.
+- **Implementation record naming inconsistency** (numbered vs.
+  descriptive filenames) and the **`SLICE_003_IMPLEMENTATION_RECORD.md`
+  duplicate**. Both flagged, neither resolved — deferred to a future
+  architectural exercise explicitly covering the Level 33 → URBANO
+  Gaming repository transition. Do not rename or delete anything here
+  without explicit instruction.
+- **UI Convergence Tier 2** (the Experience Layer). Not started. Does
+  not begin until Tier 1 is validated by a real playtest.
+- **Experience Composition** — a real, named "Experience" concept
+  composing multiple Interaction Engines with a shared scoring/
+  sequencing model, recommended in `PLATFORM_CAPABILITY_REVIEW.md` as
+  the highest-leverage next major capability, to be built alongside one
+  genuinely different third Interaction Engine rather than another
+  engine shaped like the existing two. **This is a recommendation, not
+  an authorization.** The user explicitly paused to do UI Convergence
+  first; do not begin Experience Composition work without an explicit
+  instruction to do so.
+- **Reusable Content Library** (content that outlives a single
+  session) — named by the user as "part of the product roadmap," not
+  yet designed or scheduled.
+- **Operational/observability tooling** and **persistent identity** —
+  both named as real but currently unevidenced in
+  `PLATFORM_CAPABILITY_REVIEW.md`; watch for triggering evidence rather
+  than building preemptively.
+
+## Current phase
+
+Repository synchronization is in progress: this file, `README.md`,
+and `PROJECT_STATUS.md` have just been brought up to date through
+Slice 006 and UI Convergence Tier 1, and `UI_CONVERGENCE_REVIEW.md` /
+`PLATFORM_CAPABILITY_REVIEW.md` are being written into the repository
+as architectural documents rather than remaining chat-only. After this
+synchronization completes, a final constitutional consistency review
+of the Tier 1 implementation against the Brandbook happens, then Tier
+1 is committed, pushed, and deployed.
+
+No next implementation slice is authorized. If asked what's next, the
+established process is the same stress-test-ranked Next Slice
+Selection used for every prior slice — informed by, but not
+automatically deciding in favor of, `PLATFORM_CAPABILITY_REVIEW.md`'s
+recommendation.

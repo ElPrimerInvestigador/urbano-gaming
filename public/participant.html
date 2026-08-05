@@ -2,31 +2,41 @@
 <html>
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>URBANO Gaming — Level 33</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
+  /* UI Convergence — Constitutional Layer (Tier 1). See host.html's
+     :root comment — same reasoning applies here verbatim. */
   :root {
-    --ink: #16162b;
-    --muted: #6b7280;
-    --line: #e5e7eb;
-    --accent: #4f46e5;
-    --accent-dark: #3730a3;
-    --accent-ink: #ffffff;
-    --gold: #d97706;
-    --gold-bg: #fffbeb;
-    --done: #16a34a;
-    --done-bg: #f0fdf4;
-    --wrong: #dc2626;
-    --wrong-bg: #fef2f2;
-    --upcoming: #d1d5db;
-    --bg-card: #ffffff;
-    --bg-page: #f5f5fb;
-    --own: #eef2ff;
-    --danger: #b91c1c;
-    --danger-bg: #fef2f2;
+    --charcoal: #0a0a0a;
+    --bg-page: #0a0a0a;
+    --bg-card: #161616;
+    --surface-2: #1c1c1c;
+    --ink: #f5f1e8;
+    --muted: #9b9689;
+    --line: #2a2a2a;
+    --gold: #d4af37;
+    --gold-bg: rgba(212, 175, 55, 0.12);
+    --accent: #d4af37;
+    --accent-dark: #b8952c;
+    --accent-ink: #0a0a0a;
+    --primary-fill: #f5f1e8;
+    --primary-ink: #0a0a0a;
+    --done: #34d399;
+    --done-bg: rgba(52, 211, 153, 0.14);
+    --wrong: #f87171;
+    --wrong-bg: rgba(248, 113, 113, 0.14);
+    --upcoming: #333333;
+    --own: rgba(212, 175, 55, 0.12);
+    --danger: #f87171;
+    --danger-bg: rgba(248, 113, 113, 0.14);
   }
   * { box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg-page);
     color: var(--ink);
     max-width: 560px;
@@ -36,10 +46,12 @@
   .brand {
     display: inline-flex; align-items: center; gap: 8px; margin-bottom: 10px;
   }
+  .brand-mark { width: 22px; height: 24px; display: block; }
+  .brand-word { font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; }
   .brand-badge {
-    background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-    color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
-    text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
+    background: var(--gold-bg); border: 1px solid var(--gold);
+    color: var(--gold); font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
   }
   h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
   .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 20px; font-size: 14px; }
@@ -56,14 +68,14 @@
     background: var(--upcoming); position: relative; z-index: 1; margin-bottom: 6px;
   }
   .step-done .step-dot { background: var(--done); }
-  .step-active .step-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(79,70,229,0.2); }
+  .step-active .step-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(212,175,55,0.2); }
   .step-label { display: block; font-size: 11px; color: var(--muted); }
   .step-active .step-label { color: var(--accent); font-weight: 600; }
   .step-done .step-label { color: var(--done); }
 
   .card {
     background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px;
-    padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(16,16,40,0.03);
+    padding: 16px 18px; margin-bottom: 14px;
   }
   .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 10px; }
 
@@ -71,7 +83,7 @@
   .option-btn {
     display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
     font-family: inherit; font-size: 16px; padding: 14px 16px; border-radius: 10px;
-    border: 2px solid var(--line); background: #fff; cursor: pointer;
+    border: 2px solid var(--line); background: var(--surface-2); cursor: pointer;
   }
   .option-btn:active { transform: scale(0.99); }
   .option-btn.selected { border-color: var(--accent); background: var(--own); font-weight: 600; }
@@ -85,9 +97,9 @@
     display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
     border-radius: 50%; background: var(--upcoming); font-size: 13px; font-weight: 700; flex-shrink: 0;
   }
-  .option-btn.selected .option-index-badge { background: var(--accent); color: #fff; }
+  .option-btn.selected .option-index-badge { background: var(--accent); color: var(--charcoal); }
   .option-btn.is-correct .option-index-badge {
-    background: var(--done); color: #fff; -webkit-text-fill-color: #fff;
+    background: var(--done); color: var(--charcoal); -webkit-text-fill-color: var(--charcoal);
   }
   .correctness-banner {
     text-align: center; font-weight: 700; padding: 12px; border-radius: 10px; margin-bottom: 12px; font-size: 16px;
@@ -95,15 +107,20 @@
   .correctness-banner.correct { background: var(--done-bg); color: var(--done); border: 1px solid var(--done); }
   .correctness-banner.wrong { background: var(--wrong-bg); color: var(--wrong); border: 1px solid var(--wrong); }
 
+  /* Native form controls don't inherit body colors — without this every
+     text input/textarea renders with the browser's default white
+     background regardless of the theme above it. */
   input, textarea {
     font-family: inherit; font-size: 15px; width: 100%; padding: 10px 12px;
     border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px;
+    background: var(--surface-2); color: var(--ink);
   }
+  input::placeholder, textarea::placeholder { color: var(--muted); }
   textarea { resize: vertical; min-height: 90px; }
   label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 4px; }
 
   .prompt-text {
-    font-size: 20px; line-height: 1.5; padding: 16px; background: #fafaff;
+    font-size: 20px; line-height: 1.5; padding: 16px; background: var(--surface-2);
     border-left: 4px solid var(--accent); border-radius: 4px; text-align: center;
   }
 
@@ -143,12 +160,12 @@
     border: none; cursor: pointer; margin: 4px 6px 4px 0;
   }
   button:disabled { cursor: not-allowed; opacity: 0.4; }
-  .btn-primary { background: var(--accent); color: var(--accent-ink); width: 100%; }
+  .btn-primary { background: var(--primary-fill); color: var(--primary-ink); width: 100%; }
   .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 
   details { margin-top: 20px; }
   summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 12px; }
+  pre { background: var(--surface-2); color: var(--ink); padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 12px; }
 
   .submitted-note { font-size: 13px; color: var(--done); margin-bottom: 8px; }
 
@@ -161,7 +178,11 @@
 </head>
 <body>
 
-<div class="brand"><span class="brand-badge">URBANO Gaming</span></div>
+<div class="brand">
+  <img class="brand-mark" src="/urbano-mark.svg" alt="" />
+  <span class="brand-word">URBANO</span>
+  <span class="brand-badge">Gaming</span>
+</div>
 <h1>Level 33</h1>
 <p class="subtitle">Plays the game; does not control the session.</p>
 
@@ -171,7 +192,7 @@
      diagnostic panel — mobile console access is limited, so this
      surfaces the same information on-screen instead. Safe to remove
      once passive sync is confirmed stable on a real device. -->
-<div id="syncDebugPanel" style="font-family:'SF Mono',Menlo,monospace; font-size:11px; line-height:1.5; background:#111; color:#4ade80; padding:8px 10px; border-radius:6px; margin-bottom:14px; white-space:pre-wrap;">(sync debug loading…)</div>
+<div id="syncDebugPanel" style="display:none; font-family:'SF Mono',Menlo,monospace; font-size:11px; line-height:1.5; background:#111; color:#4ade80; padding:8px 10px; border-radius:6px; margin-bottom:14px; white-space:pre-wrap;">(sync debug loading…)</div>
 
 <div id="join-panel" class="card">
   <h2>Join a session</h2>
@@ -249,7 +270,7 @@
   <button class="btn-ghost" onclick="sessionSync.refreshNow()" title="Manual refresh — the game normally syncs automatically; use this if you suspect it's stalled.">Check for updates</button>
 </div>
 
-<details>
+<details id="debugOutputDetails" style="display:none;">
   <summary>Debug: last raw response</summary>
   <pre id="output">(nothing yet)</pre>
 </details>
@@ -940,6 +961,12 @@ async function participantRefresh() {
       sessionSync.stop();
     }
   }
+}
+
+// UI Convergence, Tier 1 — see host.html's identical comment.
+if (new URLSearchParams(location.search).has("debug")) {
+  document.getElementById("syncDebugPanel").style.display = "block";
+  document.getElementById("debugOutputDetails").style.display = "block";
 }
 
 restoreState();

@@ -2,30 +2,58 @@
 <html>
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>URBANO Gaming — Level 33 Host</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
+  /*
+   * UI Convergence — Constitutional Layer (Tier 1).
+   * Colors and typography here implement the URBANO Brandbook v2.0
+   * directly (charcoal/gold/ivory, Montserrat) — not provisional, not
+   * gated on a playtest. --done/--wrong/--danger are a deliberate
+   * exception: functional status colors (correct/incorrect/destructive
+   * feedback) sit outside the Brandbook's "three colors, nothing more"
+   * identity system by design, the same way any strict brand system
+   * still needs a separate, accessible semantic palette for state.
+   * Anything belonging to the separate, evidence-gated Experience Layer
+   * (purple accent, reveal/celebration motion) is explicitly out of
+   * scope for this tier — see UI_CONVERGENCE_IMPLEMENTATION_RECORD.md.
+   */
   :root {
-    --ink: #16162b;
-    --muted: #6b7280;
-    --line: #e5e7eb;
-    --accent: #4f46e5;
-    --accent-dark: #3730a3;
-    --accent-ink: #ffffff;
-    --gold: #d97706;
-    --gold-bg: #fffbeb;
-    --done: #16a34a;
-    --done-bg: #f0fdf4;
-    --wrong: #dc2626;
-    --wrong-bg: #fef2f2;
-    --upcoming: #d1d5db;
-    --danger: #b91c1c;
-    --danger-bg: #fef2f2;
-    --bg-card: #ffffff;
-    --bg-page: #f5f5fb;
+    --charcoal: #0a0a0a;
+    --bg-page: #0a0a0a;
+    --bg-card: #161616;
+    --surface-2: #1c1c1c;
+    --ink: #f5f1e8;
+    --muted: #9b9689;
+    --line: #2a2a2a;
+    --gold: #d4af37;
+    --gold-bg: rgba(212, 175, 55, 0.12);
+    --accent: #d4af37;
+    --accent-dark: #b8952c;
+    --accent-ink: #0a0a0a;
+    --primary-fill: #f5f1e8;
+    --primary-ink: #0a0a0a;
+    --done: #34d399;
+    --done-bg: rgba(52, 211, 153, 0.14);
+    --wrong: #f87171;
+    --wrong-bg: rgba(248, 113, 113, 0.14);
+    --upcoming: #333333;
+    --danger: #f87171;
+    --danger-bg: rgba(248, 113, 113, 0.14);
   }
   * { box-sizing: border-box; }
+  /* Native form controls don't inherit body colors — without this every
+     text input/textarea renders with the browser's default white
+     background regardless of the theme above it. */
+  input, textarea, select {
+    background: var(--surface-2); color: var(--ink);
+  }
+  input::placeholder, textarea::placeholder { color: var(--muted); }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: var(--bg-page);
     color: var(--ink);
     max-width: 720px;
@@ -35,10 +63,14 @@
   .brand {
     display: inline-flex; align-items: center; gap: 8px; margin-bottom: 10px;
   }
+  .brand-mark { width: 22px; height: 24px; display: block; }
+  .brand-word { font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; }
   .brand-badge {
-    background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-    color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
-    text-transform: uppercase; padding: 4px 10px; border-radius: 999px;
+    /* Small accent tag, not the URBANO wordmark itself — "la letra
+       nunca es dorada" governs the logo, not this. */
+    background: var(--gold-bg); border: 1px solid var(--gold);
+    color: var(--gold); font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
   }
   h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
   .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 20px; font-size: 14px; }
@@ -55,14 +87,14 @@
     background: var(--upcoming); position: relative; z-index: 1; margin-bottom: 6px;
   }
   .step-done .step-dot { background: var(--done); }
-  .step-active .step-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(79,70,229,0.2); }
+  .step-active .step-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(212,175,55,0.2); }
   .step-label { display: block; font-size: 11px; color: var(--muted); }
   .step-active .step-label { color: var(--accent); font-weight: 600; }
   .step-done .step-label { color: var(--done); }
 
   .card {
     background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px;
-    padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(16,16,40,0.03);
+    padding: 16px 18px; margin-bottom: 14px;
   }
   .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 10px; }
 
@@ -77,7 +109,7 @@
     display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px;
     border-radius: 50%; background: var(--upcoming); font-size: 12px; font-weight: 700; flex-shrink: 0;
   }
-  .option-row.is-correct .option-index-badge { background: var(--done); color: #fff; }
+  .option-row.is-correct .option-index-badge { background: var(--done); color: var(--charcoal); }
   .correct-tag { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--done); }
 
   .question-form-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
@@ -88,7 +120,7 @@
   .points-input { width: 72px !important; flex: 0 0 auto !important; }
   .draft-item-row {
     display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 6px;
-    border: 1px solid var(--line); border-radius: 8px; font-size: 13px; background: #fafaff;
+    border: 1px solid var(--line); border-radius: 8px; font-size: 13px; background: var(--surface-2);
   }
   .draft-question-text { flex: 1; }
   .draft-item-row.invalid { border-color: var(--wrong); background: var(--wrong-bg); }
@@ -109,17 +141,17 @@
   .prepared-question-row.consumed { opacity: 0.5; }
   .ordinal-badge {
     display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px;
-    border-radius: 6px; background: #eef2ff; color: var(--accent); font-weight: 700; font-size: 12px; flex-shrink: 0;
+    border-radius: 6px; background: var(--gold-bg); color: var(--accent); font-weight: 700; font-size: 12px; flex-shrink: 0;
   }
   .engine-tag {
     font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700;
-    padding: 2px 8px; border-radius: 999px; background: #eef2ff; color: var(--accent); margin-left: 8px;
+    padding: 2px 8px; border-radius: 999px; background: var(--gold-bg); color: var(--accent); margin-left: 8px;
   }
 
   .room-code {
     font-family: "SF Mono", Menlo, monospace; font-size: 40px; font-weight: 700;
     letter-spacing: 0.15em; text-align: center; padding: 14px; border: 2px dashed var(--accent);
-    border-radius: 10px; color: var(--accent); background: #f5f4ff;
+    border-radius: 10px; color: var(--accent); background: var(--surface-2);
   }
   .room-code-hint { text-align: center; color: var(--muted); font-size: 13px; margin-top: 8px; }
 
@@ -131,7 +163,7 @@
   .participant-list li { padding: 4px 0; font-size: 14px; }
 
   .prompt-text {
-    font-size: 18px; line-height: 1.5; padding: 14px; background: #fafaff;
+    font-size: 18px; line-height: 1.5; padding: 14px; background: var(--surface-2);
     border-left: 4px solid var(--accent); border-radius: 4px;
   }
 
@@ -169,14 +201,19 @@
     border: none; cursor: pointer; margin: 4px 6px 4px 0;
   }
   button:disabled { cursor: not-allowed; opacity: 0.4; }
-  .btn-primary { background: var(--accent); color: var(--accent-ink); }
-  .btn-secondary { background: #eef2ff; color: var(--accent); }
+  /* Primary buttons are ivory-filled, not gold-filled — gold stays a
+     rare accent (room code, standings, winner banner), not the fill
+     color of every action button on every screen. That restraint is
+     the actual discipline the Brandbook asks for ("si el dorado se
+     siente presente, es demasiado"), not just a color swap. */
+  .btn-primary { background: var(--primary-fill); color: var(--primary-ink); }
+  .btn-secondary { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
   .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
   .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
 
   details { margin-top: 20px; }
   summary { cursor: pointer; color: var(--muted); font-size: 13px; }
-  pre { background: #f0f0f0; padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 12px; }
+  pre { background: var(--surface-2); color: var(--ink); padding: 10px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; font-size: 12px; }
 
   .waiting { text-align: center; color: var(--muted); padding: 20px 0; }
 
@@ -185,12 +222,16 @@
     font-size: 14px; border: 1px solid var(--danger);
     background: var(--danger-bg); color: var(--danger);
   }
-  .notice-info { border-color: var(--accent); background: #eef2ff; color: var(--accent); }
+  .notice-info { border-color: var(--accent); background: var(--gold-bg); color: var(--accent); }
 </style>
 </head>
 <body>
 
-<div class="brand"><span class="brand-badge">URBANO Gaming</span></div>
+<div class="brand">
+  <img class="brand-mark" src="/urbano-mark.svg" alt="" />
+  <span class="brand-word">URBANO</span>
+  <span class="brand-badge">Gaming</span>
+</div>
 <h1>Level 33 — Host</h1>
 <p class="subtitle">Drives the session forward; does not participate.</p>
 
@@ -200,7 +241,7 @@
      diagnostic panel — mobile console access is limited, so this
      surfaces the same information on-screen instead. Safe to remove
      once passive sync is confirmed stable on a real device. -->
-<div id="syncDebugPanel" style="font-family:'SF Mono',Menlo,monospace; font-size:11px; line-height:1.5; background:#111; color:#4ade80; padding:8px 10px; border-radius:6px; margin-bottom:14px; white-space:pre-wrap;">(sync debug loading…)</div>
+<div id="syncDebugPanel" style="display:none; font-family:'SF Mono',Menlo,monospace; font-size:11px; line-height:1.5; background:#111; color:#4ade80; padding:8px 10px; border-radius:6px; margin-bottom:14px; white-space:pre-wrap;">(sync debug loading…)</div>
 
 <div id="stepper" class="stepper"></div>
 <div id="interactionLabel" class="room-code-hint" style="display:none;"></div>
@@ -217,7 +258,7 @@
     <div class="room-code-hint">Share this with participants at <strong>/participant.html</strong></div>
   </div>
 
-  <div class="card">
+  <div class="card" id="devInfoCard" style="display:none;">
     <h2>Session (dev info)</h2>
     <div class="kv"><span class="k">sessionId</span><span class="v" id="sessionIdDisplay">—</span></div>
     <div class="kv"><span class="k">hostToken</span><span class="v" id="hostTokenDisplay">—</span></div>
@@ -304,7 +345,7 @@
   </div>
 </div>
 
-<details>
+<details id="debugOutputDetails" style="display:none;">
   <summary>Debug: last raw response</summary>
   <pre id="output">(nothing yet)</pre>
 </details>
@@ -1631,6 +1672,16 @@ async function hostRefresh() {
       sessionSync.stop();
     }
   }
+}
+
+// UI Convergence, Tier 1. These panels are diagnostic tools, not part
+// of the guest-facing surface — kept fully intact for support/device
+// debugging, just no longer shown by default. Append ?debug=1 to the
+// URL to see them.
+if (new URLSearchParams(location.search).has("debug")) {
+  document.getElementById("syncDebugPanel").style.display = "block";
+  document.getElementById("debugOutputDetails").style.display = "block";
+  document.getElementById("devInfoCard").style.display = "block";
 }
 
 renderCreateItemFields();
