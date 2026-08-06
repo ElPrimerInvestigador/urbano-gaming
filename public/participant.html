@@ -174,6 +174,32 @@
     font-size: 14px; border: 1px solid var(--danger);
     background: var(--danger-bg); color: var(--danger);
   }
+
+  /* ============================================================
+     Experience Layer (hypothesis, not constitutional). See host.html's
+     identical block for the full reasoning — purple signals Activity
+     ("this is happening right now"), the counterpart to gold's
+     Recognition ("this has been decided"). Every rule below is
+     additive and individually removable.
+     ============================================================ */
+  :root {
+    --exp-purple: #7c3aed;
+    --exp-purple-glow: rgba(124, 58, 237, 0.45);
+  }
+  .prompt-text.exp-live {
+    border-left-color: var(--exp-purple);
+    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.18), 0 0 20px var(--exp-purple-glow);
+  }
+  @keyframes expRevealPulse {
+    0% { box-shadow: 0 0 0 0 var(--exp-purple-glow); }
+    100% { box-shadow: 0 0 0 24px rgba(124, 58, 237, 0); }
+  }
+  .exp-reveal-pulse { animation: expRevealPulse 700ms ease-out; }
+  @keyframes expWinnerPulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--exp-purple-glow); }
+    50% { box-shadow: 0 0 0 10px rgba(124, 58, 237, 0.25); }
+  }
+  .winner-banner.exp-celebrate { animation: expWinnerPulse 1.4s ease-in-out 3; }
 </style>
 </head>
 <body>
@@ -209,7 +235,7 @@
   <div id="state-card" class="card"></div>
 
   <div class="card" id="promptCard" style="display:none;">
-    <h2>Prompt</h2>
+    <h2>Current Turn</h2>
     <div class="prompt-text" id="promptText"></div>
   </div>
 
@@ -292,10 +318,12 @@
 
 const PARTICIPANT_STORAGE_KEY = "level33_dev_harness_participant";
 const LIFECYCLE_STEPS = ["LOBBY_OPEN", "LOBBY_LOCKED", "PROMPT_ACTIVE", "SUBMISSIONS_CLOSED", "RESULT_REVEAL", "SESSION_COMPLETE"];
+// Turn is the presentation-layer word for what the domain layer still
+// calls an Interaction Instance — see host.html's identical comment.
 const STATE_LABELS = {
   LOBBY_OPEN: "Lobby Open",
   LOBBY_LOCKED: "Lobby Locked",
-  PROMPT_ACTIVE: "Prompt Active",
+  PROMPT_ACTIVE: "Turn Active",
   SUBMISSIONS_CLOSED: "Submissions Closed",
   RESULT_REVEAL: "Results",
   SESSION_COMPLETE: "Complete",
@@ -397,6 +425,15 @@ let successorRoomCode = null;
 // the participant is actively editing. Reset whenever this screen is
 // left, so arriving at a *later* SESSION_COMPLETE pre-fills again.
 let continuationPrefilled = false;
+// Experience Layer (hypothesis, not constitutional). See host.html's
+// identical pair for the full reasoning — these track the last
+// interaction state and whether this tab has already played the
+// winner celebration, purely so updateExperienceLayer() can detect
+// *transitions* rather than re-triggering an animation on every poll
+// tick. Both reset in switchToJoinedSession() so a second game in the
+// same tab gets its own reveal pulses and its own celebration.
+let expLastInteractionState = null;
+let expCelebrationPlayed = false;
 
 function saveParticipantState() {
   sessionStorage.setItem(PARTICIPANT_STORAGE_KEY, JSON.stringify(participantState));
@@ -831,6 +868,83 @@ function applySessionSnapshot(data) {
   }
   if ("standings" in data) renderStandings(data.standings);
   renderContinuation();
+  updateFocusMode(effectiveState);
+  updateCompletionScreen(effectiveState);
+  updateExperienceLayer(effectiveState);
+}
+
+// Structural Tier 2 (UI Convergence). The participant should spend as
+// little attention as possible on anything other than the Turn they're
+// actively completing. While a Turn is active and this participant
+// hasn't yet done their part of it, hide the stepper and standings —
+// context that matters before and after, not during. Runs last in
+// applySessionSnapshot so it can override renderStandings()'s own
+// visibility decision, made moments earlier in the same pass.
+function updateFocusMode(effectiveState) {
+  const inFocusMode = effectiveState === "PROMPT_ACTIVE" && !hasSubmittedThisPageLoad;
+  document.getElementById("stepper").style.display = inFocusMode ? "none" : "flex";
+  if (inFocusMode) {
+    document.getElementById("standingsCard").style.display = "none";
+  }
+}
+
+// Structural Tier 2 addendum (production playtest defect fix).
+// SESSION_COMPLETE was previously treated as just another "past
+// PROMPT_ACTIVE" state by renderPrompt/renderResults, so the final
+// Turn's prompt, submitted answer, and results list all stayed on
+// screen after the game ended. A completed session should instead show
+// a dedicated completion screen: Winner + Final Standings (from
+// renderStandings/renderWinnerBanner) and the continuation options
+// (from renderContinuation) — nothing about the last Turn. Runs last in
+// applySessionSnapshot, after every other render, so it can
+// unconditionally override what those functions just decided, the same
+// override-at-the-end pattern updateFocusMode already uses.
+function updateCompletionScreen(effectiveState) {
+  if (effectiveState !== "SESSION_COMPLETE") return;
+  document.getElementById("stepper").style.display = "none";
+  document.getElementById("state-card").style.display = "none";
+  document.getElementById("promptCard").style.display = "none";
+  document.getElementById("submitCard").style.display = "none";
+  document.getElementById("optionsCard").style.display = "none";
+  document.getElementById("progressCard").style.display = "none";
+  document.getElementById("resultsCard").style.display = "none";
+}
+
+// Experience Layer (hypothesis, not constitutional). See host.html's
+// identical function for the full reasoning — purple signals Activity
+// ("this is happening right now"), the counterpart to gold's
+// Recognition ("this has been decided"). Runs last, after every other
+// render this tick, so it can react to what they just decided without
+// fighting updateFocusMode/updateCompletionScreen's own overrides.
+function updateExperienceLayer(effectiveState) {
+  const promptTextEl = document.getElementById("promptText");
+  if (promptTextEl) {
+    promptTextEl.classList.toggle("exp-live", effectiveState === "PROMPT_ACTIVE");
+  }
+
+  if (effectiveState === "RESULT_REVEAL" && expLastInteractionState !== "RESULT_REVEAL") {
+    const resultsCard = document.getElementById("resultsCard");
+    if (resultsCard) {
+      // Force the animation to restart even if the class never left
+      // (a second Turn's reveal must repeat the same pulse, not
+      // silently no-op because Turn 1 already added this class).
+      resultsCard.classList.remove("exp-reveal-pulse");
+      void resultsCard.offsetWidth;
+      resultsCard.classList.add("exp-reveal-pulse");
+    }
+  }
+  expLastInteractionState = effectiveState;
+
+  // Only an actual winner is worth celebrating — "no winner
+  // determined" (no points awarded) is a non-event, and pulsing purple
+  // around that message would celebrate the absence of a result.
+  if (effectiveState === "SESSION_COMPLETE" && !expCelebrationPlayed) {
+    const banner = document.getElementById("winnerBanner");
+    if (banner && banner.style.display !== "none" && !banner.textContent.startsWith("No winner determined")) {
+      banner.classList.add("exp-celebrate");
+      expCelebrationPlayed = true;
+    }
+  }
 }
 
 // Shared by joinSession(), joinNextSession(), and joinAnotherSession():
@@ -858,6 +972,8 @@ function switchToJoinedSession(json) {
   successorSessionId = null;
   successorRoomCode = null;
   continuationPrefilled = false;
+  expLastInteractionState = null;
+  expCelebrationPlayed = false;
   document.getElementById("p-text").value = "";
   document.getElementById("jn-displayName").value = "";
   document.getElementById("ja-roomCode").value = "";

@@ -223,6 +223,106 @@
     background: var(--danger-bg); color: var(--danger);
   }
   .notice-info { border-color: var(--accent); background: var(--gold-bg); color: var(--accent); }
+
+  /* Structural Tier 2 (UI Convergence), rearranged per production
+     playtest findings: the Roster (Participants + Standings) is who's
+     actually in the game and how they're doing — a host needs that at
+     a glance, not buried after the Current Turn content. The Roster
+     block is placed first in markup so it appears first both when
+     stacked (mobile/narrow, below the breakpoint — the host is not
+     guaranteed to be on a wide screen) and as the left column at
+     ≥860px. The column ratio (1fr / 1.4fr) is far more even than the
+     original 1fr / 2fr split, which read as making the Roster an
+     afterthought rather than a first-class region. */
+  .control-grid { display: block; }
+  .control-grid-side .card { margin-bottom: 14px; }
+  @media (min-width: 860px) {
+    .control-grid { display: grid; grid-template-columns: 1fr 1.4fr; gap: 14px; align-items: start; }
+  }
+
+  /* The room code matters most before the lobby locks (that's when
+     people are still joining) and far less afterward — collapsing it
+     to a slim strip once running frees real vertical space for the
+     actual game controls without losing the code entirely. */
+  .room-code-card.compact { padding: 10px 14px; }
+  .room-code-card.compact .room-code {
+    font-size: 20px; padding: 4px 10px; border-width: 1px; border-style: dashed;
+    display: inline-block; letter-spacing: 0.1em;
+  }
+  .room-code-card.compact .room-code-hint { display: none; }
+  .room-code-card.compact h2 { display: none; }
+
+  /* "Manage Content" disclosure — the Authoring Workspace is backstage,
+     pre-game tooling; once the lobby locks it collapses by default
+     (still reachable, since PREPARE_QUESTIONS remains valid mid-game)
+     rather than permanently occupying the screen a host is now using
+     to run the live Turn. */
+  #manageContentToggle { margin-bottom: 10px; }
+  #authoringWorkspaceBody.collapsed { display: none; }
+
+  /* The single, state-driven primary action — always the same place,
+     always the one thing to look at next, per the accepted Structural
+     Tier 2 design: one Interaction Engine's own answer to "what's next"
+     drives this, not a fixed Trivia-shaped sequence of buttons. */
+  .primary-action-bar {
+    position: sticky; bottom: 0; z-index: 5;
+    background: var(--bg-page); padding: 10px 0 4px;
+    border-top: 1px solid var(--line); margin-top: 10px;
+  }
+  #btn-primary-action { width: 100%; font-size: 16px; padding: 14px 16px; }
+  .secondary-start-toggle {
+    text-align: center; margin-top: 8px;
+  }
+  .secondary-start-toggle button { font-size: 12px; padding: 6px 10px; }
+  #openResponseStartForm.collapsed { display: none; }
+
+  .secondary-actions { margin-top: 16px; }
+  .secondary-actions button { font-size: 12px; padding: 7px 12px; }
+
+  /* ============================================================
+     Experience Layer (hypothesis, not constitutional). Purple signals
+     Activity — "this is happening right now" — the deliberate
+     counterpart to gold's Recognition — "this has been decided." See
+     Product/URBANO_Gaming_Application.md for the constitutional
+     boundary this stays inside, and each hypothesis's own tracking.
+     Every rule below is additive and individually removable: deleting
+     this block plus the exp-live/exp-reveal-pulse/exp-celebrate
+     classes fully reverts to the Structural Tier 2 baseline with no
+     other change required.
+     ============================================================ */
+  :root {
+    --exp-purple: #7c3aed;
+    --exp-purple-glow: rgba(124, 58, 237, 0.45);
+  }
+
+  /* Hypothesis: the active Turn reads as "live" via a purple border +
+     soft glow, replacing the prompt's default gold framing only while
+     a Turn is actually active — gold returns once it isn't. */
+  .prompt-text.exp-live {
+    border-left-color: var(--exp-purple);
+    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.18), 0 0 20px var(--exp-purple-glow);
+  }
+
+  /* Hypothesis: a brief purple pulse the instant a Turn's results
+     become visible — a "this just happened" cue, distinct from the
+     correctness colors already on individual results below it. Runs
+     once per reveal and settles; never loops or becomes ambient. */
+  @keyframes expRevealPulse {
+    0% { box-shadow: 0 0 0 0 var(--exp-purple-glow); }
+    100% { box-shadow: 0 0 0 24px rgba(124, 58, 237, 0); }
+  }
+  .exp-reveal-pulse { animation: expRevealPulse 700ms ease-out; }
+
+  /* Hypothesis: the winner banner's gold Recognition framed by a few
+     seconds of purple Activity energy — testing whether the two read
+     as complementary rather than competing (see the open question in
+     URBANO_Gaming_Application.md). Plays a fixed number of times, then
+     settles; never becomes ambient motion on a screen left open. */
+  @keyframes expWinnerPulse {
+    0%, 100% { box-shadow: 0 0 0 0 var(--exp-purple-glow); }
+    50% { box-shadow: 0 0 0 10px rgba(124, 58, 237, 0.25); }
+  }
+  .winner-banner.exp-celebrate { animation: expWinnerPulse 1.4s ease-in-out 3; }
 </style>
 </head>
 <body>
@@ -252,7 +352,7 @@
 </div>
 
 <div id="session-panels" style="display:none;">
-  <div class="card">
+  <div class="card room-code-card" id="roomCodeCard">
     <h2>Room Code</h2>
     <div class="room-code" id="roomCodeDisplay">——————</div>
     <div class="room-code-hint">Share this with participants at <strong>/participant.html</strong></div>
@@ -264,84 +364,113 @@
     <div class="kv"><span class="k">hostToken</span><span class="v" id="hostTokenDisplay">—</span></div>
   </div>
 
-  <div class="card">
-    <h2>Participants (<span id="participantCount">0</span>)</h2>
-    <ul class="participant-list" id="participantList"></ul>
-  </div>
-
   <!-- Authoring Workspace. Deliberately engine-agnostic at this level —
        "Create," "Import," and "Review" are workspace concepts that stay
        true for any future Interaction Engine; only the fields inside
        ITEM_EDITORS.MULTIPLE_CHOICE below know what a Multiple Choice
        item actually looks like. A future engine (Pictionary, Photo
        Challenge, ...) plugs in its own editor without this card, or the
-       queue/import/filter logic around it, needing to change. -->
-  <div class="card">
-    <h2>Authoring Workspace</h2>
+       queue/import/filter logic around it, needing to change.
 
-    <!-- Import first: for anything beyond a couple of questions, this
-         is the faster path (see AUTHORING_WORKSPACE_IMPLEMENTATION_RECORD.md)
-         — leading with the slower one-at-a-time form risked a host
-         committing to it out of habit before ever noticing this one. -->
-    <div class="import-card">
-      <h3 style="font-size:12px; color:var(--muted); margin:0 0 8px;">Import Many Items</h3>
-      <textarea id="bulkImportText" rows="4" placeholder="Paste rows copied from a spreadsheet (Excel, Google Sheets, Notion, Airtable) or generated by an AI assistant:&#10;&#10;What's the best pizza topping?&#9;Pepperoni&#9;Mushroom&#9;Pineapple&#9;Mushroom&#9;15&#10;Which planet is closest to the sun?&#9;Mercury&#9;Venus&#9;Earth&#9;Mercury"></textarea>
-      <div style="font-size:12px; color:var(--muted); margin:4px 0 8px;">Rows separated by tabs (pasted straight from a spreadsheet) or by | (including the AI prompt below) both work.</div>
-      <button class="btn-secondary" onclick="parseAndAddBulkItems()">Parse &amp; Add to Queue</button>
-      <button class="btn-ghost" id="btn-copy-ai-prompt" onclick="copyAiPrompt()">Copy AI Prompt</button>
+       Collapses behind "Manage Content" once the lobby locks (see
+       renderManageContentToggle) — this is backstage, pre-game tooling
+       that stays reachable (PREPARE_QUESTIONS remains valid mid-game)
+       without permanently occupying the screen once the host has moved
+       on to actually running the Turn. -->
+  <div class="card">
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+      <h2 style="margin:0;">Authoring Workspace</h2>
+      <button class="btn-ghost" id="manageContentToggle" onclick="toggleManageContent()" style="display:none;">Manage Content</button>
+    </div>
+    <div id="authoringWorkspaceBody">
+      <!-- Import first: for anything beyond a couple of questions, this
+           is the faster path (see AUTHORING_WORKSPACE_IMPLEMENTATION_RECORD.md)
+           — leading with the slower one-at-a-time form risked a host
+           committing to it out of habit before ever noticing this one. -->
+      <div class="import-card">
+        <h3 style="font-size:12px; color:var(--muted); margin:0 0 8px;">Import Many Items</h3>
+        <textarea id="bulkImportText" rows="4" placeholder="Paste rows copied from a spreadsheet (Excel, Google Sheets, Notion, Airtable) or generated by an AI assistant:&#10;&#10;What's the best pizza topping?&#9;Pepperoni&#9;Mushroom&#9;Pineapple&#9;Mushroom&#9;15&#10;Which planet is closest to the sun?&#9;Mercury&#9;Venus&#9;Earth&#9;Mercury"></textarea>
+        <div style="font-size:12px; color:var(--muted); margin:4px 0 8px;">Rows separated by tabs (pasted straight from a spreadsheet) or by | (including the AI prompt below) both work.</div>
+        <button class="btn-secondary" onclick="parseAndAddBulkItems()">Parse &amp; Add to Queue</button>
+        <button class="btn-ghost" id="btn-copy-ai-prompt" onclick="copyAiPrompt()">Copy AI Prompt</button>
+      </div>
+
+      <h3 style="font-size:12px; color:var(--muted); margin:14px 0 8px;">Create New Item</h3>
+      <div id="createItemFields"></div>
+      <button class="btn-secondary" onclick="addNewItem()">Add to Queue</button>
+
+      <h3 style="font-size:12px; color:var(--muted); margin:14px 0 8px;">Review Queue</h3>
+      <input type="text" class="item-filter-input" id="itemFilterInput" placeholder="Filter items…" oninput="onItemFilterInput(this.value)" />
+      <div class="item-queue-count" id="itemQueueCount"></div>
+      <div id="itemQueueList"></div>
+      <button class="btn-primary" id="btn-save-items" onclick="saveItems()" style="display:none;">Save Items</button>
+      <div id="preparedQueueList" style="margin-top:14px;"></div>
+    </div>
+  </div>
+
+  <!-- Structural Tier 2, rearranged per production playtest findings.
+       The Roster (Participants + Standings) is placed first — both in
+       markup and therefore visually first, whether stacked (mobile) or
+       side-by-side (≥860px) — so who's in the game and how they're
+       doing has real visual priority instead of being an afterthought
+       squeezed into a narrow trailing column. The Current Turn content
+       and primary action remain the second region; the primary action
+       bar's own sticky positioning is unaffected by which column it's
+       in. -->
+  <div class="control-grid">
+    <div class="control-grid-side">
+      <div class="card">
+        <h2>Participants (<span id="participantCount">0</span>)</h2>
+        <ul class="participant-list" id="participantList"></ul>
+      </div>
+
+      <div class="card" id="standingsCard" style="display:none;">
+        <h2>Standings</h2>
+        <div id="standingsList"></div>
+        <div id="winnerBanner" class="winner-banner" style="display:none;"></div>
+      </div>
     </div>
 
-    <h3 style="font-size:12px; color:var(--muted); margin:14px 0 8px;">Create New Item</h3>
-    <div id="createItemFields"></div>
-    <button class="btn-secondary" onclick="addNewItem()">Add to Queue</button>
+    <div class="control-grid-main">
+      <div class="card" id="promptCard" style="display:none;">
+        <h2>Current Turn<span id="engineTag"></span></h2>
+        <div class="prompt-text" id="promptText"></div>
+        <ul class="option-list" id="promptOptionsList" style="margin-top:10px;"></ul>
+      </div>
 
-    <h3 style="font-size:12px; color:var(--muted); margin:14px 0 8px;">Review Queue</h3>
-    <input type="text" class="item-filter-input" id="itemFilterInput" placeholder="Filter items…" oninput="onItemFilterInput(this.value)" />
-    <div class="item-queue-count" id="itemQueueCount"></div>
-    <div id="itemQueueList"></div>
-    <button class="btn-primary" id="btn-save-items" onclick="saveItems()" style="display:none;">Save Items</button>
-    <div id="preparedQueueList" style="margin-top:14px;"></div>
-  </div>
+      <div class="card" id="progressCard" style="display:none;">
+        <h2>Submission Progress</h2>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+        <div class="progress-label" id="progressLabel"></div>
+      </div>
 
-  <div class="card" id="promptCard" style="display:none;">
-    <h2>Current Question<span id="engineTag"></span></h2>
-    <div class="prompt-text" id="promptText"></div>
-    <ul class="option-list" id="promptOptionsList" style="margin-top:10px;"></ul>
-  </div>
+      <div class="card" id="resultsCard" style="display:none;">
+        <h2>Results</h2>
+        <div id="resultsList"></div>
+      </div>
 
-  <div class="card" id="progressCard" style="display:none;">
-    <h2>Submission Progress</h2>
-    <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
-    <div class="progress-label" id="progressLabel"></div>
-  </div>
+      <!-- The single, state-driven primary action. Each Interaction
+           Engine's own state answers "what's next" (see
+           resolvePrimaryAction) — this is not a fixed Lock/Start/Close/
+           Reveal sequence assumed by the UI. -->
+      <div class="primary-action-bar" id="primaryActionBar" style="display:none;">
+        <div id="openResponseStartForm" class="collapsed">
+          <textarea id="promptTextInput" rows="2" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="Ask an ad-hoc open-response question…"></textarea>
+        </div>
+        <button class="btn-primary" id="btn-primary-action"></button>
+        <div class="secondary-start-toggle" id="secondaryStartToggle" style="display:none;">
+          <button class="btn-ghost" onclick="toggleOpenResponseStartForm()" id="btn-toggle-open-response">Ask an ad-hoc question instead</button>
+        </div>
+      </div>
 
-  <div class="card" id="resultsCard" style="display:none;">
-    <h2>Results</h2>
-    <div id="resultsList"></div>
-  </div>
-
-  <div class="card" id="standingsCard" style="display:none;">
-    <h2>Standings</h2>
-    <div id="standingsList"></div>
-    <div id="winnerBanner" class="winner-banner" style="display:none;"></div>
-  </div>
-
-  <div class="card">
-    <h2>Actions</h2>
-    <button class="btn-primary" id="btn-lock" onclick="lockLobby()">Lock Lobby</button>
-    <button class="btn-primary" id="btn-start-next-question" onclick="startNextQuestion()" style="display:none;">Start Next Question</button>
-    <div id="openResponseStartForm" style="margin: 10px 0;">
-      <textarea id="promptTextInput" rows="2" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line);" placeholder="Or ask an ad-hoc open-response question…"></textarea>
+      <div class="secondary-actions">
+        <button class="btn-ghost" onclick="sessionSync.refreshNow()" title="Manual refresh — the game normally syncs automatically; use this if you suspect it's stalled.">Check for updates</button>
+        <button class="btn-danger" id="btn-complete" onclick="completeSession()">End Session</button>
+        <button class="btn-primary" id="btn-new-session" onclick="createSession()" style="display:none;">Create New Session</button>
+        <button class="btn-primary" id="btn-rematch" onclick="createSuccessorSession()" style="display:none;">Create Rematch</button>
+        <div id="rematchHint" class="room-code-hint" style="display:none;"></div>
+      </div>
     </div>
-    <button class="btn-primary" id="btn-start" onclick="startSession()">Start Open-Response Interaction</button>
-    <button class="btn-primary" id="btn-close" onclick="closeSubmissions()">Close Submissions</button>
-    <button class="btn-primary" id="btn-reveal" onclick="revealResults()">Reveal Results</button>
-    <br/>
-    <button class="btn-ghost" onclick="sessionSync.refreshNow()" title="Manual refresh — the game normally syncs automatically; use this if you suspect it's stalled.">Check for updates</button>
-    <button class="btn-danger" id="btn-complete" onclick="completeSession()">End Session</button>
-    <button class="btn-primary" id="btn-new-session" onclick="createSession()" style="display:none;">Create New Session</button>
-    <button class="btn-primary" id="btn-rematch" onclick="createSuccessorSession()" style="display:none;">Create Rematch</button>
-    <div id="rematchHint" class="room-code-hint" style="display:none;"></div>
   </div>
 </div>
 
@@ -366,10 +495,16 @@
 
 const HOST_STORAGE_KEY = "level33_dev_harness_host";
 const LIFECYCLE_STEPS = ["LOBBY_OPEN", "LOBBY_LOCKED", "PROMPT_ACTIVE", "SUBMISSIONS_CLOSED", "RESULT_REVEAL", "SESSION_COMPLETE"];
+// Turn is the presentation-layer word for what the domain layer still
+// calls an Interaction Instance — chosen deliberately generic (not
+// "Question") so labels don't bake in Trivia-specific assumptions the
+// UI would need to unwind the first time a structurally different
+// engine arrives. The domain layer's own state names (PROMPT_ACTIVE
+// etc.) are unchanged; only what's shown on screen changes here.
 const STATE_LABELS = {
   LOBBY_OPEN: "Lobby Open",
   LOBBY_LOCKED: "Lobby Locked",
-  PROMPT_ACTIVE: "Prompt Active",
+  PROMPT_ACTIVE: "Turn Active",
   SUBMISSIONS_CLOSED: "Submissions Closed",
   RESULT_REVEAL: "Results",
   SESSION_COMPLETE: "Complete",
@@ -492,6 +627,20 @@ let itemFilterText = "";
 // to disable a specific participant's control while its own request is
 // pending, not to deduplicate distinct actions.
 let awardInFlight = {};
+// Structural Tier 2 (UI Convergence). Whether the Authoring Workspace's
+// "Manage Content" auto-collapse has already fired for this session —
+// fires exactly once, on the transition into LOBBY_LOCKED, so a host
+// who manually re-expands it to add more content mid-game is never
+// fought by a re-render collapsing it again.
+let manageContentAutoCollapsed = false;
+// Whether the ad-hoc Open Response start form is currently shown as
+// the *secondary* path (Multiple Choice questions remain queued, so
+// the primary action is "Start Turn N" via the prepared queue). Stays
+// false until the host explicitly asks for it via
+// toggleOpenResponseStartForm(); irrelevant once no prepared questions
+// remain, since Open Response then becomes the only path and is shown
+// unconditionally.
+let openResponseFormExpanded = false;
 
 function saveHostState() {
   sessionStorage.setItem(HOST_STORAGE_KEY, JSON.stringify(hostState));
@@ -1154,6 +1303,7 @@ async function startNextQuestion() {
   show("START_SESSION (Multiple Choice) (" + r.status + ")", r.json);
   if (r.status === 200) {
     renderNotice(null);
+    openResponseFormExpanded = false;
     await hostRefresh();
   } else {
     renderNotice(classifyError(r));
@@ -1202,35 +1352,10 @@ function renderInteractionLabel() {
     return;
   }
   el.style.display = "block";
-  el.textContent = `Interaction #${interactionNumber}`;
+  el.textContent = `Turn ${interactionNumber}`;
 }
 
 function updateActionAvailability() {
-  const canStart =
-    sessionLifecycleState === "LOBBY_LOCKED" &&
-    (interactionLifecycleState === null || interactionLifecycleState === "RESULT_REVEAL");
-
-  document.getElementById("btn-lock").disabled = sessionLifecycleState !== "LOBBY_OPEN";
-  // Start is re-invocable: available once per interaction, any number
-  // of times, as long as the session is LOBBY_LOCKED and there is no
-  // current interaction still in flight (none yet, or the last one has
-  // already reached RESULT_REVEAL).
-  document.getElementById("btn-start").disabled = !canStart;
-  document.getElementById("btn-start-next-question").disabled = !canStart;
-
-  // Slice 003: when a prepared Multiple Choice question is waiting,
-  // lead with "Start Next Question" and keep the Open Response form
-  // available underneath as a secondary, always-available path — the
-  // host is never blocked from asking an ad-hoc question even mid-queue.
-  const hasUnconsumed = lowestUnconsumedPreparedQuestion() !== null;
-  document.getElementById("btn-start-next-question").style.display = hasUnconsumed ? "inline-block" : "none";
-
-  document.getElementById("btn-close").disabled = !(
-    sessionLifecycleState === "LOBBY_LOCKED" && interactionLifecycleState === "PROMPT_ACTIVE"
-  );
-  document.getElementById("btn-reveal").disabled = !(
-    sessionLifecycleState === "LOBBY_LOCKED" && interactionLifecycleState === "SUBMISSIONS_CLOSED"
-  );
   document.getElementById("btn-complete").disabled = sessionLifecycleState === "SESSION_COMPLETE" || !sessionLifecycleState;
 
   // Slice 004 (client-lifecycle fix): the only way back to
@@ -1263,6 +1388,118 @@ function updateActionAvailability() {
   } else {
     rematchHint.style.display = "none";
   }
+
+  updateRoomCodeDisplayMode();
+  updateManageContentDisclosure();
+  resolvePrimaryAction();
+}
+
+// Structural Tier 2 (UI Convergence). The room code matters most while
+// people are still joining and far less once the game is running —
+// collapsing it to a compact strip once the lobby locks frees real
+// vertical space for the actual game controls without losing the code.
+function updateRoomCodeDisplayMode() {
+  document.getElementById("roomCodeCard").classList.toggle(
+    "compact",
+    !!sessionLifecycleState && sessionLifecycleState !== "LOBBY_OPEN"
+  );
+}
+
+// Structural Tier 2. Fires exactly once, on the transition into
+// LOBBY_LOCKED — never re-collapses content a host manually reopened
+// (e.g. to add more prepared questions mid-game via PREPARE_QUESTIONS,
+// which remains valid until the session completes).
+function updateManageContentDisclosure() {
+  const toggle = document.getElementById("manageContentToggle");
+  const body = document.getElementById("authoringWorkspaceBody");
+  const sessionIsRunning = sessionLifecycleState && sessionLifecycleState !== "LOBBY_OPEN";
+  toggle.style.display = sessionIsRunning ? "inline-block" : "none";
+
+  if (sessionLifecycleState === "LOBBY_LOCKED" && !manageContentAutoCollapsed) {
+    body.classList.add("collapsed");
+    toggle.textContent = "Manage Content";
+    manageContentAutoCollapsed = true;
+  }
+}
+
+function toggleManageContent() {
+  const body = document.getElementById("authoringWorkspaceBody");
+  const toggle = document.getElementById("manageContentToggle");
+  const collapsed = body.classList.toggle("collapsed");
+  toggle.textContent = collapsed ? "Manage Content" : "Hide Content";
+}
+
+// Structural Tier 2. Each Interaction Engine's own state answers "what
+// is the single next valid action" — a lookup keyed by state, not an
+// assumption that every future engine follows the submit -> close ->
+// reveal shape Open Response and Multiple Choice happen to share.
+// Deliberately does NOT merge steps together (e.g. reveal-then-
+// continue in one click): how long a reveal stays visible before the
+// game moves on is a felt-experience/pacing question, which belongs to
+// the Experience Layer, not this structural pass.
+function resolvePrimaryAction() {
+  const bar = document.getElementById("primaryActionBar");
+  const btn = document.getElementById("btn-primary-action");
+  const secondaryToggle = document.getElementById("secondaryStartToggle");
+  const openResponseForm = document.getElementById("openResponseStartForm");
+
+  if (!sessionLifecycleState || sessionLifecycleState === "SESSION_COMPLETE") {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "block";
+
+  if (sessionLifecycleState === "LOBBY_OPEN") {
+    openResponseForm.classList.add("collapsed");
+    secondaryToggle.style.display = "none";
+    btn.textContent = "Lock Lobby";
+    btn.onclick = lockLobby;
+    return;
+  }
+
+  if (interactionLifecycleState === "PROMPT_ACTIVE") {
+    openResponseForm.classList.add("collapsed");
+    secondaryToggle.style.display = "none";
+    btn.textContent = "Close Submissions";
+    btn.onclick = closeSubmissions;
+    return;
+  }
+
+  if (interactionLifecycleState === "SUBMISSIONS_CLOSED") {
+    openResponseForm.classList.add("collapsed");
+    secondaryToggle.style.display = "none";
+    btn.textContent = "Reveal Results";
+    btn.onclick = revealResults;
+    return;
+  }
+
+  // interactionLifecycleState is null or RESULT_REVEAL: time to start
+  // the next Turn. Multiple Choice's own answer to "what's next" is
+  // "the next prepared question," when one exists; Open Response's is
+  // always "ask for text." Both stay reachable — only which one is the
+  // *primary* action changes, and the host can flip between them.
+  const turnNumber = (interactionNumber || 0) + 1;
+  const next = lowestUnconsumedPreparedQuestion();
+
+  if (next && !openResponseFormExpanded) {
+    openResponseForm.classList.add("collapsed");
+    secondaryToggle.style.display = "block";
+    document.getElementById("btn-toggle-open-response").textContent = "Ask an ad-hoc question instead";
+    btn.textContent = `Start Turn ${turnNumber}`;
+    btn.onclick = startNextQuestion;
+    return;
+  }
+
+  openResponseForm.classList.remove("collapsed");
+  secondaryToggle.style.display = next ? "block" : "none";
+  document.getElementById("btn-toggle-open-response").textContent = "Use the next prepared question instead";
+  btn.textContent = `Start Turn ${turnNumber}`;
+  btn.onclick = startSession;
+}
+
+function toggleOpenResponseStartForm() {
+  openResponseFormExpanded = !openResponseFormExpanded;
+  resolvePrimaryAction();
 }
 
 function renderParticipants(participants) {
@@ -1436,6 +1673,55 @@ function renderWinnerBanner(sortedStandings) {
       : `Winner: ${names} (${maxScore} pts)`;
 }
 
+// Experience Layer (hypothesis, not constitutional). Tracks the last
+// interactionLifecycleState this tab observed, purely so
+// updateExperienceLayer() can detect the *transition* into
+// RESULT_REVEAL rather than re-triggering the reveal pulse on every
+// 2-second poll tick while the state simply stays RESULT_REVEAL.
+// expCelebrationPlayed is the same idea for the winner celebration,
+// which should play once per completed session, not once per poll.
+// Both reset in switchToNewSession() so a second game in the same tab
+// gets its own reveal pulses and its own celebration.
+let expLastInteractionState = null;
+let expCelebrationPlayed = false;
+
+// See the CSS comment above .exp-live for what these three classes
+// are and why each is an individually removable hypothesis, not a
+// permanent decision. Runs last, after renderPrompt/renderStandings
+// have already decided what's visible this tick — the same
+// override-at-the-end position updateActionAvailability's own
+// sub-functions already use.
+function updateExperienceLayer() {
+  const promptTextEl = document.getElementById("promptText");
+  if (promptTextEl) {
+    promptTextEl.classList.toggle("exp-live", interactionLifecycleState === "PROMPT_ACTIVE");
+  }
+
+  if (interactionLifecycleState === "RESULT_REVEAL" && expLastInteractionState !== "RESULT_REVEAL") {
+    const resultsCard = document.getElementById("resultsCard");
+    if (resultsCard) {
+      // Force the animation to restart even if the class never left
+      // (a second Turn's reveal must repeat the same pulse, not
+      // silently no-op because Turn 1 already added this class).
+      resultsCard.classList.remove("exp-reveal-pulse");
+      void resultsCard.offsetWidth;
+      resultsCard.classList.add("exp-reveal-pulse");
+    }
+  }
+  expLastInteractionState = interactionLifecycleState;
+
+  // Only an actual winner is worth celebrating — "no winner
+  // determined" (no points awarded) is a non-event, and pulsing purple
+  // around that message would celebrate the absence of a result.
+  if (sessionLifecycleState === "SESSION_COMPLETE" && !expCelebrationPlayed) {
+    const banner = document.getElementById("winnerBanner");
+    if (banner && banner.style.display !== "none" && !banner.textContent.startsWith("No winner determined")) {
+      banner.classList.add("exp-celebrate");
+      expCelebrationPlayed = true;
+    }
+  }
+}
+
 function applySessionSnapshot(data) {
   sessionLifecycleState = data.state;
   if ("interactionState" in data) interactionLifecycleState = data.interactionState;
@@ -1468,6 +1754,7 @@ function applySessionSnapshot(data) {
   if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
   if ("submissions" in data) renderResults(data.submissions);
   if ("standings" in data) renderStandings(data.standings);
+  updateExperienceLayer();
 }
 
 // Shared by createSession() and createSuccessorSession(): both produce
@@ -1497,6 +1784,11 @@ function switchToNewSession(json) {
   successorSessionId = null;
   successorRoomCode = null;
   awardInFlight = {};
+  manageContentAutoCollapsed = false;
+  openResponseFormExpanded = false;
+  expLastInteractionState = null;
+  expCelebrationPlayed = false;
+  document.getElementById("authoringWorkspaceBody").classList.remove("collapsed");
   renderCreateItemFields();
   renderItemQueue();
 
@@ -1559,6 +1851,7 @@ async function startSession() {
   if (r.status === 200) {
     renderNotice(null);
     document.getElementById("promptTextInput").value = "";
+    openResponseFormExpanded = false;
     await hostRefresh();
   } else {
     renderNotice(classifyError(r));
