@@ -188,6 +188,31 @@ limitation at a higher layer; building a third engine without using it
 to inform the Experience concept wastes the one moment this
 generalization question is cheap to answer.
 
+**Addendum — evidence from the Structural Tier 2 / Experience Layer
+production playtests.** Real production play surfaced a sharper,
+more specific version of the sequencing gap already named above: today,
+one Turn *is* one Trivia question — the domain layer's Interaction
+Instance and a single question are effectively the same thing, with no
+seam between them. The evidence now points toward **one Turn = one
+Experience**, where a Trivia Experience could itself contain multiple
+questions, and a structurally different future Experience could
+contain none at all (no question-and-answer shape whatsoever). This
+sharpens "the sequencing model is a temporary stand-in" from a general
+worry into a specific candidate shape for what the stand-in should
+eventually become.
+
+This does not change the recommendation, the roadmap, or its sequencing
+— Experience Composition was already the top candidate, and the user
+has explicitly not authorized starting it. It also does not touch the
+current implementation: the Trivia engine remains one-Turn-per-question,
+unchanged, and stays the validated baseline until Experience Composition
+is separately authorized. Recorded here specifically because this is the
+review document that already tracks accumulating evidence for this
+candidate, so the observation strengthens the existing paper trail
+rather than living only inside an implementation record or being
+re-discovered from scratch when Experience Composition is eventually
+taken up.
+
 ### Candidate 2 — Content Library (reusable content across sessions)
 
 - **Why it belongs now**: named directly by the user as "part of the

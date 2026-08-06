@@ -61,15 +61,31 @@
     padding: 0 16px 60px;
   }
   .brand {
-    display: inline-flex; align-items: center; gap: 8px; margin-bottom: 10px;
+    display: inline-flex; align-items: center; gap: 10px; margin-bottom: 10px;
   }
-  .brand-mark { width: 22px; height: 24px; display: block; }
+  /* URBANO Gaming logo (production playtest refinement): the
+     constitutional U mark and gold dot are unchanged — only a purple
+     glow is added, matching the "Built on the Constitutional Identity"
+     relationship documented in Product/URBANO_Gaming_Application.md
+     (every Logo Concepts direction keeps the same U; only the
+     expression around it changes). Deliberately reuses the existing
+     lightweight vector mark plus a CSS filter rather than importing
+     the heavier produced concept asset — same visual outcome, no
+     added page weight, and no loss of the mark's fixed constitutional
+     shape. Which concept direction (pixel outline, arcade frame, retro
+     type, CRT) eventually wins stays an open, evidence-gated question;
+     this is the treatment common to all of them. */
+  .brand-mark {
+    width: 24px; height: 26px; display: block;
+    filter: drop-shadow(0 0 6px var(--exp-purple-glow));
+  }
   .brand-word { font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; }
   .brand-badge {
-    /* Small accent tag, not the URBANO wordmark itself — "la letra
-       nunca es dorada" governs the logo, not this. */
-    background: var(--gold-bg); border: 1px solid var(--gold);
-    color: var(--gold); font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    /* Purple, not gold — this tag marks the Gaming *application* of
+       the identity, not a Recognition moment, and "la letra nunca es
+       dorada" continues to govern the wordmark itself regardless. */
+    background: var(--exp-purple-bg); border: 1px solid var(--exp-purple);
+    color: var(--exp-purple); font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
     text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
   }
   h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
@@ -81,16 +97,26 @@
     content: ""; position: absolute; top: 7px; left: 50%; width: 100%; height: 2px;
     background: var(--upcoming); z-index: 0;
   }
-  .step-done:not(:last-child)::after { background: var(--done); }
+  /* Activity color language (production playtest refinement): the
+     stepper's "already passed" state used --done (the same green
+     reserved elsewhere for a correct answer) and its "currently here"
+     state used gold — neither maps to this project's actual color
+     grammar. Gold is Recognition, reserved for a result (a score, a
+     winner); the step you're currently on isn't a result, it's
+     something happening right now, so it becomes purple (Activity),
+     matching .exp-live elsewhere. A step already passed is neither —
+     it's just traveled ground — so it becomes a plain ivory fill, no
+     color-coded meaning at all, removing the leftover green entirely. */
+  .step-done:not(:last-child)::after { background: var(--ink); }
   .step-dot {
     display: inline-block; width: 16px; height: 16px; border-radius: 50%;
     background: var(--upcoming); position: relative; z-index: 1; margin-bottom: 6px;
   }
-  .step-done .step-dot { background: var(--done); }
-  .step-active .step-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(212,175,55,0.2); }
+  .step-done .step-dot { background: var(--ink); }
+  .step-active .step-dot { background: var(--exp-purple); box-shadow: 0 0 0 4px var(--exp-purple-glow); }
   .step-label { display: block; font-size: 11px; color: var(--muted); }
-  .step-active .step-label { color: var(--accent); font-weight: 600; }
-  .step-done .step-label { color: var(--done); }
+  .step-active .step-label { color: var(--exp-purple); font-weight: 600; }
+  .step-done .step-label { color: var(--muted); }
 
   .card {
     background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px;
@@ -293,6 +319,7 @@
   :root {
     --exp-purple: #7c3aed;
     --exp-purple-glow: rgba(124, 58, 237, 0.45);
+    --exp-purple-bg: rgba(124, 58, 237, 0.12);
   }
 
   /* Hypothesis: the active Turn reads as "live" via a purple border +
@@ -364,6 +391,73 @@
     <div class="kv"><span class="k">hostToken</span><span class="v" id="hostTokenDisplay">—</span></div>
   </div>
 
+  <!-- UI Convergence Tier 2, second structural pass — reordered per
+       production playtest findings around the host's own operational
+       sequence: Room, Participants, Standings, Session Controls,
+       Current Turn, Manage Content. The Roster (Participants +
+       Standings) and Session Controls (the primary action + secondary
+       actions) together form the primary dashboard immediately below
+       the Room Code — "who's here, are we ready, what's next" — with
+       Current Turn as the secondary column and Authoring Workspace
+       moved to the very end as backstage, pre-game tooling. This is a
+       rearrangement, not new functionality: every id, every render
+       function, and every show/hide rule below is unchanged. -->
+  <div class="control-grid">
+    <div class="control-grid-side">
+      <div class="card">
+        <h2>Participants (<span id="participantCount">0</span>)</h2>
+        <ul class="participant-list" id="participantList"></ul>
+      </div>
+
+      <div class="card" id="standingsCard" style="display:none;">
+        <h2>Standings</h2>
+        <div id="standingsList"></div>
+        <div id="winnerBanner" class="winner-banner" style="display:none;"></div>
+      </div>
+
+      <!-- Session Controls: the single, state-driven primary action.
+           Each Interaction Engine's own state answers "what's next"
+           (see resolvePrimaryAction) — this is not a fixed Lock/Start/
+           Close/Reveal sequence assumed by the UI. -->
+      <div class="primary-action-bar" id="primaryActionBar" style="display:none;">
+        <div id="openResponseStartForm" class="collapsed">
+          <textarea id="promptTextInput" rows="2" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="Ask an ad-hoc open-response question…"></textarea>
+        </div>
+        <button class="btn-primary" id="btn-primary-action"></button>
+        <div class="secondary-start-toggle" id="secondaryStartToggle" style="display:none;">
+          <button class="btn-ghost" onclick="toggleOpenResponseStartForm()" id="btn-toggle-open-response">Ask an ad-hoc question instead</button>
+        </div>
+      </div>
+
+      <div class="secondary-actions">
+        <button class="btn-ghost" onclick="sessionSync.refreshNow()" title="Manual refresh — the game normally syncs automatically; use this if you suspect it's stalled.">Check for updates</button>
+        <button class="btn-danger" id="btn-complete" onclick="completeSession()">End Session</button>
+        <button class="btn-primary" id="btn-new-session" onclick="createSession()" style="display:none;">Create New Session</button>
+        <button class="btn-primary" id="btn-rematch" onclick="createSuccessorSession()" style="display:none;">Create Rematch</button>
+        <div id="rematchHint" class="room-code-hint" style="display:none;"></div>
+      </div>
+    </div>
+
+    <div class="control-grid-main">
+      <div class="card" id="promptCard" style="display:none;">
+        <h2>Current Turn<span id="engineTag"></span></h2>
+        <div class="prompt-text" id="promptText"></div>
+        <ul class="option-list" id="promptOptionsList" style="margin-top:10px;"></ul>
+      </div>
+
+      <div class="card" id="progressCard" style="display:none;">
+        <h2>Submission Progress</h2>
+        <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+        <div class="progress-label" id="progressLabel"></div>
+      </div>
+
+      <div class="card" id="resultsCard" style="display:none;">
+        <h2>Results</h2>
+        <div id="resultsList"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Authoring Workspace. Deliberately engine-agnostic at this level —
        "Create," "Import," and "Review" are workspace concepts that stay
        true for any future Interaction Engine; only the fields inside
@@ -372,11 +466,12 @@
        Challenge, ...) plugs in its own editor without this card, or the
        queue/import/filter logic around it, needing to change.
 
+       Moved to the very end of the dashboard (below Current Turn) per
+       the host's own operational sequence — this is backstage, pre-game
+       tooling, secondary to who's here / are we ready / what's next.
        Collapses behind "Manage Content" once the lobby locks (see
-       renderManageContentToggle) — this is backstage, pre-game tooling
-       that stays reachable (PREPARE_QUESTIONS remains valid mid-game)
-       without permanently occupying the screen once the host has moved
-       on to actually running the Turn. -->
+       renderManageContentToggle) but stays reachable (PREPARE_QUESTIONS
+       remains valid mid-game). -->
   <div class="card">
     <div style="display:flex; align-items:center; justify-content:space-between;">
       <h2 style="margin:0;">Authoring Workspace</h2>
@@ -405,71 +500,6 @@
       <div id="itemQueueList"></div>
       <button class="btn-primary" id="btn-save-items" onclick="saveItems()" style="display:none;">Save Items</button>
       <div id="preparedQueueList" style="margin-top:14px;"></div>
-    </div>
-  </div>
-
-  <!-- Structural Tier 2, rearranged per production playtest findings.
-       The Roster (Participants + Standings) is placed first — both in
-       markup and therefore visually first, whether stacked (mobile) or
-       side-by-side (≥860px) — so who's in the game and how they're
-       doing has real visual priority instead of being an afterthought
-       squeezed into a narrow trailing column. The Current Turn content
-       and primary action remain the second region; the primary action
-       bar's own sticky positioning is unaffected by which column it's
-       in. -->
-  <div class="control-grid">
-    <div class="control-grid-side">
-      <div class="card">
-        <h2>Participants (<span id="participantCount">0</span>)</h2>
-        <ul class="participant-list" id="participantList"></ul>
-      </div>
-
-      <div class="card" id="standingsCard" style="display:none;">
-        <h2>Standings</h2>
-        <div id="standingsList"></div>
-        <div id="winnerBanner" class="winner-banner" style="display:none;"></div>
-      </div>
-    </div>
-
-    <div class="control-grid-main">
-      <div class="card" id="promptCard" style="display:none;">
-        <h2>Current Turn<span id="engineTag"></span></h2>
-        <div class="prompt-text" id="promptText"></div>
-        <ul class="option-list" id="promptOptionsList" style="margin-top:10px;"></ul>
-      </div>
-
-      <div class="card" id="progressCard" style="display:none;">
-        <h2>Submission Progress</h2>
-        <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
-        <div class="progress-label" id="progressLabel"></div>
-      </div>
-
-      <div class="card" id="resultsCard" style="display:none;">
-        <h2>Results</h2>
-        <div id="resultsList"></div>
-      </div>
-
-      <!-- The single, state-driven primary action. Each Interaction
-           Engine's own state answers "what's next" (see
-           resolvePrimaryAction) — this is not a fixed Lock/Start/Close/
-           Reveal sequence assumed by the UI. -->
-      <div class="primary-action-bar" id="primaryActionBar" style="display:none;">
-        <div id="openResponseStartForm" class="collapsed">
-          <textarea id="promptTextInput" rows="2" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="Ask an ad-hoc open-response question…"></textarea>
-        </div>
-        <button class="btn-primary" id="btn-primary-action"></button>
-        <div class="secondary-start-toggle" id="secondaryStartToggle" style="display:none;">
-          <button class="btn-ghost" onclick="toggleOpenResponseStartForm()" id="btn-toggle-open-response">Ask an ad-hoc question instead</button>
-        </div>
-      </div>
-
-      <div class="secondary-actions">
-        <button class="btn-ghost" onclick="sessionSync.refreshNow()" title="Manual refresh — the game normally syncs automatically; use this if you suspect it's stalled.">Check for updates</button>
-        <button class="btn-danger" id="btn-complete" onclick="completeSession()">End Session</button>
-        <button class="btn-primary" id="btn-new-session" onclick="createSession()" style="display:none;">Create New Session</button>
-        <button class="btn-primary" id="btn-rematch" onclick="createSuccessorSession()" style="display:none;">Create Rematch</button>
-        <div id="rematchHint" class="room-code-hint" style="display:none;"></div>
-      </div>
     </div>
   </div>
 </div>
