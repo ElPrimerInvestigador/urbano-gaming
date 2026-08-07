@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>URBANO Gaming — Level 33</title>
+<title>URBANO Gaming — Play</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
@@ -223,7 +223,7 @@
   <span class="brand-word">URBANO</span>
   <span class="brand-badge">Gaming</span>
 </div>
-<h1>Level 33</h1>
+<h1>URBANO Gaming</h1>
 <p class="subtitle">Plays the game; does not control the session.</p>
 
 <div id="status-banner" class="notice" style="display:none;" role="alert"></div>
@@ -330,7 +330,8 @@
 // with no other users. Neither should ever be carried into a real
 // interface.
 
-const PARTICIPANT_STORAGE_KEY = "level33_dev_harness_participant";
+const PARTICIPANT_STORAGE_KEY = "urbano_gaming_dev_harness_participant";
+const LEGACY_PARTICIPANT_STORAGE_KEY = "level33_dev_harness_participant";
 const LIFECYCLE_STEPS = ["LOBBY_OPEN", "LOBBY_LOCKED", "PROMPT_ACTIVE", "SUBMISSIONS_CLOSED", "RESULT_REVEAL", "SESSION_COMPLETE"];
 // Turn is the presentation-layer word for what the domain layer still
 // calls an Interaction Instance — see host.html's identical comment.
@@ -454,10 +455,14 @@ function saveParticipantState() {
 }
 
 function restoreState() {
-  const stored = sessionStorage.getItem(PARTICIPANT_STORAGE_KEY);
+  const stored = sessionStorage.getItem(PARTICIPANT_STORAGE_KEY) || sessionStorage.getItem(LEGACY_PARTICIPANT_STORAGE_KEY);
   if (!stored) return;
   try {
     participantState = JSON.parse(stored);
+    if (!sessionStorage.getItem(PARTICIPANT_STORAGE_KEY)) {
+      saveParticipantState();
+      sessionStorage.removeItem(LEGACY_PARTICIPANT_STORAGE_KEY);
+    }
     if (participantState.sessionId) showGamePanels();
   } catch (e) {
     console.warn("Discarding malformed participant state from sessionStorage:", e);

@@ -1,4 +1,4 @@
-# Handoff — Level 33 MVP
+# Handoff — URBANO Gaming
 
 Prepared for a fresh Claude conversation continuing this work. Read
 this before taking any action; it summarizes state established across
@@ -28,9 +28,9 @@ prior sessions so it doesn't need to be rediscovered.
   `AUTHORING_WORKSPACE_IMPLEMENTATION_RECORD.md` for 005–006, which
   were never assigned slice numbers in conversation). This
   inconsistency is known and **explicitly deferred** — it will be
-  addressed as part of a later architectural exercise reviewing the
-  Level 33 → URBANO Gaming repository transition, not fixed
-  incidentally. Do not rename these files without explicit instruction.
+  addressed as part of a later implementation-history normalization,
+  not fixed incidentally. Do not rename these historical files without
+  explicit instruction.
 - `SLICE_003_IMPLEMENTATION_RECORD.md` is a known, byte-for-byte
   duplicate of Section 1 of `SLICE_003_REVIEW_PACKAGE.md` (both added
   in the same commit, never diverged). Flagged, not yet resolved —

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>URBANO Gaming — Level 33 Host</title>
+<title>URBANO Gaming — Host</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
@@ -359,7 +359,7 @@
   <span class="brand-word">URBANO</span>
   <span class="brand-badge">Gaming</span>
 </div>
-<h1>Level 33 — Host</h1>
+<h1>URBANO Gaming — Host</h1>
 <p class="subtitle">Drives the session forward; does not participate.</p>
 
 <div id="status-banner" class="notice" style="display:none;" role="alert"></div>
@@ -523,7 +523,8 @@
 // acceptable only here: an isolated, unbundled, dev-only harness with
 // no other users. Neither should ever be carried into a real interface.
 
-const HOST_STORAGE_KEY = "level33_dev_harness_host";
+const HOST_STORAGE_KEY = "urbano_gaming_dev_harness_host";
+const LEGACY_HOST_STORAGE_KEY = "level33_dev_harness_host";
 const LIFECYCLE_STEPS = ["LOBBY_OPEN", "LOBBY_LOCKED", "PROMPT_ACTIVE", "SUBMISSIONS_CLOSED", "RESULT_REVEAL", "SESSION_COMPLETE"];
 // Turn is the presentation-layer word for what the domain layer still
 // calls an Interaction Instance — chosen deliberately generic (not
@@ -677,10 +678,14 @@ function saveHostState() {
 }
 
 function restoreState() {
-  const stored = sessionStorage.getItem(HOST_STORAGE_KEY);
+  const stored = sessionStorage.getItem(HOST_STORAGE_KEY) || sessionStorage.getItem(LEGACY_HOST_STORAGE_KEY);
   if (!stored) return;
   try {
     hostState = JSON.parse(stored);
+    if (!sessionStorage.getItem(HOST_STORAGE_KEY)) {
+      saveHostState();
+      sessionStorage.removeItem(LEGACY_HOST_STORAGE_KEY);
+    }
     if (hostState.sessionId) showSessionPanels();
   } catch (e) {
     console.warn("Discarding malformed host state from sessionStorage:", e);

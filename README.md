@@ -1,6 +1,6 @@
-# level33-mvp — Level 33, URBANO Gaming's flagship trivia experience
+# urbano-gaming — URBANO Gaming software repository
 
-Level 33 is a real-time, multi-round party game engine: a host runs a
+URBANO Gaming is a real-time, multi-round social game platform: a host runs a
 session, participants join from their own phones, and the two roles
 stay automatically synchronized through the whole game — no manual
 refreshing, no shared screen required. It currently runs one
@@ -22,6 +22,8 @@ one Session and join an unrelated one — see "What's implemented" below
 for the full picture. See governing documents (Account Intelligence,
 CLAUDE.md, Project Genesis) for broader context; this README covers
 only how to run what exists in this software repository.
+
+The repository was historically named `level33-mvp`. That name remains valid only in historical implementation reports, old deployment evidence, and migration records. It is not the current product or repository identity.
 
 ## What's implemented
 
