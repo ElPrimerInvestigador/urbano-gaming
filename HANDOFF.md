@@ -186,9 +186,9 @@ not a real cross-device identity story — see below.
 - **Implementation record naming inconsistency** (numbered vs.
   descriptive filenames) and the **`SLICE_003_IMPLEMENTATION_RECORD.md`
   duplicate**. Both flagged, neither resolved — deferred to a future
-  architectural exercise explicitly covering the Level 33 → URBANO
-  Gaming repository transition. Do not rename or delete anything here
-  without explicit instruction.
+  implementation-history normalization exercise. The repository identity
+  migration is complete; do not rename or delete historical records without
+  explicit instruction.
 - **UI Convergence Tier 2** (the Experience Layer). Not started. Does
   not begin until Tier 1 is validated by a real playtest.
 - **Experience Composition** — a real, named "Experience" concept
