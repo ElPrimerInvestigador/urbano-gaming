@@ -57,8 +57,8 @@ paused to do UI Convergence first.
 
 - Local development folder, git repository, and GitHub repository
   connected and synchronized.
-- Production deployment: legacy Vercel project `level33-mvp-playtest`,
-  historically aliased at `https://level33-mvp-playtest.vercel.app`; migration to the URBANO Gaming deployment identity is tracked by MIG-005. Deployed via
+- Production deployment: Vercel project `urbano-gaming-playtest`,
+  aliased at `https://urbano-gaming-playtest.vercel.app`. The former Level 33 alias was retired under MIG-005. Deployed via
   the Vercel CLI (no GitHub auto-deploy integration).
 - Supabase project backing all persistence; all migrations through
   `0029` applied.
