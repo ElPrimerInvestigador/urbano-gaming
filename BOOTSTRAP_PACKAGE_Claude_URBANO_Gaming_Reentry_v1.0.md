@@ -108,7 +108,7 @@ Tests, playtests, implementation records, and transfer evidence
 | `PROJECT_STATUS.md` | Current with 2026-08-07 correction | URBANO Gaming implementation | Capability and validation baseline | Active |
 | `HANDOFF.md` | Current with 2026-08-07 correction | URBANO Gaming implementation | Detailed implementation continuity and deferred questions | Active |
 | `PLATFORM_CAPABILITY_REVIEW.md` | Current | URBANO Gaming architecture | Capability evidence and recommendations, not automatic authorization | Active |
-| `ENGINEERING_PATTERNS.md` | Current implementation evidence | TecnoMovi engineering | Reusable validated implementation patterns | Active / untracked at bootstrap baseline |
+| `ENGINEERING_PATTERNS.md` | Current implementation evidence | TecnoMovi engineering | Reusable validated implementation patterns | Active / tracked |
 | KT-URBANO-GAMING-2026-001 | Historical transfer with current genealogy notice | Knowledge OS | Original implementation lineage | Historical evidence |
 
 ## Source Verification
@@ -206,8 +206,7 @@ Re-bootstrap Claude and verify the canonical baseline. No feature implementation
 
 | Item | Owner | Classification | Effect on Activation | Next Review Trigger |
 |---|---|---|---|---|
-| `ENGINEERING_PATTERNS.md` is untracked | TecnoMovi engineering / founder | Non-blocking gap | Preserve; decide deliberately whether to commit | Re-entry review |
-| `.claude/` is untracked local tooling | Local implementation environment | Non-blocking gap | Keep secrets out; commit only by explicit decision | Re-entry review |
+| `.claude/launch.json` is tracked while `.claude/settings.local.json` is intentionally local and ignored | Local implementation environment | Established tooling boundary | Preserve the separation; never commit local permission history or secrets | Every tooling change |
 | Unscoped Vitest discovery includes live contract tests | TecnoMovi engineering | Operational caution | Use `npm test` for all 192 in-memory tests; use `npm run test:contract` only with authorization | Every validation run |
 | Formal history for Slices 003–006 | URBANO Gaming history authority | Deferred governance work | Does not block implementation | Explicit founder instruction |
 | Experience Composition | URBANO Gaming product/architecture | Recommendation, not authorization | Do not begin automatically | Founder selects next major capability |
@@ -292,7 +291,7 @@ Use the existing Slice lifecycle when the task is a product capability. Use a bo
 
 # Recommended Starting Point
 
-Begin with a read-only re-entry verification confirming that `dafafb9` is an ancestor of the current canonical branch and that the Claude re-bootstrap files are present. Report drift, classify `.claude/` and `ENGINEERING_PATTERNS.md`, and then execute only the implementation objective supplied by Hilton Toro.
+Begin with a read-only re-entry verification confirming that `dafafb9` is an ancestor of the current canonical branch, the Claude re-bootstrap files and tracked `ENGINEERING_PATTERNS.md` are present, `.claude/launch.json` is tracked, and `.claude/settings.local.json` remains ignored. Report any other drift, then execute only the implementation objective supplied by Hilton Toro.
 
 # Readiness Verification
 
