@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run __tests__/createSession.test.ts __tests__/joinSession.test.ts __tests__/lockLobby.test.ts __tests__/getSession.test.ts __tests__/completeSession.test.ts __tests__/startSession.test.ts __tests__/submitResponse.test.ts __tests__/closeSubmissions.test.ts __tests__/revealResults.test.ts __tests__/awardPoints.test.ts __tests__/multipleChoice.test.ts",
+    "test": "vitest run __tests__/createSession.test.ts __tests__/joinSession.test.ts __tests__/lockLobby.test.ts __tests__/getSession.test.ts __tests__/completeSession.test.ts __tests__/startSession.test.ts __tests__/submitResponse.test.ts __tests__/closeSubmissions.test.ts __tests__/revealResults.test.ts __tests__/awardPoints.test.ts __tests__/multipleChoice.test.ts __tests__/createSuccessorSession.test.ts",
     "test:contract": "vitest run __tests__/supabaseSessionRepository.contract.test.ts"
   },
   "dependencies": {

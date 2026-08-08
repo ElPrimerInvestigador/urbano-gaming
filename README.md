@@ -108,10 +108,11 @@ npm run test:contract
 
 Note: `npm test` runs an explicit file list in `package.json`, not a
 glob — a newly added `__tests__/*.test.ts` file must be added to that
-list by hand or it will silently not run under `npm test` (it still
-runs fine under a plain `npx vitest run`). This has already caused one
-test file to be missed; check `package.json`'s `test` script whenever
-a new test file is added.
+list by hand or it will silently not run under `npm test`. Do not use
+an unscoped `npx vitest run` as a local-only substitute: it also
+discovers the live Supabase contract suite when the environment is
+available. The re-bootstrap corrected the known omission; `npm test`
+now runs all 192 in-memory behavioral tests.
 
 ## Running the app locally
 

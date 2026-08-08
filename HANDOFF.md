@@ -1,5 +1,7 @@
 # Handoff — URBANO Gaming
 
+> **Current-state correction — 2026-08-07:** This handoff contains valuable detailed implementation history, but its closing phase description predates commits `d64ec46`, `c52506a`, `1099e51`, and the identity-migration commits through `dafafb9`. UI Convergence Tier 1, Structural Tier 2, Experience Layer v1, host hierarchy refinements, and the URBANO Gaming identity migration are committed. For fresh activation, `CLAUDE.md` and `BOOTSTRAP_PACKAGE_Claude_URBANO_Gaming_Reentry_v1.0.md` govern current state.
+
 Prepared for a fresh Claude conversation continuing this work. Read
 this before taking any action; it summarizes state established across
 prior sessions so it doesn't need to be rediscovered.
@@ -8,15 +10,12 @@ prior sessions so it doesn't need to be rediscovered.
 
 - Branch: `integrate/join-session`, pushed to `origin/main` as a clean
   fast-forward after every accepted slice — never a force-push.
-- Latest committed slice: `2675067` — "feat: add Authoring Workspace
-  for Multiple Choice content" (Slice 006).
-- **Currently uncommitted**: UI Convergence, Tier 1 (the Constitutional
-  Layer — Brandbook palette, typography, mark, mobile viewport,
-  debug-surface gating) is implemented and verified but held
-  uncommitted pending a repository synchronization pass and a final
-  constitutional consistency check. See `UI_CONVERGENCE_IMPLEMENTATION_RECORD.md`.
+- Pre-bootstrap implementation baseline: `dafafb9`. Slice 006 landed at `2675067`;
+  UI Convergence Tier 1, Structural Tier 2, Experience Layer v1, host
+  hierarchy refinements, and identity normalization landed afterward.
 - Slices 001 and 002 are **constitutionally accepted**, with full
-  history at `Level 33/History/Slices/Slice_001/` and `.../Slice_002/`.
+  historical event-time records at `../../../Level 33/History/Slices/Slice_001/`
+  and `../../../Level 33/History/Slices/Slice_002/`.
   Slices 003–006 are implemented, tested, and live-verified in
   production, but have **not** been through that formal ceremony, and
   **do not have** `History/Slices/` folders yet. This is a deliberate,
@@ -110,11 +109,11 @@ errors translated from named Postgres exceptions.
 
 ## Validation status
 
-- **In-memory behavioral suite**: 192 tests across 12 files under
-  plain `vitest run`; `npm test` currently runs only 181 of these,
-  because `package.json`'s `test` script is an explicit file list that
-  was never updated to include `createSuccessorSession.test.ts`. Known,
-  unresolved, low-priority — flagged again here so it isn't lost.
+- **In-memory behavioral suite**: 192 tests across 12 files. The
+  re-bootstrap added `createSuccessorSession.test.ts` to `npm test`,
+  so the primary command now runs the complete behavioral suite.
+  Do not use an unscoped `npx vitest run` for local-only validation;
+  it also discovers the live Supabase contract suite.
 - **Live Supabase contract suite** (`npm run test:contract`): proves
   every atomic Postgres RPC function against a real database.
 - `npx tsc --noEmit` and `npm run build`: clean as of the latest
@@ -189,8 +188,9 @@ not a real cross-device identity story — see below.
   implementation-history normalization exercise. The repository identity
   migration is complete; do not rename or delete historical records without
   explicit instruction.
-- **UI Convergence Tier 2** (the Experience Layer). Not started. Does
-  not begin until Tier 1 is validated by a real playtest.
+- Further Experience Layer evolution is not automatically authorized.
+  Structural Tier 2 and Experience Layer v1 are already implemented;
+  inspect their records and obtain explicit scope before extending them.
 - **Experience Composition** — a real, named "Experience" concept
   composing multiple Interaction Engines with a shared scoring/
   sequencing model, recommended in `PLATFORM_CAPABILITY_REVIEW.md` as
@@ -208,9 +208,9 @@ not a real cross-device identity story — see below.
   `PLATFORM_CAPABILITY_REVIEW.md`; watch for triggering evidence rather
   than building preemptively.
 
-## Current phase
+## Historical phase at the time of this handoff
 
-Repository synchronization is in progress: this file, `README.md`,
+At the time this section was written, repository synchronization was in progress: this file, `README.md`,
 and `PROJECT_STATUS.md` have just been brought up to date through
 Slice 006 and UI Convergence Tier 1, and `UI_CONVERGENCE_REVIEW.md` /
 `PLATFORM_CAPABILITY_REVIEW.md` are being written into the repository
@@ -219,7 +219,9 @@ synchronization completes, a final constitutional consistency review
 of the Tier 1 implementation against the Brandbook happens, then Tier
 1 is committed, pushed, and deployed.
 
-No next implementation slice is authorized. If asked what's next, the
+That synchronization and the later identity migration are now complete.
+
+No next implementation slice is authorized by this historical handoff. If asked what's next, the
 established process is the same stress-test-ranked Next Slice
 Selection used for every prior slice — informed by, but not
 automatically deciding in favor of, `PLATFORM_CAPABILITY_REVIEW.md`'s

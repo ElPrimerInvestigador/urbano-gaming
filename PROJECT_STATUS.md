@@ -1,17 +1,17 @@
 # URBANO Gaming — Project Status
 
+> **Current-state correction — 2026-08-07:** UI Convergence Tier 1, Structural Tier 2, Experience Layer v1, subsequent host hierarchy refinements, and the URBANO Gaming identity migration are committed through `dafafb9`. Statements below that describe Tier 1 as uncommitted or Tier 2 as not started preserve the earlier handoff state and are superseded by this correction, `CLAUDE.md`, and `BOOTSTRAP_PACKAGE_Claude_URBANO_Gaming_Reentry_v1.0.md`.
+
 ## Current Stage
 
 Six vertical slices are implemented, tested, and live-verified against
-production. A seventh phase — UI Convergence, Tier 1 (the
-Constitutional Layer: Brandbook palette, typography, mark, mobile
-viewport, debug-surface removal) — is implemented and verified but
-**not yet committed** as of this writing; see "Pending" below.
+production. UI Convergence Tier 1, Structural Tier 2, Experience Layer
+v1, and subsequent host hierarchy refinements are also committed.
 
 | Slice | What it delivered | Status |
 |---|---|---|
-| 001 — Session/Interaction separation | A Session runs any number of sequential interactions instead of exactly one | **Constitutionally accepted.** Full history in `Level 33/History/Slices/Slice_001/`. |
-| 002 — Scored Multi-Round Experience | A cross-engine, session-scoped point ledger and standings | **Constitutionally accepted.** Full history in `Level 33/History/Slices/Slice_002/`. |
+| 001 — Session/Interaction separation | A Session runs any number of sequential interactions instead of exactly one | **Constitutionally accepted.** Historical event-time record at `../../../Level 33/History/Slices/Slice_001/`. |
+| 002 — Scored Multi-Round Experience | A cross-engine, session-scoped point ledger and standings | **Constitutionally accepted.** Historical event-time record at `../../../Level 33/History/Slices/Slice_002/`. |
 | 003 — Second Interaction Engine (Multiple Choice) | A second engine proving the generic-instance-plus-extension pattern | Implemented, tested, live-verified. `SLICE_003_REVIEW_PACKAGE.md` explicitly disclaims constitutional acceptance. No `History/Slices/Slice_003/` yet — deliberately deferred (governance artifact, not implementation artifact; see `HANDOFF.md`). |
 | 004 — Passive Session Synchronization | Automatic host/participant sync, replacing manual "Check for updates" as the primary loop | Implemented, tested, live-verified on a real device in production. No formal constitutional acceptance ceremony; no `History/Slices/Slice_004/` yet. |
 | 005 — Session Continuity | Rematches (linked successor sessions) and independent re-joining | Implemented, tested, live-verified on a real device in production. No formal constitutional acceptance ceremony; no `History/Slices/Slice_005/` yet. |
@@ -26,7 +26,10 @@ acceptance ceremony Slices 001 and 002 went through. Treat 003–006 as
 Reconstructing their `History/Slices/` folders is explicitly deferred
 to a separate, later pass — see `HANDOFF.md`.
 
-## Pending (not yet committed)
+## Historical pending state — superseded
+
+The following paragraph records the state before commits `d64ec46`,
+`c52506a`, and `1099e51`; it is not the current backlog.
 
 **UI Convergence, Tier 1** — the Constitutional Layer of a broader UI
 Convergence effort (see `UI_CONVERGENCE_REVIEW.md` for the full review
@@ -36,10 +39,9 @@ a live round-trip through a real game, all clean) but held uncommitted
 pending this repository synchronization pass and a final constitutional
 consistency check against the Brandbook.
 
-**Tier 2** (the Experience Layer — a purple accent, reveal/celebration
-animation, and similar) has **not started**. Per explicit agreement,
-it does not begin until Tier 1 is validated by a real playtest — the
-sequence itself is treated as protecting the evidence.
+Structural Tier 2 and Experience Layer v1 subsequently landed. Consult
+`STRUCTURAL_TIER2_IMPLEMENTATION_RECORD.md` and Git history for current
+evidence rather than treating this historical gate as active.
 
 ## Recommended next major capability
 
@@ -65,10 +67,9 @@ paused to do UI Convergence first.
 
 ## Validation summary
 
-- 192 in-memory/behavioral tests plus a live Supabase contract suite
-  (`npm test` currently runs 181 of these — see the `README.md` note
-  about `package.json`'s explicit test-file list needing manual
-  updates; `createSuccessorSession.test.ts` is not yet in that list).
+- 192 in-memory/behavioral tests plus a separately gated live Supabase
+  contract suite. The re-bootstrap corrected `npm test` so it now runs
+  all 192 behavioral tests.
 - `npx tsc --noEmit` and `npm run build`: clean.
 - Every slice through 006 has been verified live against production,
   not only in-memory — including a real multi-game playtest with real
@@ -80,8 +81,8 @@ paused to do UI Convergence first.
 Prepared: ✅
 Designed: ✅ (per-slice; Experience Composition designed at the
   capability level, not yet slice-designed)
-Implemented: ✅ (Slices 001–006); Tier 1 UI Convergence implemented,
-  pending commit
+Implemented: ✅ (Slices 001–006, UI Convergence Tier 1, Structural Tier
+  2, Experience Layer v1, and host hierarchy refinements)
 Integrated: ✅
 Validated: ✅ (see Validation summary above)
 Operational Simulation: Complete for every slice through 006, including
