@@ -23,8 +23,70 @@ export type PauseReason = "MANUAL" | "HOST_DISCONNECTED" | null;
  * slice was implicitly OPEN_RESPONSE — this type makes that explicit
  * rather than leaving it inferable only from which engine-specific
  * extension table has a matching row.
+ *
+ * Slice 007 (Voting Engine): adds "VOTING". Committed Product
+ * architecture (Gameplay_Outcome_Taxonomy.md, Interaction_Engine_Taxonomy.md,
+ * 433b61e) — casting a vote is engine-owned interaction data, not a
+ * `submission` Outcome; `placement` is the real Outcome, and it is
+ * derived at read time rather than persisted (see
+ * computeVotingResults in db/sessionRepository.ts), mirroring how
+ * Multiple Choice's own `correctness` is never stored either.
  */
-export type EngineType = "OPEN_RESPONSE" | "MULTIPLE_CHOICE";
+export type EngineType = "OPEN_RESPONSE" | "MULTIPLE_CHOICE" | "VOTING";
+
+/**
+ * Slice 007 (Voting Engine). The two Candidate Resolution sources
+ * START_SESSION accepts for a Voting interaction, kept as one
+ * structured, mutually-exclusive-by-construction input rather than two
+ * flat optional parameters — this is the "structured domain input"
+ * referenced throughout this slice's design; SupabaseSessionRepository
+ * decomposes it into flat RPC parameters at the boundary to
+ * start_session_atomically (see that method's comment for why the
+ * decomposition happens there and not here).
+ */
+export type VotingCandidateSource =
+  | { type: "HOST_AUTHORED"; candidates: string[] }
+  | { type: "SUBMISSION"; sourceInteractionInstanceId: string };
+
+/**
+ * Slice 007. A Voting Candidate as exposed by GET_SESSION — a stable
+ * id plus a presentation reference. `label` is this slice's text-only
+ * presentation field, not a claim about the final non-text Candidate
+ * architecture (see Interaction_Engine_Taxonomy.md's Voting Engine
+ * section) — a future non-text Candidate is a real design decision to
+ * be made against real evidence, not inferred from the fact that this
+ * field could technically hold a URL today.
+ */
+export interface VotingCandidateSummary {
+  candidateId: string;
+  ordinal: number;
+  label: string;
+}
+
+/**
+ * Slice 007. One Candidate's derived result, exposed by GET_SESSION
+ * only once the interaction reaches RESULT_REVEAL. Computed live from
+ * immutable vote data — never persisted — mirroring how Multiple
+ * Choice's own `isCorrect` is derived, not stored. `rank` uses standard
+ * competition ranking: tied candidates share a rank, and the next
+ * distinct count skips ranks by the number tied.
+ */
+export interface VotingResultSummary {
+  candidateId: string;
+  label: string;
+  voteCount: number;
+  rank: number;
+}
+
+/** Result of a successful CAST_VOTE. */
+export interface CastVoteResult {
+  voteId: string;
+  sessionId: string;
+  interactionInstanceId: string;
+  participantId: string;
+  candidateId: string;
+  updatedAt: string;
+}
 
 /**
  * Slice 001 (Session / Interaction separation): the lifecycle of one
@@ -321,6 +383,35 @@ export interface GetSessionResult {
   preparedQuestions: PreparedQuestionSummary[] | null;
   successorSessionId: string | null;
   successorRoomCode: string | null;
+  /**
+   * Slice 007 (Voting Engine). Populated whenever currentEngineType is
+   * "VOTING", regardless of interaction state — candidates must be
+   * visible before voting can happen at all, mirroring how MULTIPLE_CHOICE's
+   * `currentPrompt.options` is never reveal-gated. Null for every other
+   * engine.
+   */
+  currentVotingCandidates: VotingCandidateSummary[] | null;
+  /**
+   * Slice 007. The first GET_SESSION field whose value depends on the
+   * identity of the specific participant making the request, not only
+   * their broad role — every prior role-differentiated field
+   * (preparedQuestions) varies by host-vs-participant only. Null for
+   * the host (who does not vote in this slice) and for a participant
+   * when the current interaction is not VOTING or they have not voted
+   * yet. Unlike Multiple Choice's selectedOptionIndex (client-tracked
+   * only, since GET_SESSION never echoes it back before reveal), this
+   * field IS authoritatively echoed back before reveal — a deliberate
+   * new precedent, not an oversight.
+   */
+  myVoteCandidateId: string | null;
+  /**
+   * Slice 007. Null until the current VOTING interaction reaches
+   * RESULT_REVEAL, mirroring `submissions`'s existing reveal-gating
+   * exactly. No role gating once revealed — mirrors `submissions`'s own
+   * no-gating precedent, since Voting has no private "correct answer"
+   * concept to withhold from anyone.
+   */
+  votingResults: VotingResultSummary[] | null;
 }
 
 /** Raised when a generated room code collides with an active session. */
@@ -680,6 +771,81 @@ export class PredecessorSessionNotCompleteError extends Error {
         : "Predecessor session is not yet SESSION_COMPLETE."
     );
     this.name = "PredecessorSessionNotCompleteError";
+  }
+}
+
+/**
+ * Slice 007 (Voting Engine). Raised by START_SESSION when both
+ * preparedQuestionId and votingCandidateSource are supplied on the
+ * same call. The two are mutually exclusive engine-selection targets;
+ * silently letting one win (matching promptText's existing "ignored
+ * when preparedQuestionId is set" precedent) would mask what is very
+ * likely a client bug rather than an intentional request, so this is
+ * rejected outright instead.
+ */
+export class AmbiguousStartSessionTargetError extends Error {
+  constructor() {
+    super(
+      "At most one of preparedQuestionId or votingCandidateSource may be supplied."
+    );
+    this.name = "AmbiguousStartSessionTargetError";
+  }
+}
+
+/**
+ * Slice 007 (Voting Engine). Raised by START_SESSION when a
+ * HOST_AUTHORED votingCandidateSource supplies fewer than two distinct,
+ * non-empty (post-trim) candidate labels — mirrors InvalidOptionsError's
+ * exact floor for Multiple Choice options.
+ */
+export class InvalidVotingCandidatesError extends Error {
+  constructor() {
+    super(
+      "A Voting interaction must supply at least two distinct, non-empty candidates."
+    );
+    this.name = "InvalidVotingCandidatesError";
+  }
+}
+
+/**
+ * Slice 007. Raised by START_SESSION when a SUBMISSION
+ * votingCandidateSource names an interaction instance that does not
+ * exist, or does not belong to this session.
+ */
+export class VotingSourceInteractionNotFoundError extends Error {
+  constructor() {
+    super(
+      "No interaction exists for this id in this session to source Voting candidates from."
+    );
+    this.name = "VotingSourceInteractionNotFoundError";
+  }
+}
+
+/**
+ * Slice 007. Raised by START_SESSION when a SUBMISSION
+ * votingCandidateSource names an interaction instance that exists and
+ * belongs to this session, but is not OPEN_RESPONSE, is not at
+ * RESULT_REVEAL, or has zero submissions to source candidates from.
+ */
+export class VotingSourceInteractionNotEligibleError extends Error {
+  constructor() {
+    super(
+      "The named interaction is not an OPEN_RESPONSE interaction at RESULT_REVEAL with at least one submission."
+    );
+    this.name = "VotingSourceInteractionNotEligibleError";
+  }
+}
+
+/**
+ * Slice 007. Raised by CAST_VOTE when the supplied candidateId does
+ * not identify a Voting Candidate belonging to the session's current
+ * interaction instance — the Voting analogue of
+ * InvalidOptionSelectionError.
+ */
+export class InvalidCandidateSelectionError extends Error {
+  constructor() {
+    super("Selected candidate is not valid for this Voting interaction.");
+    this.name = "InvalidCandidateSelectionError";
   }
 }
 

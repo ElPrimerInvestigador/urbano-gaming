@@ -1,5 +1,5 @@
 import type { SessionRepository } from "./db/sessionRepository";
-import type { StartSessionResult } from "./types";
+import type { StartSessionResult, VotingCandidateSource } from "./types";
 import {
   SessionNotFoundError,
   HostTokenMismatchError,
@@ -7,6 +7,8 @@ import {
   PreviousInteractionNotRevealedError,
   EmptyPromptTextError,
   PromptTextTooLongError,
+  InvalidVotingCandidatesError,
+  AmbiguousStartSessionTargetError,
 } from "./types";
 
 const MAX_PROMPT_TEXT_LENGTH = 1000;
@@ -73,17 +75,59 @@ function validateAndTrimPromptText(text: string): string {
  * auto-selects the lowest unconsumed ordinal from GET_SESSION's
  * preparedQuestions field — but the request it sends here always
  * carries that specific id.
+ *
+ * Slice 007 (Voting Engine): an optional votingCandidateSource starts a
+ * VOTING interaction instead, mutually exclusive with
+ * preparedQuestionId — supplying both explicitly throws
+ * AmbiguousStartSessionTargetError rather than silently letting one
+ * win, since silent precedence would mask a likely client bug. The
+ * repository's atomic function re-enforces this same rejection
+ * authoritatively. Unlike the prepared-question path,
+ * promptText IS still required here — Voting always needs host-framed
+ * text, since neither Candidate source supplies one. A HOST_AUTHORED
+ * source's candidate list gets the same fast-path validation
+ * prepareQuestions.ts's validateAndTrimOptions already applies to
+ * Multiple Choice options (at least two distinct, non-empty entries);
+ * a SUBMISSION source's eligibility (belongs to this session, is
+ * OPEN_RESPONSE, is RESULT_REVEAL, has submissions) is deep enough that
+ * only the atomic function can authoritatively check it.
  */
 export async function startSession(
   repo: SessionRepository,
   sessionId: string,
   hostToken: string,
   promptText: string,
-  preparedQuestionId?: string | null
+  preparedQuestionId?: string | null,
+  votingCandidateSource?: VotingCandidateSource | null
 ): Promise<StartSessionResult> {
+  if (preparedQuestionId && votingCandidateSource) {
+    throw new AmbiguousStartSessionTargetError();
+  }
+
   const trimmedPromptText = preparedQuestionId
     ? ""
     : validateAndTrimPromptText(promptText);
+
+  let normalizedVotingCandidateSource: VotingCandidateSource | undefined;
+  if (votingCandidateSource) {
+    if (votingCandidateSource.type === "HOST_AUTHORED") {
+      const trimmed = votingCandidateSource.candidates.map((c) => c.trim());
+      const distinct = new Set(trimmed);
+      if (
+        trimmed.length < 2 ||
+        trimmed.some((c) => c.length === 0) ||
+        distinct.size !== trimmed.length
+      ) {
+        throw new InvalidVotingCandidatesError();
+      }
+      normalizedVotingCandidateSource = {
+        type: "HOST_AUTHORED",
+        candidates: trimmed,
+      };
+    } else {
+      normalizedVotingCandidateSource = votingCandidateSource;
+    }
+  }
 
   const session = await repo.getSessionById(sessionId);
   if (!session) {
@@ -114,7 +158,8 @@ export async function startSession(
     session.sessionId,
     hostToken,
     trimmedPromptText,
-    preparedQuestionId
+    preparedQuestionId,
+    normalizedVotingCandidateSource
   );
 
   return {

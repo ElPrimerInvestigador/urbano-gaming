@@ -423,9 +423,22 @@
         <div id="openResponseStartForm" class="collapsed">
           <textarea id="promptTextInput" rows="2" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="Ask an ad-hoc open-response question…"></textarea>
         </div>
+        <!-- Slice 007 (Voting Engine). Independent of the prepared-
+             question / open-response toggle above — a third, always-
+             available alternative at "time to start the next Turn,"
+             not woven into that pair's own state, so its existing
+             behavior stays unchanged. See resolvePrimaryAction(). -->
+        <div id="votingStartForm" class="collapsed">
+          <textarea id="votingPromptTextInput" rows="1" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="Vote prompt, e.g. &quot;Vote for the funniest!&quot;"></textarea>
+          <textarea id="votingCandidatesInput" rows="3" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="One candidate per line (at least two)"></textarea>
+          <button class="btn-secondary" id="btn-start-voting-from-submissions" style="display:none; margin-bottom:8px;" onclick="startVotingFromSubmissions()">Start Voting on the previous Turn's responses instead</button>
+        </div>
         <button class="btn-primary" id="btn-primary-action"></button>
         <div class="secondary-start-toggle" id="secondaryStartToggle" style="display:none;">
           <button class="btn-ghost" onclick="toggleOpenResponseStartForm()" id="btn-toggle-open-response">Ask an ad-hoc question instead</button>
+        </div>
+        <div class="secondary-start-toggle" id="votingStartToggle" style="display:none;">
+          <button class="btn-ghost" onclick="toggleVotingStartForm()" id="btn-toggle-voting">Start a Vote instead</button>
         </div>
       </div>
 
@@ -454,6 +467,15 @@
       <div class="card" id="resultsCard" style="display:none;">
         <h2>Results</h2>
         <div id="resultsList"></div>
+      </div>
+
+      <!-- Slice 007 (Voting Engine). Kept separate from resultsCard
+           rather than branching one function over two different result
+           shapes (participant+text+isCorrect vs candidate+voteCount+rank) —
+           see renderVotingResults(). -->
+      <div class="card" id="votingResultsCard" style="display:none;">
+        <h2>Voting Results</h2>
+        <div id="votingResultsList"></div>
       </div>
     </div>
   </div>
@@ -672,6 +694,12 @@ let manageContentAutoCollapsed = false;
 // remain, since Open Response then becomes the only path and is shown
 // unconditionally.
 let openResponseFormExpanded = false;
+// Slice 007 (Voting Engine). Whether the Voting start form is
+// currently shown as the primary path — independent of
+// openResponseFormExpanded, since Voting is a third, always-available
+// alternative at "time to start the next Turn," not a member of that
+// existing pair's own toggle state. See resolvePrimaryAction().
+let votingFormExpanded = false;
 
 function saveHostState() {
   sessionStorage.setItem(HOST_STORAGE_KEY, JSON.stringify(hostState));
@@ -1477,9 +1505,18 @@ function resolvePrimaryAction() {
   const btn = document.getElementById("btn-primary-action");
   const secondaryToggle = document.getElementById("secondaryStartToggle");
   const openResponseForm = document.getElementById("openResponseStartForm");
+  const votingForm = document.getElementById("votingStartForm");
+  const votingToggle = document.getElementById("votingStartToggle");
+  const votingSourceBtn = document.getElementById("btn-start-voting-from-submissions");
+
+  function hideVotingUI() {
+    votingForm.classList.add("collapsed");
+    votingToggle.style.display = "none";
+  }
 
   if (!sessionLifecycleState || sessionLifecycleState === "SESSION_COMPLETE") {
     bar.style.display = "none";
+    hideVotingUI();
     return;
   }
   bar.style.display = "block";
@@ -1487,6 +1524,7 @@ function resolvePrimaryAction() {
   if (sessionLifecycleState === "LOBBY_OPEN") {
     openResponseForm.classList.add("collapsed");
     secondaryToggle.style.display = "none";
+    hideVotingUI();
     btn.textContent = "Lock Lobby";
     btn.onclick = lockLobby;
     return;
@@ -1495,6 +1533,7 @@ function resolvePrimaryAction() {
   if (interactionLifecycleState === "PROMPT_ACTIVE") {
     openResponseForm.classList.add("collapsed");
     secondaryToggle.style.display = "none";
+    hideVotingUI();
     btn.textContent = "Close Submissions";
     btn.onclick = closeSubmissions;
     return;
@@ -1503,6 +1542,7 @@ function resolvePrimaryAction() {
   if (interactionLifecycleState === "SUBMISSIONS_CLOSED") {
     openResponseForm.classList.add("collapsed");
     secondaryToggle.style.display = "none";
+    hideVotingUI();
     btn.textContent = "Reveal Results";
     btn.onclick = revealResults;
     return;
@@ -1514,6 +1554,31 @@ function resolvePrimaryAction() {
   // always "ask for text." Both stay reachable — only which one is the
   // *primary* action changes, and the host can flip between them.
   const turnNumber = (interactionNumber || 0) + 1;
+
+  // Slice 007 (Voting Engine). Voting is a third, always-available
+  // alternative at this exact decision point — shown via its own toggle,
+  // independent of the prepared-question/open-response pair below.
+  // "Start Voting on the previous Turn's responses" is offered only when
+  // the interaction that just finished was itself Open Response and
+  // revealed — the same moment currentEngineType/interactionLifecycleState
+  // already describe it.
+  votingToggle.style.display = "block";
+  const votingSourceEligible =
+    currentEngineType === "OPEN_RESPONSE" && interactionLifecycleState === "RESULT_REVEAL";
+  votingSourceBtn.style.display = votingSourceEligible ? "inline-block" : "none";
+
+  if (votingFormExpanded) {
+    openResponseForm.classList.add("collapsed");
+    votingForm.classList.remove("collapsed");
+    secondaryToggle.style.display = "none";
+    document.getElementById("btn-toggle-voting").textContent = "Cancel — choose a different Turn type";
+    btn.textContent = `Start Turn ${turnNumber}`;
+    btn.onclick = startVoting;
+    return;
+  }
+  votingForm.classList.add("collapsed");
+  document.getElementById("btn-toggle-voting").textContent = "Start a Vote instead";
+
   const next = lowestUnconsumedPreparedQuestion();
 
   if (next && !openResponseFormExpanded) {
@@ -1537,6 +1602,12 @@ function toggleOpenResponseStartForm() {
   resolvePrimaryAction();
 }
 
+// Slice 007 (Voting Engine).
+function toggleVotingStartForm() {
+  votingFormExpanded = !votingFormExpanded;
+  resolvePrimaryAction();
+}
+
 function renderParticipants(participants) {
   document.getElementById("participantCount").textContent = participants.length;
   document.getElementById("participantList").innerHTML = participants
@@ -1549,7 +1620,7 @@ function renderParticipants(participants) {
 // stays null until RESULT_REVEAL regardless of caller role — this is
 // the platform's first genuinely private-until-reveal field, and this
 // function must not render it before GET_SESSION itself reveals it.
-function renderPrompt(currentPrompt, engineType) {
+function renderPrompt(currentPrompt, engineType, votingCandidates) {
   const card = document.getElementById("promptCard");
   const optionsList = document.getElementById("promptOptionsList");
   const engineTag = document.getElementById("engineTag");
@@ -1561,9 +1632,24 @@ function renderPrompt(currentPrompt, engineType) {
   card.style.display = "block";
   document.getElementById("promptText").textContent = currentPrompt.text;
   engineTag.innerHTML =
-    engineType === "MULTIPLE_CHOICE" ? '<span class="engine-tag">Multiple Choice</span>' : "";
+    engineType === "MULTIPLE_CHOICE" ? '<span class="engine-tag">Multiple Choice</span>' :
+    engineType === "VOTING" ? '<span class="engine-tag">Voting</span>' : "";
 
-  if (currentPrompt.options) {
+  // Slice 007 (Voting Engine): Candidates live in their own field, not
+  // currentPrompt.options — a Voting Candidate is a stable id +
+  // presentation reference, not an index-referenced option, so it
+  // cannot reuse Multiple Choice's options shape. No host-known
+  // "correct" tag here — Voting has no such concept.
+  if (engineType === "VOTING" && votingCandidates) {
+    optionsList.innerHTML = votingCandidates
+      .map(
+        (c) => `<li class="option-row">
+          <span class="option-index-badge">${c.ordinal + 1}</span>
+          <span>${c.label}</span>
+        </li>`
+      )
+      .join("");
+  } else if (currentPrompt.options) {
     optionsList.innerHTML = currentPrompt.options
       .map((option, i) => {
         const isCorrect = currentPrompt.correctOptionIndex === i;
@@ -1614,6 +1700,35 @@ function renderProgress(submittedCount, eligibleParticipantCount) {
 // below clears this cache explicitly for that reason, mirroring
 // participant.html's identical fix.
 let lastKnownSubmissions = null;
+// Slice 007 (Voting Engine). Identical caching pattern to
+// lastKnownSubmissions, applied to votingResults — without it,
+// votingResultsCard would vanish the instant SESSION_COMPLETE is
+// reached (GET_SESSION resets votingResults to null there, mirroring
+// submissions' own pre-existing behavior), even though the results
+// were already fully visible moments earlier.
+let lastKnownVotingResults = null;
+
+// Slice 007 (Voting Engine). Kept separate from renderResults rather
+// than branching one function over two different shapes — see
+// votingResultsCard's comment.
+function renderVotingResults(votingResults) {
+  const card = document.getElementById("votingResultsCard");
+  const effective = votingResults ?? (sessionLifecycleState === "SESSION_COMPLETE" ? lastKnownVotingResults : null);
+  if (votingResults) lastKnownVotingResults = votingResults;
+
+  if (!effective) {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+  const sorted = [...effective].sort((a, b) => a.rank - b.rank);
+  document.getElementById("votingResultsList").innerHTML =
+    sorted
+      .map(
+        (r) => `<div class="result-card"><div class="result-name">#${r.rank} — ${r.label}</div><div class="result-text">${r.voteCount} vote${r.voteCount === 1 ? "" : "s"}</div></div>`
+      )
+      .join("") || `<div class="waiting">No votes were cast.</div>`;
+}
 
 function renderResults(submissions) {
   const card = document.getElementById("resultsCard");
@@ -1777,6 +1892,7 @@ function applySessionSnapshot(data) {
     // comment above renderResults for the scenario this prevents.
     if (data.interactionNumber !== lastSeenInteractionNumber) {
       lastKnownSubmissions = null;
+      lastKnownVotingResults = null;
       lastSeenInteractionNumber = data.interactionNumber;
     }
     interactionNumber = data.interactionNumber;
@@ -1785,9 +1901,10 @@ function applySessionSnapshot(data) {
   renderInteractionLabel();
   updateActionAvailability();
   if (data.participants) renderParticipants(data.participants);
-  if ("currentPrompt" in data) renderPrompt(data.currentPrompt, currentEngineType);
+  if ("currentPrompt" in data) renderPrompt(data.currentPrompt, currentEngineType, data.currentVotingCandidates);
   if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
   if ("submissions" in data) renderResults(data.submissions);
+  if ("votingResults" in data) renderVotingResults(data.votingResults);
   if ("standings" in data) renderStandings(data.standings);
   updateExperienceLayer();
 }
@@ -1814,6 +1931,7 @@ function switchToNewSession(json) {
   preparedQuestions = [];
   lastKnownStandings = [];
   lastKnownSubmissions = null;
+  lastKnownVotingResults = null;
   lastSeenInteractionNumber = null;
   currentEngineType = null;
   successorSessionId = null;
@@ -1821,6 +1939,7 @@ function switchToNewSession(json) {
   awardInFlight = {};
   manageContentAutoCollapsed = false;
   openResponseFormExpanded = false;
+  votingFormExpanded = false;
   expLastInteractionState = null;
   expCelebrationPlayed = false;
   document.getElementById("authoringWorkspaceBody").classList.remove("collapsed");
@@ -1887,6 +2006,59 @@ async function startSession() {
     renderNotice(null);
     document.getElementById("promptTextInput").value = "";
     openResponseFormExpanded = false;
+    await hostRefresh();
+  } else {
+    renderNotice(classifyError(r));
+  }
+}
+
+// Slice 007 (Voting Engine). Host-authored Candidate path — mirrors
+// startSession() structurally, sending a votingCandidateSource instead
+// of promptText alone.
+async function startVoting() {
+  const promptText = document.getElementById("votingPromptTextInput").value;
+  const candidatesRaw = document.getElementById("votingCandidatesInput").value;
+  const candidates = candidatesRaw
+    .split("\n")
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, {
+    hostToken: hostState.hostToken,
+    promptText,
+    votingCandidateSource: { type: "HOST_AUTHORED", candidates },
+  });
+  show("START_SESSION (Voting) (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    renderNotice(null);
+    document.getElementById("votingPromptTextInput").value = "";
+    document.getElementById("votingCandidatesInput").value = "";
+    votingFormExpanded = false;
+    await hostRefresh();
+  } else {
+    renderNotice(classifyError(r));
+  }
+}
+
+// Slice 007. Open Response -> Voting composition — sources Candidates
+// from the Turn that just finished (currentInteractionInstanceId, at
+// the moment this button is even shown — see resolvePrimaryAction's
+// votingSourceEligible check) rather than an arbitrary past Turn.
+async function startVotingFromSubmissions() {
+  const promptText =
+    document.getElementById("votingPromptTextInput").value || "Vote for your favorite!";
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, {
+    hostToken: hostState.hostToken,
+    promptText,
+    votingCandidateSource: {
+      type: "SUBMISSION",
+      sourceInteractionInstanceId: currentInteractionInstanceId,
+    },
+  });
+  show("START_SESSION (Voting from submissions) (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    renderNotice(null);
+    document.getElementById("votingPromptTextInput").value = "";
+    votingFormExpanded = false;
     await hostRefresh();
   } else {
     renderNotice(classifyError(r));

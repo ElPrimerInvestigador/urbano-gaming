@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { startSession } from "@/lib/session/startSession";
 import { SupabaseSessionRepository } from "@/lib/session/db/supabaseSessionRepository";
+import type { VotingCandidateSource } from "@/lib/session/types";
 import {
   SessionNotFoundError,
   HostTokenMismatchError,
@@ -10,6 +11,10 @@ import {
   PromptTextTooLongError,
   PreparedQuestionNotFoundError,
   PreparedQuestionAlreadyConsumedError,
+  InvalidVotingCandidatesError,
+  VotingSourceInteractionNotFoundError,
+  VotingSourceInteractionNotEligibleError,
+  AmbiguousStartSessionTargetError,
 } from "@/lib/session/types";
 
 /**
@@ -25,6 +30,12 @@ import {
  * Slice 003 (Second Interaction Engine): an optional preparedQuestionId
  * starts a specific, previously-authored Multiple Choice question
  * instead. When supplied, promptText is not required.
+ *
+ * Slice 007 (Voting Engine): an optional votingCandidateSource starts a
+ * Voting interaction instead — either { type: "HOST_AUTHORED", candidates }
+ * or { type: "SUBMISSION", sourceInteractionInstanceId }. Mutually
+ * exclusive with preparedQuestionId; promptText IS still required for
+ * both Voting sub-cases, unlike the prepared-question path.
  *
  * The dynamic segment is named [identifier] for the same reason the
  * join/lock/complete/GET routes share it. Route is thin by design:
@@ -50,11 +61,13 @@ export async function POST(
   let hostToken: unknown;
   let promptText: unknown;
   let preparedQuestionId: unknown;
+  let votingCandidateSource: unknown;
   try {
     const body = (await request.json()) as Record<string, unknown>;
     hostToken = body?.hostToken;
     promptText = body?.promptText;
     preparedQuestionId = body?.preparedQuestionId;
+    votingCandidateSource = body?.votingCandidateSource;
   } catch {
     return NextResponse.json(
       { error: "Request body must be valid JSON." },
@@ -83,12 +96,59 @@ export async function POST(
   const hasPreparedQuestionId =
     typeof preparedQuestionId === "string" && preparedQuestionId.length > 0;
 
-  if (!hasPreparedQuestionId && typeof promptText !== "string") {
+  // Slice 007 (Voting Engine): minimal shape validation only — deep
+  // validation (candidate count/emptiness, source-interaction
+  // eligibility) is startSession()'s and the repository's job, not the
+  // route's, matching every other command here.
+  let normalizedVotingCandidateSource: VotingCandidateSource | null = null;
+  if (votingCandidateSource !== undefined && votingCandidateSource !== null) {
+    const source = votingCandidateSource as Record<string, unknown>;
+    if (
+      source.type === "HOST_AUTHORED" &&
+      Array.isArray(source.candidates) &&
+      source.candidates.every((c) => typeof c === "string")
+    ) {
+      normalizedVotingCandidateSource = {
+        type: "HOST_AUTHORED",
+        candidates: source.candidates as string[],
+      };
+    } else if (
+      source.type === "SUBMISSION" &&
+      typeof source.sourceInteractionInstanceId === "string" &&
+      source.sourceInteractionInstanceId.length > 0
+    ) {
+      normalizedVotingCandidateSource = {
+        type: "SUBMISSION",
+        sourceInteractionInstanceId: source.sourceInteractionInstanceId,
+      };
+    } else {
+      return NextResponse.json(
+        {
+          error:
+            'votingCandidateSource, if supplied, must be { type: "HOST_AUTHORED", candidates: string[] } or { type: "SUBMISSION", sourceInteractionInstanceId: string }.',
+        },
+        { status: 400 }
+      );
+    }
+  }
+
+  if (
+    !hasPreparedQuestionId &&
+    !normalizedVotingCandidateSource &&
+    typeof promptText !== "string"
+  ) {
     return NextResponse.json(
       {
         error:
           "promptText is required and must be a string, unless preparedQuestionId is supplied.",
       },
+      { status: 400 }
+    );
+  }
+
+  if (normalizedVotingCandidateSource && typeof promptText !== "string") {
+    return NextResponse.json(
+      { error: "promptText is required and must be a string for a Voting interaction." },
       { status: 400 }
     );
   }
@@ -101,7 +161,8 @@ export async function POST(
       sessionId,
       hostToken,
       typeof promptText === "string" ? promptText : "",
-      hasPreparedQuestionId ? (preparedQuestionId as string) : null
+      hasPreparedQuestionId ? (preparedQuestionId as string) : null,
+      normalizedVotingCandidateSource
     );
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
@@ -127,6 +188,18 @@ export async function POST(
       return NextResponse.json({ error: err.message }, { status: 404 });
     }
     if (err instanceof PreparedQuestionAlreadyConsumedError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof AmbiguousStartSessionTargetError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof InvalidVotingCandidatesError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof VotingSourceInteractionNotFoundError) {
+      return NextResponse.json({ error: err.message }, { status: 404 });
+    }
+    if (err instanceof VotingSourceInteractionNotEligibleError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
 

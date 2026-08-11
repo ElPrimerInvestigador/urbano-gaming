@@ -30,9 +30,10 @@ export async function getSession(
   const participants = await repo.getParticipantsForSession(sessionId);
 
   const isHost = bearerToken === session.hostToken;
-  const isParticipant = participants.some(
+  const callingParticipant = participants.find(
     (participant) => participant.participantToken === bearerToken
   );
+  const isParticipant = callingParticipant !== undefined;
 
   if (!isHost && !isParticipant) {
     throw new SessionAccessDeniedError();
@@ -58,6 +59,51 @@ export async function getSession(
         )
       : null;
   const isRevealed = currentInteraction?.state === "RESULT_REVEAL";
+
+  // Slice 007 (Voting Engine): resolved once, up front, alongside
+  // multipleChoiceDetails — the same "which engine produced the current
+  // interaction" branch point, extended to a third engine.
+  const isVotingInteraction = currentInteraction?.engineType === "VOTING";
+
+  // Candidates are visible as soon as the interaction starts, never
+  // reveal-gated — mirrors currentPrompt.options' identical visibility
+  // rule for Multiple Choice, and stays visible unconditionally
+  // (including after SESSION_COMPLETE) the same way currentPrompt
+  // itself does.
+  const currentVotingCandidates =
+    currentInteraction && isVotingInteraction
+      ? (
+          await repo.getVotingCandidatesForInteraction(
+            currentInteraction.interactionInstanceId
+          )
+        ).map((c) => ({
+          candidateId: c.candidateId,
+          ordinal: c.ordinal,
+          label: c.label,
+        }))
+      : null;
+
+  // Slice 007. The first GET_SESSION field scoped to the specific
+  // caller's own identity rather than only their role — see
+  // GetSessionResult's doc comment. Unlike Multiple Choice's
+  // selectedOptionIndex (client-tracked only, since GET_SESSION never
+  // echoes it back), this is authoritatively read back here, on every
+  // call, deliberately: casting a vote is not itself a Gameplay
+  // Outcome (see Gameplay_Outcome_Taxonomy.md, 433b61e), so there is
+  // nothing to withhold from the participant who cast it. Null for the
+  // host and for a participant who has not voted in the current
+  // interaction. Persists across session state the same way
+  // currentPrompt does, not gated to LOBBY_LOCKED like the transient
+  // progress/results fields below.
+  const myVoteCandidateId =
+    !isHost && callingParticipant && currentInteraction && isVotingInteraction
+      ? (
+          await repo.getVotesForInteractionInstance(
+            currentInteraction.interactionInstanceId
+          )
+        ).find((v) => v.participantId === callingParticipant.participantId)
+          ?.candidateId ?? null
+      : null;
 
   // Visible regardless of session state once an interaction has ever
   // started — mirrors the pre-Slice-001 precedent where currentPrompt
@@ -86,6 +132,7 @@ export async function getSession(
   let submittedCount: number | null = null;
   let eligibleParticipantCount: number | null = null;
   let submissions: GetSessionResult["submissions"] = null;
+  let votingResults: GetSessionResult["votingResults"] = null;
 
   // Both branches below require session.state === "LOBBY_LOCKED" —
   // this exactly preserves the pre-Slice-001 behavior of resetting to
@@ -98,11 +145,36 @@ export async function getSession(
     (currentInteraction.state === "PROMPT_ACTIVE" ||
       currentInteraction.state === "SUBMISSIONS_CLOSED")
   ) {
-    const allSubmissions = await repo.getSubmissionsForInteractionInstance(
+    // Slice 007: "submitted" becomes "voted" for a Voting interaction —
+    // same progress-bar semantics (submittedCount / eligibleParticipantCount),
+    // sourced from votes instead of submissions. No per-candidate tally
+    // leaks here — that is votingResults' job, reveal-gated below.
+    submittedCount = isVotingInteraction
+      ? (
+          await repo.getVotesForInteractionInstance(
+            currentInteraction.interactionInstanceId
+          )
+        ).length
+      : (
+          await repo.getSubmissionsForInteractionInstance(
+            currentInteraction.interactionInstanceId
+          )
+        ).length;
+    eligibleParticipantCount = participants.length;
+  } else if (
+    session.state === "LOBBY_LOCKED" &&
+    currentInteraction &&
+    currentInteraction.state === "RESULT_REVEAL" &&
+    isVotingInteraction
+  ) {
+    // Slice 007: `placement` derived live from immutable vote data —
+    // never persisted, mirroring Multiple Choice's own derived, never-
+    // stored `correctness`. Gated on RESULT_REVEAL exactly like
+    // `submissions` below, so per-candidate tallies never leak before
+    // reveal.
+    votingResults = await repo.getVotingResultsForInteractionInstance(
       currentInteraction.interactionInstanceId
     );
-    submittedCount = allSubmissions.length;
-    eligibleParticipantCount = participants.length;
   } else if (
     session.state === "LOBBY_LOCKED" &&
     currentInteraction &&
@@ -226,5 +298,8 @@ export async function getSession(
     preparedQuestions,
     successorSessionId,
     successorRoomCode,
+    currentVotingCandidates,
+    myVoteCandidateId,
+    votingResults,
   };
 }

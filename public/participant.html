@@ -266,6 +266,15 @@
     <div class="option-btn-list" id="optionsList"></div>
   </div>
 
+  <!-- Slice 007 (Voting Engine). Reuses the .option-btn / .option-btn-list
+       CSS already built for Multiple Choice — the button-list shape is
+       identical, only the click handler (castVote vs selectOption) and
+       backing data (Candidates vs options) differ. -->
+  <div class="card" id="votingCard" style="display:none;">
+    <div class="submitted-note" id="votingSubmittedNote" style="display:none;">Vote locked in — tap another candidate to change it until submissions close.</div>
+    <div class="option-btn-list" id="votingCandidatesList"></div>
+  </div>
+
   <div class="card" id="progressCard" style="display:none;">
     <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
     <div class="progress-label" id="progressLabel"></div>
@@ -274,6 +283,11 @@
   <div class="card" id="resultsCard" style="display:none;">
     <h2>Results</h2>
     <div id="resultsList"></div>
+  </div>
+
+  <div class="card" id="votingResultsCard" style="display:none;">
+    <h2>Voting Results</h2>
+    <div id="votingResultsList"></div>
   </div>
 
   <div class="card" id="standingsCard" style="display:none;">
@@ -418,6 +432,10 @@ let lastSeenInteractionNumber = null;
 // state (see renderResults) so it does not also bridge the unrelated
 // gap when a new interaction starts.
 let lastKnownSubmissions = null;
+// Slice 007 (Voting Engine). Identical caching pattern applied to
+// votingResults — see host.html's identical variable for the full
+// reasoning.
+let lastKnownVotingResults = null;
 // Slice 002 (Scored Multi-Round Experience). The session's own raw
 // state (LOBBY_OPEN | LOBBY_LOCKED | SESSION_COMPLETE) — needed
 // separately from computeEffectiveState's combined stage name, since
@@ -429,6 +447,14 @@ let currentSessionState = null;
 // draft text is client-side only; GET_SESSION never exposes a
 // participant's own submission before RESULT_REVEAL.
 let selectedOptionIndex = null;
+// Slice 007 (Voting Engine). Unlike selectedOptionIndex, this is NOT
+// client-tracked-only — GET_SESSION authoritatively echoes back the
+// caller's own vote before reveal (see getSession.ts's comment on
+// myVoteCandidateId), since casting a vote is not itself a Gameplay
+// Outcome with anything to withhold. Always set directly from the
+// server response in applySessionSnapshot, never mutated optimistically
+// here the way selectedOptionIndex is.
+let myVoteCandidateId = null;
 // Session Continuity slice. Populated from GET_SESSION only once this
 // session reaches SESSION_COMPLETE (see getSession.ts) — null until
 // then, and null if the host never creates a rematch.
@@ -616,22 +642,34 @@ function renderStateCard(state) {
 // than adding a parallel UI; correctOptionIndex stays null until
 // RESULT_REVEAL (see getSession.ts), so it is never rendered before
 // that regardless of which branch below executes.
-function renderPrompt(state, currentPrompt) {
+function renderPrompt(state, currentPrompt, votingCandidates) {
   const promptCard = document.getElementById("promptCard");
   const submitCard = document.getElementById("submitCard");
   const optionsCard = document.getElementById("optionsCard");
+  const votingCard = document.getElementById("votingCard");
   const isMultipleChoice = !!(currentPrompt && currentPrompt.options);
+  // Slice 007 (Voting Engine): inferred from votingCandidates' presence,
+  // the same style isMultipleChoice already uses for currentPrompt.options
+  // — Voting's Candidates live in their own field, not currentPrompt.
+  const isVoting = !!(votingCandidates && votingCandidates.length);
 
   if (state === "PROMPT_ACTIVE" && currentPrompt) {
     promptCard.style.display = "block";
     document.getElementById("promptText").textContent = currentPrompt.text;
-    if (isMultipleChoice) {
+    if (isVoting) {
+      submitCard.style.display = "none";
+      optionsCard.style.display = "none";
+      votingCard.style.display = "block";
+      renderVotingCandidateButtons(votingCandidates, true);
+    } else if (isMultipleChoice) {
       submitCard.style.display = "none";
       optionsCard.style.display = "block";
+      votingCard.style.display = "none";
       renderOptionButtons(currentPrompt, null, true);
     } else {
       submitCard.style.display = "block";
       optionsCard.style.display = "none";
+      votingCard.style.display = "none";
       document.getElementById("submittedNote").style.display = hasSubmittedThisPageLoad ? "block" : "none";
     }
   } else if (currentPrompt && (state === "SUBMISSIONS_CLOSED" || state === "RESULT_REVEAL" || state === "SESSION_COMPLETE")) {
@@ -640,18 +678,89 @@ function renderPrompt(state, currentPrompt) {
     promptCard.style.display = "block";
     document.getElementById("promptText").textContent = currentPrompt.text;
     submitCard.style.display = "none";
-    if (isMultipleChoice) {
+    if (isVoting) {
+      optionsCard.style.display = "none";
+      votingCard.style.display = "block";
+      renderVotingCandidateButtons(votingCandidates, false);
+    } else if (isMultipleChoice) {
+      votingCard.style.display = "none";
       optionsCard.style.display = "block";
       const revealed = state === "RESULT_REVEAL" || state === "SESSION_COMPLETE";
       renderOptionButtons(currentPrompt, revealed ? currentPrompt.correctOptionIndex : null, false);
     } else {
       optionsCard.style.display = "none";
+      votingCard.style.display = "none";
     }
   } else {
     promptCard.style.display = "none";
     submitCard.style.display = "none";
     optionsCard.style.display = "none";
+    votingCard.style.display = "none";
   }
+}
+
+// Slice 007 (Voting Engine). Mirrors renderOptionButtons' shape and CSS
+// classes exactly (.option-btn / .option-index-badge), swapping
+// selectedOptionIndex for myVoteCandidateId and selectOption(index) for
+// castVote(candidateId). No "is-correct" concept — Voting has none.
+function renderVotingCandidateButtons(candidates, clickable) {
+  const list = document.getElementById("votingCandidatesList");
+  document.getElementById("votingSubmittedNote").style.display =
+    clickable && myVoteCandidateId ? "block" : "none";
+
+  list.innerHTML = candidates
+    .map((c) => {
+      const cls = "option-btn" + (myVoteCandidateId === c.candidateId ? " selected" : "");
+      return `<button class="${cls}" ${clickable ? "" : "disabled"} onclick="castVote('${c.candidateId}')">
+        <span class="option-index-badge">${c.ordinal + 1}</span><span>${c.label}</span>
+      </button>`;
+    })
+    .join("");
+}
+
+// Slice 007. Unlike selectOption(), no optimistic local mutation of
+// myVoteCandidateId — GET_SESSION already authoritatively echoes the
+// caller's own vote back (see myVoteCandidateId's declaration comment),
+// so the refresh below is the single source of truth.
+async function castVote(candidateId) {
+  const r = await postJson(
+    `/api/sessions/${participantState.sessionId}/cast-vote`,
+    { candidateId },
+    participantState.participantToken
+  );
+  show("CAST_VOTE (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    renderNotice(null);
+  } else {
+    renderNotice(classifyError(r));
+  }
+  await participantRefresh();
+}
+
+// Slice 007. Kept separate from renderResults rather than branching one
+// function over two different result shapes — mirrors host.html's
+// identical decision.
+function renderVotingResults(votingResults) {
+  const card = document.getElementById("votingResultsCard");
+  const effective = votingResults ?? (currentSessionState === "SESSION_COMPLETE" ? lastKnownVotingResults : null);
+  if (votingResults) lastKnownVotingResults = votingResults;
+
+  if (!effective) {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+  const sorted = [...effective].sort((a, b) => a.rank - b.rank);
+  document.getElementById("votingResultsList").innerHTML =
+    sorted
+      .map((r) => {
+        const isOwnPick = r.candidateId === myVoteCandidateId;
+        return `<div class="result-card ${isOwnPick ? "own" : ""}">
+          <div class="result-name">#${r.rank} — ${r.label}${isOwnPick ? ' <span class="you">(your vote)</span>' : ""}</div>
+          <div class="result-text">${r.voteCount} vote${r.voteCount === 1 ? "" : "s"}</div>
+        </div>`;
+      })
+      .join("") || `<div class="waiting">No votes were cast.</div>`;
 }
 
 function renderOptionButtons(currentPrompt, revealedCorrectIndex, clickable) {
@@ -868,23 +977,30 @@ function applySessionSnapshot(data) {
     hasSubmittedThisPageLoad = false;
     document.getElementById("p-text").value = "";
     lastKnownSubmissions = null;
+    lastKnownVotingResults = null;
     selectedOptionIndex = null;
+    myVoteCandidateId = null;
     lastSeenInteractionNumber = data.interactionNumber;
   }
 
   currentSessionState = data.state;
   if ("successorSessionId" in data) successorSessionId = data.successorSessionId;
   if ("successorRoomCode" in data) successorRoomCode = data.successorRoomCode;
+  // Slice 007 (Voting Engine): authoritative, not optimistic — see this
+  // variable's declaration comment. Set before renderPrompt/renderVotingResults
+  // below so both can read it synchronously.
+  if ("myVoteCandidateId" in data) myVoteCandidateId = data.myVoteCandidateId;
 
   const effectiveState = computeEffectiveState(data.state, data.interactionState);
   renderStepper(effectiveState);
   renderStateCard(effectiveState);
-  renderPrompt(effectiveState, data.currentPrompt);
+  renderPrompt(effectiveState, data.currentPrompt, data.currentVotingCandidates);
   if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
   if ("submissions" in data) {
     renderResults(data.submissions, data.state);
     renderOwnCorrectnessBanner(data.submissions, effectiveState);
   }
+  if ("votingResults" in data) renderVotingResults(data.votingResults);
   if ("standings" in data) renderStandings(data.standings);
   renderContinuation();
   updateFocusMode(effectiveState);
@@ -925,8 +1041,10 @@ function updateCompletionScreen(effectiveState) {
   document.getElementById("promptCard").style.display = "none";
   document.getElementById("submitCard").style.display = "none";
   document.getElementById("optionsCard").style.display = "none";
+  document.getElementById("votingCard").style.display = "none";
   document.getElementById("progressCard").style.display = "none";
   document.getElementById("resultsCard").style.display = "none";
+  document.getElementById("votingResultsCard").style.display = "none";
 }
 
 // Experience Layer (hypothesis, not constitutional). See host.html's
@@ -986,8 +1104,10 @@ function switchToJoinedSession(json) {
   hasSubmittedThisPageLoad = false;
   lastSeenInteractionNumber = null;
   lastKnownSubmissions = null;
+  lastKnownVotingResults = null;
   currentSessionState = null;
   selectedOptionIndex = null;
+  myVoteCandidateId = null;
   successorSessionId = null;
   successorRoomCode = null;
   continuationPrefilled = false;

@@ -6,6 +6,8 @@ import type {
   SessionState,
   InteractionState,
   EngineType,
+  VotingCandidateSource,
+  VotingResultSummary,
 } from "../types";
 import {
   RoomCodeCollisionError,
@@ -26,6 +28,11 @@ import {
   PreparedQuestionNotFoundError,
   PreparedQuestionAlreadyConsumedError,
   PredecessorAlreadyHasSuccessorError,
+  InvalidVotingCandidatesError,
+  VotingSourceInteractionNotFoundError,
+  VotingSourceInteractionNotEligibleError,
+  InvalidCandidateSelectionError,
+  AmbiguousStartSessionTargetError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -41,8 +48,11 @@ import type {
   PointAwardRecord,
   MultipleChoiceDetailsRecord,
   PreparedQuestionRecord,
+  VotingCandidateRecord,
+  VoteRecord,
   SessionRepository,
 } from "./sessionRepository";
+import { computeVotingResults } from "./sessionRepository";
 
 /**
  * Supabase-backed implementation of SessionRepository.
@@ -418,11 +428,24 @@ export class SupabaseSessionRepository implements SessionRepository {
     }));
   }
 
+  /**
+   * Slice 007 (Voting Engine): votingCandidateSource arrives here as
+   * one structured TypeScript union — this is the one point where it
+   * is decomposed into the flat SQL parameters
+   * start_session_atomically (0033) actually accepts. Postgres has no
+   * native discriminated-union type, and this repository's existing
+   * convention already favors flat, typed parameters (multiple_choice_details.options
+   * is the one existing jsonb column, used because it's genuinely
+   * array-shaped data, not for symmetry with a TypeScript type) — so
+   * the decomposition happens in this adapter, not by forcing the
+   * database to accept a JSON blob merely to mirror the domain shape.
+   */
   async startSession(
     sessionId: string,
     hostToken: string,
     promptText: string,
-    preparedQuestionId?: string | null
+    preparedQuestionId?: string | null,
+    votingCandidateSource?: VotingCandidateSource | null
   ): Promise<{
     interactionInstanceId: string;
     promptId: string;
@@ -434,6 +457,15 @@ export class SupabaseSessionRepository implements SessionRepository {
       p_host_token: hostToken,
       p_prompt_text: promptText,
       p_prepared_question_id: preparedQuestionId ?? null,
+      p_voting_source_type: votingCandidateSource?.type ?? null,
+      p_voting_candidates:
+        votingCandidateSource?.type === "HOST_AUTHORED"
+          ? votingCandidateSource.candidates
+          : null,
+      p_voting_source_interaction_instance_id:
+        votingCandidateSource?.type === "SUBMISSION"
+          ? votingCandidateSource.sourceInteractionInstanceId
+          : null,
     });
 
     if (error) {
@@ -493,6 +525,38 @@ export class SupabaseSessionRepository implements SessionRepository {
         error.message.includes("PREPARED_QUESTION_ALREADY_CONSUMED")
       ) {
         throw new PreparedQuestionAlreadyConsumedError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("AMBIGUOUS_START_TARGET")
+      ) {
+        throw new AmbiguousStartSessionTargetError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("INVALID_VOTING_CANDIDATES")
+      ) {
+        throw new InvalidVotingCandidatesError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("VOTING_SOURCE_INTERACTION_NOT_FOUND")
+      ) {
+        throw new VotingSourceInteractionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("VOTING_SOURCE_INTERACTION_NOT_ELIGIBLE")
+      ) {
+        throw new VotingSourceInteractionNotEligibleError();
       }
 
       throw error;
@@ -885,6 +949,129 @@ export class SupabaseSessionRepository implements SessionRepository {
       options: data.options,
       correctOptionIndex: data.correct_option_index,
       pointsForCorrect: data.points_for_correct,
+    };
+  }
+
+  async getVotingCandidatesForInteraction(
+    interactionInstanceId: string
+  ): Promise<VotingCandidateRecord[]> {
+    const { data, error } = await this.client
+      .from("voting_candidates")
+      .select("*")
+      .eq("interaction_instance_id", interactionInstanceId)
+      .order("ordinal", { ascending: true });
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      candidateId: row.candidate_id,
+      interactionInstanceId: row.interaction_instance_id,
+      ordinal: row.ordinal,
+      label: row.label,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async getVotesForInteractionInstance(
+    interactionInstanceId: string
+  ): Promise<VoteRecord[]> {
+    const { data, error } = await this.client
+      .from("votes")
+      .select("*")
+      .eq("interaction_instance_id", interactionInstanceId);
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      voteId: row.vote_id,
+      interactionInstanceId: row.interaction_instance_id,
+      participantId: row.participant_id,
+      candidateId: row.candidate_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  /**
+   * Slice 007. Deliberately two plain selects plus the shared
+   * computeVotingResults helper, not a bespoke SQL aggregate function —
+   * this mirrors how `standings` is already derived in TypeScript from
+   * plain point_awards rows (getSession.ts) rather than via a database
+   * aggregate, and guarantees this implementation's ranking semantics
+   * can never drift from InMemorySessionRepository's, since both call
+   * the exact same function.
+   */
+  async getVotingResultsForInteractionInstance(
+    interactionInstanceId: string
+  ): Promise<VotingResultSummary[]> {
+    const candidates = await this.getVotingCandidatesForInteraction(
+      interactionInstanceId
+    );
+    const votes = await this.getVotesForInteractionInstance(interactionInstanceId);
+    return computeVotingResults(candidates, votes);
+  }
+
+  async castVote(
+    sessionId: string,
+    participantId: string,
+    participantToken: string,
+    candidateId: string
+  ): Promise<{
+    voteId: string;
+    interactionInstanceId: string;
+    candidateId: string;
+    updatedAt: string;
+  }> {
+    const { data, error } = await this.client.rpc("cast_vote_atomically", {
+      p_session_id: sessionId,
+      p_participant_id: participantId,
+      p_participant_token: participantToken,
+      p_candidate_id: candidateId,
+    });
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_ACCESS_DENIED")
+      ) {
+        throw new SessionAccessDeniedError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("PROMPT_NOT_ACTIVE")
+      ) {
+        throw new PromptNotActiveError(extractStateFromGuardMessage(error.message));
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("INVALID_CANDIDATE_SELECTION")
+      ) {
+        throw new InvalidCandidateSelectionError();
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      voteId: row.vote_id,
+      interactionInstanceId: row.interaction_instance_id,
+      candidateId: row.candidate_id,
+      updatedAt: row.updated_at,
     };
   }
 }

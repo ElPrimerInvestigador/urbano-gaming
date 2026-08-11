@@ -1,5 +1,11 @@
 import { randomUUID } from "crypto";
-import type { SessionRecord, InteractionState, EngineType } from "../types";
+import type {
+  SessionRecord,
+  InteractionState,
+  EngineType,
+  VotingCandidateSource,
+  VotingResultSummary,
+} from "../types";
 import {
   RoomCodeCollisionError,
   DisplayNameTakenError,
@@ -20,6 +26,11 @@ import {
   PreparedQuestionNotFoundError,
   PreparedQuestionAlreadyConsumedError,
   PredecessorAlreadyHasSuccessorError,
+  InvalidVotingCandidatesError,
+  VotingSourceInteractionNotFoundError,
+  VotingSourceInteractionNotEligibleError,
+  InvalidCandidateSelectionError,
+  AmbiguousStartSessionTargetError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -35,8 +46,11 @@ import type {
   PointAwardRecord,
   MultipleChoiceDetailsRecord,
   PreparedQuestionRecord,
+  VotingCandidateRecord,
+  VoteRecord,
   SessionRepository,
 } from "./sessionRepository";
+import { computeVotingResults } from "./sessionRepository";
 
 const MAX_POINTS = 10000;
 
@@ -102,6 +116,19 @@ export class InMemorySessionRepository implements SessionRepository {
    * queue, keyed by preparedQuestionId.
    */
   private preparedQuestions = new Map<string, PreparedQuestionRecord>();
+
+  /**
+   * Slice 007 (Voting Engine). Voting-owned Candidate snapshots, keyed
+   * by candidateId. A 1:N extension of interaction_instances, mirroring
+   * multipleChoiceDetails' 1:1 extension shape widened to N rows.
+   */
+  private votingCandidates = new Map<string, VotingCandidateRecord>();
+
+  /**
+   * Slice 007. One row per participant who has voted in one Voting
+   * interaction instance, keyed by voteId.
+   */
+  private votes = new Map<string, VoteRecord>();
 
   /**
    * The current interaction instance for a session is "the most
@@ -376,7 +403,8 @@ export class InMemorySessionRepository implements SessionRepository {
     sessionId: string,
     hostToken: string,
     promptText: string,
-    preparedQuestionId?: string | null
+    preparedQuestionId?: string | null,
+    votingCandidateSource?: VotingCandidateSource | null
   ): Promise<{
     interactionInstanceId: string;
     promptId: string;
@@ -409,10 +437,17 @@ export class InMemorySessionRepository implements SessionRepository {
       throw new PreviousInteractionNotRevealedError(previousInteraction.state);
     }
 
+    // Slice 007: authoritative re-check mirroring the atomic SQL
+    // function's identical guard — see 0033's comment.
+    if (preparedQuestionId && votingCandidateSource) {
+      throw new AmbiguousStartSessionTargetError();
+    }
+
     const now = new Date().toISOString();
     let promptTextToStore: string;
     let engineType: EngineType;
     let preparedQuestionToConsume: PreparedQuestionRecord | undefined;
+    let votingCandidateLabels: string[] | undefined;
 
     if (preparedQuestionId) {
       // Slice 003: explicit prepared-question target — the caller
@@ -430,6 +465,42 @@ export class InMemorySessionRepository implements SessionRepository {
       promptTextToStore = prepared.promptText;
       engineType = "MULTIPLE_CHOICE";
       preparedQuestionToConsume = prepared;
+    } else if (votingCandidateSource) {
+      // Slice 007 (Voting Engine): unlike the prepared-question path,
+      // Voting always needs host-framed prompt text — neither
+      // Candidate source provides one.
+      promptTextToStore = this.validateAndTrimPromptText(promptText);
+      engineType = "VOTING";
+
+      if (votingCandidateSource.type === "HOST_AUTHORED") {
+        const trimmed = votingCandidateSource.candidates.map((c) => c.trim());
+        const distinct = new Set(trimmed);
+        if (
+          trimmed.length < 2 ||
+          trimmed.some((c) => c.length === 0) ||
+          distinct.size !== trimmed.length
+        ) {
+          throw new InvalidVotingCandidatesError();
+        }
+        votingCandidateLabels = trimmed;
+      } else {
+        const source = this.interactionInstances.get(
+          votingCandidateSource.sourceInteractionInstanceId
+        );
+        if (!source || source.sessionId !== sessionId) {
+          throw new VotingSourceInteractionNotFoundError();
+        }
+        if (source.engineType !== "OPEN_RESPONSE" || source.state !== "RESULT_REVEAL") {
+          throw new VotingSourceInteractionNotEligibleError();
+        }
+        const sourceSubmissions = [...this.submissions.values()]
+          .filter((s) => s.interactionInstanceId === source.interactionInstanceId)
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+        if (sourceSubmissions.length === 0) {
+          throw new VotingSourceInteractionNotEligibleError();
+        }
+        votingCandidateLabels = sourceSubmissions.map((s) => s.text);
+      }
     } else {
       promptTextToStore = this.validateAndTrimPromptText(promptText);
       engineType = "OPEN_RESPONSE";
@@ -461,6 +532,19 @@ export class InMemorySessionRepository implements SessionRepository {
       this.preparedQuestions.set(preparedQuestionToConsume.preparedQuestionId, {
         ...preparedQuestionToConsume,
         consumedAt: now,
+      });
+    }
+
+    if (votingCandidateLabels) {
+      votingCandidateLabels.forEach((label, ordinal) => {
+        const candidateId = randomUUID();
+        this.votingCandidates.set(candidateId, {
+          candidateId,
+          interactionInstanceId,
+          ordinal,
+          label,
+          createdAt: now,
+        });
       });
     }
 
@@ -917,5 +1001,115 @@ export class InMemorySessionRepository implements SessionRepository {
   /** Test-only helper, not part of the repository interface. */
   _allMultipleChoiceDetails() {
     return [...this.multipleChoiceDetails.values()];
+  }
+
+  async getVotingCandidatesForInteraction(
+    interactionInstanceId: string
+  ): Promise<VotingCandidateRecord[]> {
+    return [...this.votingCandidates.values()]
+      .filter((c) => c.interactionInstanceId === interactionInstanceId)
+      .sort((a, b) => a.ordinal - b.ordinal);
+  }
+
+  async getVotesForInteractionInstance(
+    interactionInstanceId: string
+  ): Promise<VoteRecord[]> {
+    return [...this.votes.values()].filter(
+      (v) => v.interactionInstanceId === interactionInstanceId
+    );
+  }
+
+  async getVotingResultsForInteractionInstance(
+    interactionInstanceId: string
+  ): Promise<VotingResultSummary[]> {
+    const candidates = await this.getVotingCandidatesForInteraction(
+      interactionInstanceId
+    );
+    const votes = await this.getVotesForInteractionInstance(interactionInstanceId);
+    return computeVotingResults(candidates, votes);
+  }
+
+  async castVote(
+    sessionId: string,
+    participantId: string,
+    participantToken: string,
+    candidateId: string
+  ): Promise<{
+    voteId: string;
+    interactionInstanceId: string;
+    candidateId: string;
+    updatedAt: string;
+  }> {
+    // Authoritative participant-token and session/interaction-state
+    // re-check, mirroring submitResponse's identical discipline.
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    const participant = this.participants.get(participantId);
+    if (!participant || participant.participantToken !== participantToken) {
+      throw new SessionAccessDeniedError();
+    }
+
+    const interactionInstance = this.getCurrentInteractionInstance(sessionId);
+
+    if (
+      session.state !== "LOBBY_LOCKED" ||
+      !interactionInstance ||
+      interactionInstance.state !== "PROMPT_ACTIVE" ||
+      interactionInstance.engineType !== "VOTING"
+    ) {
+      throw new PromptNotActiveError(interactionInstance?.state);
+    }
+
+    const { interactionInstanceId } = interactionInstance;
+
+    const candidate = this.votingCandidates.get(candidateId);
+    if (!candidate || candidate.interactionInstanceId !== interactionInstanceId) {
+      throw new InvalidCandidateSelectionError();
+    }
+
+    const now = new Date().toISOString();
+
+    // Upsert: one vote per participant per interaction instance,
+    // "last write wins" while PROMPT_ACTIVE — mirrors submitResponse's
+    // identical MVP decision, applied to votes instead of submissions.
+    const existing = [...this.votes.values()].find(
+      (v) =>
+        v.interactionInstanceId === interactionInstanceId &&
+        v.participantId === participantId
+    );
+
+    const voteId = existing?.voteId ?? randomUUID();
+    const record: VoteRecord = {
+      voteId,
+      interactionInstanceId,
+      participantId,
+      candidateId,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+
+    this.votes.set(voteId, record);
+
+    this.events.push({
+      sessionId,
+      eventType: "VOTE_CAST",
+      payload: { participantId, interactionInstanceId, candidateId },
+    });
+
+    return { voteId, interactionInstanceId, candidateId, updatedAt: now };
+  }
+
+  /** Test-only helper, not part of the repository interface. */
+  _allVotingCandidates() {
+    return [...this.votingCandidates.values()];
+  }
+
+  /** Test-only helper, not part of the repository interface. */
+  _allVotes() {
+    return [...this.votes.values()];
   }
 }

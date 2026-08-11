@@ -3,6 +3,9 @@ import type {
   SessionState,
   InteractionState,
   EngineType,
+  VotingCandidateSource,
+  VotingCandidateSummary,
+  VotingResultSummary,
 } from "../types";
 
 export interface SessionEventRecord {
@@ -84,6 +87,103 @@ export interface MultipleChoiceDetailsRecord {
   options: string[];
   correctOptionIndex: number;
   pointsForCorrect: number;
+}
+
+/**
+ * Slice 007 (Voting Engine). A Voting Candidate — the output of
+ * Candidate Resolution, Voting-owned and immutable once created,
+ * regardless of which source (HOST_AUTHORED or SUBMISSION) produced
+ * it. Provenance (which source produced a given Candidate) is
+ * deliberately not a column here — it is recorded only in the
+ * INTERACTION_STARTED event's payload, since nothing in Voting's own
+ * tallying or reveal logic needs to read it back. If reveal-time
+ * attribution ("submitted by Alex") becomes a real product need later,
+ * promoting it to a column is a small additive migration, not a
+ * redesign.
+ */
+export interface VotingCandidateRecord {
+  candidateId: string;
+  interactionInstanceId: string;
+  ordinal: number;
+  label: string;
+  createdAt: string;
+}
+
+/**
+ * Slice 007. One participant's current vote in one Voting interaction
+ * instance. One row per (interactionInstanceId, participantId) —
+ * revisable via upsert while the interaction is PROMPT_ACTIVE
+ * (mirrors SubmissionRecord's own last-write-wins shape exactly),
+ * immutable once the interaction leaves PROMPT_ACTIVE.
+ */
+export interface VoteRecord {
+  voteId: string;
+  interactionInstanceId: string;
+  participantId: string;
+  candidateId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VoteCastEventRecord extends SessionEventRecord {
+  eventType: "VOTE_CAST";
+  payload: {
+    participantId: string;
+    interactionInstanceId: string;
+    candidateId: string;
+  };
+}
+
+/**
+ * Slice 007. Derives each Candidate's vote count and standard
+ * competition rank from raw, already-immutable vote data — the single
+ * shared computation both InMemorySessionRepository and
+ * SupabaseSessionRepository call from their own
+ * getVotingResultsForInteractionInstance, so ranking semantics (tied
+ * candidates share a rank; the next distinct count skips ranks by the
+ * number tied) can never drift between the two implementations.
+ * Deliberately not persisted anywhere — see VotingResultSummary's
+ * comment in types.ts for why this mirrors Multiple Choice's own
+ * derived-not-stored `correctness`.
+ */
+export function computeVotingResults(
+  candidates: VotingCandidateRecord[],
+  votes: VoteRecord[]
+): VotingResultSummary[] {
+  const countByCandidateId = new Map<string, number>();
+  for (const candidate of candidates) {
+    countByCandidateId.set(candidate.candidateId, 0);
+  }
+  for (const vote of votes) {
+    countByCandidateId.set(
+      vote.candidateId,
+      (countByCandidateId.get(vote.candidateId) ?? 0) + 1
+    );
+  }
+
+  const sorted = [...candidates].sort(
+    (a, b) =>
+      (countByCandidateId.get(b.candidateId) ?? 0) -
+      (countByCandidateId.get(a.candidateId) ?? 0)
+  );
+
+  const results: VotingResultSummary[] = [];
+  let previousCount: number | null = null;
+  let previousRank = 0;
+  sorted.forEach((candidate, index) => {
+    const voteCount = countByCandidateId.get(candidate.candidateId) ?? 0;
+    const rank = voteCount === previousCount ? previousRank : index + 1;
+    previousCount = voteCount;
+    previousRank = rank;
+    results.push({
+      candidateId: candidate.candidateId,
+      label: candidate.label,
+      voteCount,
+      rank,
+    });
+  });
+
+  return results;
 }
 
 /**
@@ -391,12 +491,46 @@ export interface SessionRepository {
    * - throw PreparedQuestionAlreadyConsumedError only when it has
    *   already been consumed;
    * - return engineType alongside the existing fields.
+   *
+   * Slice 007 (Voting Engine): gains an optional votingCandidateSource,
+   * mutually exclusive with preparedQuestionId (the domain layer
+   * enforces this before calling; this method re-enforces it
+   * authoritatively, same discipline as every other mutual-exclusivity
+   * rule in this method). When supplied, promptText IS still required
+   * (unlike the prepared-question path) — Voting always needs host-framed
+   * text ("Vote for your favorite!"), since neither candidate source
+   * provides one. Candidate Resolution happens here, inside this same
+   * atomic operation, for the same reason prepared-question consumption
+   * does: this is where the repository already resolves external
+   * content into a new Interaction Instance, and no separate
+   * orchestration layer exists in this codebase.
+   *
+   * - type "HOST_AUTHORED": validate candidates has at least two
+   *   distinct, non-empty (post-trim) entries — mirrors
+   *   validateAndTrimOptions's floor — then insert each as a
+   *   Voting-owned Candidate snapshot, ordinal-ordered as supplied.
+   * - type "SUBMISSION": re-verify sourceInteractionInstanceId belongs
+   *   to this session, is engineType OPEN_RESPONSE, is state
+   *   RESULT_REVEAL, and has at least one submission; then copy each
+   *   submission's text into a new, Voting-owned Candidate snapshot.
+   *   The source interaction instance itself is never modified.
+   *
+   * Implementations must additionally:
+   * - throw InvalidVotingCandidatesError only for the HOST_AUTHORED
+   *   candidate-count/emptiness failure;
+   * - throw VotingSourceInteractionNotFoundError only when
+   *   sourceInteractionInstanceId does not identify an interaction
+   *   instance belonging to this session;
+   * - throw VotingSourceInteractionNotEligibleError only when that
+   *   interaction instance exists but is not OPEN_RESPONSE, not
+   *   RESULT_REVEAL, or has zero submissions.
    */
   startSession(
     sessionId: string,
     hostToken: string,
     promptText: string,
-    preparedQuestionId?: string | null
+    preparedQuestionId?: string | null,
+    votingCandidateSource?: VotingCandidateSource | null
   ): Promise<{
     interactionInstanceId: string;
     promptId: string;
@@ -620,4 +754,83 @@ export interface SessionRepository {
   getMultipleChoiceDetailsForInteraction(
     interactionInstanceId: string
   ): Promise<MultipleChoiceDetailsRecord | null>;
+
+  /**
+   * Slice 007 (Voting Engine). List every Candidate for one Voting
+   * interaction instance, ordinal-ordered. Not reveal-gated — Candidates
+   * must be visible before voting can happen at all, mirroring
+   * MULTIPLE_CHOICE's `options`. Returns an empty array for a
+   * non-Voting interaction instance (or any id with no matching rows).
+   */
+  getVotingCandidatesForInteraction(
+    interactionInstanceId: string
+  ): Promise<VotingCandidateRecord[]>;
+
+  /**
+   * Slice 007. List every vote for one Voting interaction instance —
+   * one row per participant who has voted, per VoteRecord's own
+   * uniqueness. Used both for progress counts (pre-reveal) and, joined
+   * with getVotingCandidatesForInteraction via computeVotingResults,
+   * for derived results (post-reveal). Not filtered by state — visibility
+   * rules are the domain layer's (GET_SESSION's) responsibility, not
+   * this method's, mirroring getSubmissionsForInteractionInstance's
+   * identical division of responsibility.
+   */
+  getVotesForInteractionInstance(
+    interactionInstanceId: string
+  ): Promise<VoteRecord[]>;
+
+  /**
+   * Slice 007. The single repository path for deriving Voting's
+   * `placement` Outcome — candidate identity, label, vote count, and
+   * standard-competition rank, computed live from immutable vote data
+   * via computeVotingResults. Never persisted; see that function's
+   * comment. GET_SESSION calls this only once the interaction has
+   * reached RESULT_REVEAL — this method itself performs no
+   * reveal-gating, the same division of responsibility used everywhere
+   * else in this interface.
+   */
+  getVotingResultsForInteractionInstance(
+    interactionInstanceId: string
+  ): Promise<VotingResultSummary[]>;
+
+  /**
+   * Slice 007. CAST_VOTE's repository operation. Atomically re-verifies
+   * the supplied participant token belongs to the given participant of
+   * this session, that the session is LOBBY_LOCKED, that the session's
+   * current interaction instance is PROMPT_ACTIVE and engineType
+   * VOTING, and that candidateId identifies a Candidate belonging to
+   * that interaction instance, then upserts the participant's vote
+   * (one vote per participant per interaction instance — a second call
+   * replaces the first, "last write wins," mirroring submitResponse's
+   * identical MVP decision) and persists a VOTE_CAST event.
+   *
+   * Implementations must:
+   * - commit the vote and its event, or neither;
+   * - re-verify the participant token and session/interaction state
+   *   inside the atomic operation itself, not merely trust an earlier
+   *   caller-side check;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw SessionAccessDeniedError only when the token does not match
+   *   the given participant of this session;
+   * - throw PromptNotActiveError only when the session is not
+   *   LOBBY_LOCKED, no interaction instance exists, the current one is
+   *   not PROMPT_ACTIVE, or the current one is not engineType VOTING;
+   * - throw InvalidCandidateSelectionError only when candidateId does
+   *   not identify a Candidate belonging to the current interaction
+   *   instance;
+   * - return the resulting voteId, interactionInstanceId, candidateId,
+   *   and updatedAt.
+   */
+  castVote(
+    sessionId: string,
+    participantId: string,
+    participantToken: string,
+    candidateId: string
+  ): Promise<{
+    voteId: string;
+    interactionInstanceId: string;
+    candidateId: string;
+    updatedAt: string;
+  }>;
 }
