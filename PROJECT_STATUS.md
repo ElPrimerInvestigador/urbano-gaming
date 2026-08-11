@@ -4,7 +4,7 @@
 
 ## Current Stage
 
-Six vertical slices are implemented, tested, and live-verified against
+Seven vertical slices are implemented, tested, and live-verified against
 production. UI Convergence Tier 1, Structural Tier 2, Experience Layer
 v1, and subsequent host hierarchy refinements are also committed.
 
@@ -16,7 +16,7 @@ v1, and subsequent host hierarchy refinements are also committed.
 | 004 — Passive Session Synchronization | Automatic host/participant sync, replacing manual "Check for updates" as the primary loop | Implemented, tested, live-verified on a real device in production. No formal constitutional acceptance ceremony; no `History/Slices/Slice_004/` yet. |
 | 005 — Session Continuity | Rematches (linked successor sessions) and independent re-joining | Implemented, tested, live-verified on a real device in production. No formal constitutional acceptance ceremony; no `History/Slices/Slice_005/` yet. |
 | 006 — Authoring Workspace | Create/Import/Review content authoring, engine-agnostic at the workspace level | Implemented, tested, live-verified in production, including a first-time-host UX pass. No formal constitutional acceptance ceremony; no `History/Slices/Slice_006/` yet. |
-| 007 — Voting Engine (Proving Case) | A third Interaction Engine — host-authored or Open-Response-derived Candidates → Voting → derived `placement` → reveal, proving Candidate Resolution across an Interaction Instance boundary | **Accepted and closed** (checkpoint `3f17206`; Product architecture checkpoint `433b61e`). Implemented, tested (219 in-memory + 34 contract tests), and validated against a local database-backed environment and a full browser operational simulation — **not yet applied to production**. Same deliberate deferral as 003–006: no formal constitutional acceptance ceremony, no `History/Slices/Slice_007/`. See `SLICE_007_IMPLEMENTATION_RECORD.md`. |
+| 007 — Voting Engine (Proving Case) | A third Interaction Engine — host-authored or Open-Response-derived Candidates → Voting → derived `placement` → reveal, proving Candidate Resolution across an Interaction Instance boundary | **Accepted, closed, and applied to production** (checkpoint `3f17206`; Product architecture checkpoint `433b61e`). Implemented, tested (219 in-memory + 34 contract tests), validated against a local database-backed environment and a full browser operational simulation, then migrated to production (`0030`–`0034`) and verified live via an 18-step production smoke test. Same deliberate deferral as 003–006: no formal constitutional acceptance ceremony, no `History/Slices/Slice_007/`. See `SLICE_007_IMPLEMENTATION_RECORD.md`. |
 
 The user has described everything through Slice 005 as "the current
 production baseline" following a real multi-game playtest, and Slice
@@ -27,13 +27,16 @@ acceptance ceremony Slices 001 and 002 went through. Treat 003–006 as
 Reconstructing their `History/Slices/` folders is explicitly deferred
 to a separate, later pass — see `HANDOFF.md`.
 
-Slice 007 is **accepted and closed** at that same tier — the founder
-has explicitly accepted it — but, unlike 003–006, it has **not yet
-been deployed or migrated to production**. Its five new migrations
-(0030–0034) exist only in this repository and have been verified
-against a local Postgres instance; applying them to the live Supabase
-project is a separate, not-yet-authorized step. Do not treat Slice 007
-as "running in production" until that step happens.
+Slice 007 is **accepted, closed, and applied to production**, at the
+same tier as 003–006. Its five new migrations (0030–0034) were first
+verified against a local Postgres instance, then applied to the live
+Supabase project and verified there directly (migration state,
+`start_session_atomically`'s active signature, and empirically-confirmed
+RLS/grant behavior on the two new tables) and via an 18-step production
+smoke test covering both Candidate-source paths, vote casting and
+revision, participant-specific isolation, tie ranking, session
+completion, and rematch continuity. See `SLICE_007_IMPLEMENTATION_RECORD.md`'s
+"Production Validation" section for the full evidence.
 
 ## Historical pending state — superseded
 
@@ -72,7 +75,7 @@ paused to do UI Convergence first.
   aliased at `https://urbano-gaming-playtest.vercel.app`. The former Level 33 alias was retired under MIG-005. Deployed via
   the Vercel CLI (no GitHub auto-deploy integration).
 - Supabase project backing all persistence; all migrations through
-  `0029` applied.
+  `0034` applied.
 
 ## Validation summary
 
@@ -87,8 +90,10 @@ paused to do UI Convergence first.
 - Slice 007 adds 27 in-memory tests (219 total) and 18 contract tests
   (34 total), and has been verified against a local database-backed
   Postgres environment (migrations 0030–0034 applied and confirmed)
-  and a full browser operational simulation — accepted and closed, but
-  **not yet verified against production**, unlike Slices 001–006.
+  and a full browser operational simulation, then against production
+  itself — migrations 0030–0034 applied to the live Supabase project
+  and an 18-step production smoke test passed with no defects found —
+  accepted, closed, and now live-verified like Slices 001–006.
 
 ---
 
@@ -101,8 +106,8 @@ Integrated: ✅
 Validated: ✅ (see Validation summary above)
 Operational Simulation: Complete for every slice through 006, including
   live production playtests. Complete for Slice 007 against a local
-  database-backed environment and browser session — production
-  operational simulation for Slice 007 has not happened yet.
+  database-backed environment and browser session, and against
+  production itself via an 18-step production smoke test.
 Architecture Review: Complete for Slice 001 (against
   `State_Architecture.md`); informal for 002–007 (design-review
   conversations, not a formal constitutional Architecture Review pass)
