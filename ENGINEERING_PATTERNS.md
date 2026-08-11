@@ -108,6 +108,18 @@ authoring needs turn out not to fit this shape cleanly, that's real
 evidence the seam needs revising — treat it as a hypothesis worth
 re-checking against the first real second engine, not as settled.
 
+## Derive, don't persist, a read-model fact reconstructible from immutable source data
+
+**Origin**: Multiple Choice's `correctness` (Slice 003) and Voting's `placement` (Slice 007) — reached independently, at different times, for different engines, by the same underlying reasoning, not copied from one to the other.
+
+**The pattern**: when a read-model fact (a per-submission correctness flag, a per-candidate rank) can be deterministically recomputed, on demand, from source data that is already immutable by the time anything is allowed to read the fact, compute it at read time instead of writing and maintaining a separate stored copy. Multiple Choice never stores `isCorrect` — `getSession.ts` computes it from `selectedIndex === correctOptionIndex` on every call. Voting never stores `placement` — `computeVotingResults` recomputes standard-competition rank from `votes` on every call, shared by both `InMemorySessionRepository` and `SupabaseSessionRepository` specifically so the two implementations can never disagree with each other.
+
+**Why it matters**: a stored copy of a derivable fact is a second source of truth that can go stale or disagree with its own source the moment something forgets to keep it in sync — the same class of bug Transactional reveal-and-score exists to prevent for facts that *do* need to be written. Deriving removes that failure class by construction, for the specific case where nothing needs to be written at all.
+
+**Boundary — this is not "derived state should never be persisted"**: persisting a derived fact is the correct choice once any of the following is true, and none of it applies to either example above: the fact needs aggregating *across* Interaction Instances (Shared Game State's `champion`, per `ADR-012`, where re-deriving from raw per-instance data on every read stops being cheap); read performance genuinely requires a stored copy; the fact must stay stable even if the derivation logic changes later (a historical/audit requirement); or the source data isn't actually immutable by the time the fact is read. "Immutable source data + cheap deterministic recomputation" is the actual test — not "is this value derived."
+
+**When to reach for it**: a future engine whose result at reveal is a pure function of data that the same reveal-time state transition already write-locks.
+
 ## Deliberately not included here
 
 The core "generic Interaction Instance + engine-specific extension
