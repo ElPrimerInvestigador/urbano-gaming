@@ -1,0 +1,152 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Soccer Predictions — URBANO Gaming</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /*
+   * Soccer Predictions destination shell. Pre-launch: no prediction
+   * mechanics, match data, scoring, or auth are implemented here — see
+   * APPLICATION_SHELL_IMPLEMENTATION_RECORD.md. Reuses the same
+   * identity tokens as index.html/host.html/participant.html.
+   */
+  :root {
+    --bg-page: #0a0a0a;
+    --bg-card: #161616;
+    --surface-2: #1c1c1c;
+    --ink: #f5f1e8;
+    --muted: #9b9689;
+    --line: #2a2a2a;
+    --gold: #d4af37;
+    --gold-bg: rgba(212, 175, 55, 0.12);
+    --primary-fill: #f5f1e8;
+    --primary-ink: #0a0a0a;
+    --exp-purple: #7c3aed;
+    --exp-purple-glow: rgba(124, 58, 237, 0.45);
+    --exp-purple-bg: rgba(124, 58, 237, 0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg-page); color: var(--ink); margin: 0; padding: 0 0 60px;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  .shell-header {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 720px; margin: 0 auto; padding: 20px 20px 0;
+  }
+  .brand { display: inline-flex; align-items: center; gap: 10px; }
+  .brand-mark { width: 24px; height: 26px; display: block; filter: drop-shadow(0 0 6px var(--exp-purple-glow)); }
+  .brand-word { font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; }
+  .brand-badge {
+    background: var(--exp-purple-bg); border: 1px solid var(--exp-purple);
+    color: var(--exp-purple); font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
+  }
+  .signin-btn {
+    font-family: inherit; font-size: 13px; font-weight: 600; padding: 9px 16px;
+    border-radius: 8px; border: 1px solid var(--ink); background: transparent;
+    color: var(--ink); cursor: pointer;
+  }
+  .signin-btn:hover { background: var(--surface-2); }
+  .signin-status {
+    display: none; max-width: 720px; margin: 10px auto 0; padding: 10px 20px 0;
+    font-size: 12.5px; color: var(--muted); line-height: 1.5;
+  }
+
+  .back-link {
+    max-width: 720px; margin: 18px auto 0; padding: 0 20px;
+    font-size: 13px; color: var(--muted); display: block;
+  }
+  .back-link:hover { color: var(--ink); }
+
+  .hero-card {
+    max-width: 720px; margin: 24px auto 0; padding: 0 20px;
+  }
+  .hero-inner {
+    border-radius: 18px; border: 1px solid var(--exp-purple);
+    background:
+      radial-gradient(120% 160% at 100% 0%, var(--exp-purple-bg), transparent 60%),
+      var(--bg-card);
+    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.14), 0 0 34px var(--exp-purple-glow);
+    padding: 40px 28px;
+    text-align: center;
+  }
+  .ball { font-size: 34px; margin-bottom: 14px; display: block; }
+  .hero-inner h1 { font-size: clamp(24px, 5vw, 32px); font-weight: 800; margin: 0 0 12px; }
+  .hero-inner p {
+    color: var(--muted); font-size: 15px; line-height: 1.65; max-width: 480px; margin: 0 auto;
+  }
+  .status-row {
+    display: flex; justify-content: center; margin-top: 22px;
+  }
+  .status-pill {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,0.04);
+    color: var(--muted); border: 1px solid var(--line);
+  }
+
+  .info-section {
+    max-width: 720px; margin: 28px auto 0; padding: 0 20px;
+  }
+  .info-card {
+    border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2);
+    padding: 18px 20px; font-size: 14px; color: var(--muted); line-height: 1.6;
+  }
+  .info-card strong { color: var(--ink); }
+
+  @media (max-width: 640px) {
+    .shell-header { padding: 16px 16px 0; }
+    .brand-word { font-size: 15px; }
+    .signin-btn { font-size: 12px; padding: 9px 12px; white-space: nowrap; }
+    .back-link, .hero-card, .info-section { padding-left: 16px; padding-right: 16px; }
+    .hero-inner { padding: 32px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell-header">
+  <div class="brand">
+    <img class="brand-mark" src="/urbano-mark.svg" alt="" />
+    <span class="brand-word">URBANO</span>
+    <span class="brand-badge">Gaming</span>
+  </div>
+  <button class="signin-btn" id="btn-signin">Sign in with URBANO</button>
+</div>
+<p class="signin-status" id="signin-status"></p>
+
+<a class="back-link" href="/">← Back to URBANO Gaming</a>
+
+<div class="hero-card">
+  <div class="hero-inner">
+    <span class="ball">⚽</span>
+    <h1>Soccer Predictions</h1>
+    <p>Predict the biggest matches and compete with the community. We're putting the finishing touches on this experience — check back soon to make your picks.</p>
+    <div class="status-row">
+      <span class="status-pill">Opening Soon</span>
+    </div>
+  </div>
+</div>
+
+<div class="info-section">
+  <div class="info-card">
+    <strong>What to expect:</strong> pick your predictions before kickoff, see how you stack up against other URBANO members, and follow along as results come in.
+  </div>
+</div>
+
+<script src="/urbanoAuth.js"></script>
+<script>
+  UrbanoAuth.attachSignInButton(
+    document.getElementById("btn-signin"),
+    document.getElementById("signin-status")
+  );
+</script>
+
+</body>
+</html>

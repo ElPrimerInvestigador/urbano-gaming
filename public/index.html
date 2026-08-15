@@ -1,0 +1,257 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>URBANO Gaming</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /*
+   * URBANO Gaming Application Shell — member-facing landing page.
+   * Reuses the constitutional identity tokens and Experience Layer
+   * purple accent already established in host.html/participant.html
+   * (charcoal/gold/ivory + Montserrat, purple = the Gaming
+   * application layer, gold reserved for Recognition) rather than
+   * introducing a new visual language. See
+   * APPLICATION_SHELL_IMPLEMENTATION_RECORD.md.
+   */
+  :root {
+    --charcoal: #0a0a0a;
+    --bg-page: #0a0a0a;
+    --bg-card: #161616;
+    --surface-2: #1c1c1c;
+    --ink: #f5f1e8;
+    --muted: #9b9689;
+    --line: #2a2a2a;
+    --gold: #d4af37;
+    --gold-bg: rgba(212, 175, 55, 0.12);
+    --accent: #d4af37;
+    --primary-fill: #f5f1e8;
+    --primary-ink: #0a0a0a;
+    --exp-purple: #7c3aed;
+    --exp-purple-glow: rgba(124, 58, 237, 0.45);
+    --exp-purple-bg: rgba(124, 58, 237, 0.12);
+    --upcoming: #333333;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg-page);
+    color: var(--ink);
+    margin: 0;
+    padding: 0 0 60px;
+  }
+  a { color: inherit; text-decoration: none; }
+
+  /* Header — same brand markup as host.html/participant.html, so the
+     mark, wordmark, and Gaming badge read identically everywhere. */
+  .shell-header {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 1080px; margin: 0 auto; padding: 20px 20px 0;
+  }
+  .brand { display: inline-flex; align-items: center; gap: 10px; }
+  .brand-mark { width: 24px; height: 26px; display: block; filter: drop-shadow(0 0 6px var(--exp-purple-glow)); }
+  .brand-word { font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; }
+  .brand-badge {
+    background: var(--exp-purple-bg); border: 1px solid var(--exp-purple);
+    color: var(--exp-purple); font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
+  }
+
+  .signin-btn {
+    font-family: inherit; font-size: 13px; font-weight: 600; padding: 9px 16px;
+    border-radius: 8px; border: 1px solid var(--ink); background: transparent;
+    color: var(--ink); cursor: pointer;
+  }
+  .signin-btn:hover { background: var(--surface-2); }
+  .signin-status {
+    display: none; max-width: 1080px; margin: 10px auto 0; padding: 10px 20px 0;
+    font-size: 12.5px; color: var(--muted); line-height: 1.5;
+  }
+
+  /* Hero */
+  .hero { max-width: 1080px; margin: 0 auto; padding: 44px 20px 8px; text-align: center; }
+  .hero h1 {
+    font-size: clamp(28px, 5vw, 40px); font-weight: 800; letter-spacing: -0.01em;
+    margin: 0 0 12px;
+  }
+  .hero p {
+    color: var(--muted); font-size: 15px; max-width: 480px; margin: 0 auto; line-height: 1.6;
+  }
+
+  .section { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
+  .section-label {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+    color: var(--muted); margin: 40px 0 12px;
+  }
+
+  /* Featured card */
+  .featured-card {
+    display: block; position: relative; overflow: hidden;
+    border-radius: 16px; border: 1px solid var(--exp-purple);
+    background:
+      radial-gradient(120% 140% at 100% 0%, var(--exp-purple-bg), transparent 60%),
+      var(--bg-card);
+    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.14), 0 0 30px var(--exp-purple-glow);
+    padding: 28px 24px;
+    cursor: pointer;
+  }
+  .featured-eyebrow {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--exp-purple); margin-bottom: 10px;
+  }
+  .featured-card h2 { font-size: 26px; margin: 0 0 8px; font-weight: 800; }
+  .featured-card p { color: var(--muted); font-size: 15px; margin: 0 0 20px; max-width: 480px; line-height: 1.55; }
+  .featured-cta {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--primary-fill); color: var(--primary-ink);
+    font-weight: 700; font-size: 14px; padding: 11px 20px; border-radius: 999px;
+  }
+
+  /* Explore carousel */
+  .carousel {
+    display: flex; gap: 14px; overflow-x: auto; padding: 4px 20px 14px;
+    margin: 0 -20px; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
+  }
+  .carousel::-webkit-scrollbar { height: 6px; }
+  .carousel::-webkit-scrollbar-thumb { background: var(--line); border-radius: 999px; }
+
+  .exp-card {
+    flex: 0 0 auto; width: 230px; scroll-snap-align: start;
+    border: 1px solid var(--line); border-radius: 14px; background: var(--bg-card);
+    padding: 18px 16px; display: flex; flex-direction: column; gap: 10px;
+    min-height: 168px;
+  }
+  .exp-card.is-actionable { cursor: pointer; }
+  .exp-card.is-actionable:active { background: var(--surface-2); }
+  .exp-card.is-locked { opacity: 0.55; cursor: default; }
+
+  .status-pill {
+    align-self: flex-start; font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+    text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
+  }
+  .status-featured { background: var(--exp-purple-bg); color: var(--exp-purple); border: 1px solid var(--exp-purple); }
+  .status-available { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+  .status-soon { background: rgba(255,255,255,0.04); color: var(--muted); border: 1px solid var(--line); }
+
+  .exp-card h3 { font-size: 16px; margin: 0; font-weight: 700; }
+  .exp-card .exp-sub { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin: 0; flex: 1; }
+  .exp-card .exp-action { font-size: 12px; font-weight: 700; color: var(--ink); margin-top: auto; }
+  .exp-card.is-locked .exp-action { color: var(--muted); font-weight: 600; }
+
+  footer {
+    max-width: 1080px; margin: 48px auto 0; padding: 20px; text-align: center;
+    color: var(--muted); font-size: 12px; border-top: 1px solid var(--line);
+  }
+
+  @media (max-width: 640px) {
+    .shell-header { padding: 16px 16px 0; }
+    .brand-word { font-size: 15px; }
+    .signin-btn { font-size: 12px; padding: 9px 12px; white-space: nowrap; }
+    .hero { padding: 32px 16px 4px; }
+    .section { padding: 0 16px; }
+    .carousel { padding: 4px 16px 14px; margin: 0 -16px; }
+    .featured-card { padding: 22px 18px; }
+    .featured-card h2 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell-header">
+  <div class="brand">
+    <img class="brand-mark" src="/urbano-mark.svg" alt="" />
+    <span class="brand-word">URBANO</span>
+    <span class="brand-badge">Gaming</span>
+  </div>
+  <button class="signin-btn" id="btn-signin">Sign in with URBANO</button>
+</div>
+<p class="signin-status" id="signin-status"></p>
+
+<div class="hero">
+  <h1>Play, predict, and compete with your community.</h1>
+  <p>URBANO Gaming brings trivia, predictions, and live experiences to the moments you're already sharing together.</p>
+</div>
+
+<div class="section">
+  <div class="section-label">Featured</div>
+  <a class="featured-card" href="/soccer-predictions.html">
+    <div class="featured-eyebrow">⚽ Featured Experience</div>
+    <h2>Soccer Predictions</h2>
+    <p>Predict the biggest matches. Compete with the community.</p>
+    <span class="featured-cta">Enter Soccer Predictions →</span>
+  </a>
+</div>
+
+<div class="section">
+  <div class="section-label">Explore Games &amp; Experiences</div>
+  <div class="carousel" id="explore-carousel">
+    <!-- populated by script below -->
+  </div>
+</div>
+
+<footer>URBANO Gaming — part of URBANO</footer>
+
+<script src="/urbanoAuth.js"></script>
+<script>
+  UrbanoAuth.attachSignInButton(
+    document.getElementById("btn-signin"),
+    document.getElementById("signin-status")
+  );
+
+  // Catalog is member-facing Experiences, not a rendering of the
+  // internal Interaction Engine Taxonomy — see
+  // APPLICATION_SHELL_IMPLEMENTATION_RECORD.md. Locked (Coming Soon)
+  // entries render no href/onclick at all, so they are visually
+  // discoverable but never actionable.
+  const CATALOG = [
+    {
+      title: "Soccer Predictions",
+      sub: "Predict the biggest matches. Compete with the community.",
+      status: "featured",
+      href: "/soccer-predictions.html",
+    },
+    {
+      title: "Trivia",
+      sub: "Live trivia, coming to URBANO Gaming.",
+      status: "soon",
+    },
+    {
+      title: "Community Voting",
+      sub: "Vote for your favorites in live moments.",
+      status: "soon",
+    },
+    {
+      title: "Level 33",
+      sub: "A new way to play together, coming to URBANO Gaming.",
+      status: "soon",
+    },
+    {
+      title: "Duels",
+      sub: "Head-to-head challenges between members.",
+      status: "soon",
+    },
+  ];
+
+  const STATUS_LABEL = { featured: "Featured", available: "Available", soon: "Coming Soon" };
+  const STATUS_CLASS = { featured: "status-featured", available: "status-available", soon: "status-soon" };
+
+  const carousel = document.getElementById("explore-carousel");
+  carousel.innerHTML = CATALOG.map((item) => {
+    const locked = item.status === "soon";
+    const tag = locked ? "div" : "a";
+    const hrefAttr = locked ? "" : ` href="${item.href}"`;
+    return `<${tag} class="exp-card ${locked ? "is-locked" : "is-actionable"}"${hrefAttr}>
+      <span class="status-pill ${STATUS_CLASS[item.status]}">${STATUS_LABEL[item.status]}</span>
+      <h3>${item.title}</h3>
+      <p class="exp-sub">${item.sub}</p>
+      <span class="exp-action">${locked ? "Coming soon" : "Open →"}</span>
+    </${tag}>`;
+  }).join("");
+</script>
+
+</body>
+</html>
