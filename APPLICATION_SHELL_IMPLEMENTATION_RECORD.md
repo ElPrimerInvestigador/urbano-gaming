@@ -44,10 +44,12 @@ Explore Games & Experiences (horizontally-scrollable catalog, mobile-safe)
 
 ## Catalog contents and status assigned
 
+Current state (after the Trivia Playtest follow-up below — see that section for the full history of how Trivia's status changed twice):
+
 | Experience | Status | Actionable | Destination |
 |---|---|---|---|
 | Soccer Predictions | Featured | Yes | `/soccer-predictions.html` |
-| Trivia | Coming Soon | No | — |
+| Trivia | Playtest | Yes | `/trivia-playtest.html` |
 | Community Voting | Coming Soon | No | — |
 | Level 33 | Coming Soon | No | — |
 | Duels | Coming Soon | No | — |
@@ -58,19 +60,33 @@ Coming Soon cards render as inert `<div>` elements with no `href` and no click h
 
 **Trivia — corrected, per explicit founder review.** An earlier version of this shell marked Trivia "Available" and routed it to `/participant.html`, reasoning that `participant.html` was "genuinely the only current member-side surface" for the validated Multiple Choice engine. That reasoning was rejected on review, correctly: `/participant.html` is a session-participation surface requiring an externally created session and room code — it is not a standalone Trivia Experience, and routing a member with no room code in hand into it would be misleading regardless of how the card's subtitle was worded. **Validated engine capability is not the same thing as a finished member-facing Experience.** Multiple Choice/Trivia is real, tested, and production-validated as an *engine* — but no self-serve, member-initiated Trivia Experience exists yet on top of it. The Gaming catalog now correctly reflects that gap by marking Trivia Coming Soon and non-actionable, exactly like Community Voting, Level 33, and Duels, rather than routing members into session infrastructure that was built for hosted playtests, not for a stranger arriving at the landing page. `/participant.html` itself is unchanged and remains directly reachable at its existing path for hosted/playtest sessions — only the landing catalog's link to it was removed.
 
+## Trivia Playtest follow-up (founder-directed)
+
+The reasoning in the paragraph above is preserved unchanged and remains correct: it is the reason Trivia was marked Coming Soon in the first place, and that reasoning is not being revised or walked back here.
+
+Subsequently, the founder authorized a narrower, explicitly-scoped follow-up: an **invited playtest entrance**, not a reclassification of Trivia as a finished Experience. The distinction the founder drew is preserved exactly: *validated Interaction Engine capability is not the same thing as a finished member-facing Experience.* Trivia is not being marked "Available," "Live," "Released," or "Production Ready" — it is marked **Playtest**, a status deliberately chosen to be unmistakable as preview/testing, not general availability. The purpose is to let invited reviewers (starting with Roberto, who is separately the implementer of the historical Finca 8 Golazo capability under Foreign Evidence Intake) coherently inspect the already-validated, already-shipped hosted Trivia capability, without a member-facing landing page routing strangers directly into session infrastructure built for hosted playtests.
+
+**What changed:** the Trivia catalog card became actionable again, but its destination is no longer `/participant.html` directly. It now opens a new, small dedicated page, `public/trivia-playtest.html`, which explains in member-facing language that this is an early playtest, and offers two explicit actions — **Host a Trivia Session** (→ `/host.html`) and **Join a Trivia Session** (→ `/participant.html`) — rather than silently picking one. `/host.html` and `/participant.html` themselves remain completely unmodified; only a new, small routing page was added in front of them. No new session logic, matchmaking, or gameplay change was made anywhere. `UrbanoAuth` was not touched — the same honest, non-functional "Sign in with URBANO" seam appears on the new page, and no mock or temporary authentication was added merely to let a reviewer in.
+
 ## Soccer Predictions destination behavior
 
 `public/soccer-predictions.html` — a polished, member-facing pre-launch page: brand header (with the same honest sign-in seam), a hero card explaining what the experience will do ("Predict the biggest matches and compete with the community... check back soon to make your picks"), an "Opening Soon" status pill, and a short "What to expect" panel. No internal development language anywhere (no "Roberto," "FEI," "Golazo," "migration," "pending"). No prediction mechanics, match data, forms, schemas, or scoring UI — purely presentational, as instructed, intended to receive the reviewed Golazo/Finca 8 implementation once the Foreign Evidence Package is returned.
 
 ## Files changed
 
+Original checkpoint (`6ea3e82`):
 - `app/route.ts` — new; serves the landing page at `/`.
 - `public/index.html` — new; the landing shell.
 - `public/soccer-predictions.html` — new; the Soccer Predictions destination shell.
 - `public/urbanoAuth.js` — new; the authentication seam.
 - `APPLICATION_SHELL_IMPLEMENTATION_RECORD.md` — this file.
 
-No changes to `host.html`, `participant.html`, `sessionSync.js`, `lib/session/*`, any API route, any migration, or `next.config.cjs` (a rewrite was tried there and reverted once the route-handler approach proved correct — final state is unchanged from before this work).
+Trivia Playtest follow-up (this pass):
+- `public/trivia-playtest.html` — new; the Trivia Playtest destination, routing to `/host.html` and `/participant.html`.
+- `public/index.html` — modified; Trivia's catalog entry changed from Coming Soon/inert to Playtest/actionable, pointing at `/trivia-playtest.html`. The `status-available` CSS class was renamed to `status-playtest` to match (same ivory-outline visual treatment, distinct from Featured's purple and Coming Soon's muted styling — never rendered as equivalent to Featured).
+- `APPLICATION_SHELL_IMPLEMENTATION_RECORD.md` — this file, updated.
+
+No changes to `host.html`, `participant.html`, `sessionSync.js`, `urbanoAuth.js`, `lib/session/*`, any API route, any migration, or `next.config.cjs` at any point across either pass (a rewrite was tried there and reverted once the route-handler approach proved correct — final state is unchanged from before this work).
 
 ## Verification
 
@@ -81,6 +97,14 @@ No changes to `host.html`, `participant.html`, `sessionSync.js`, `lib/session/*`
 - Desktop (native viewport) and mobile (375×812) screenshots taken of both new pages: header, Featured card, and carousel all render correctly at both sizes; sign-in click shows the honest not-connected message with no fabricated authenticated state.
 - Confirmed no page-level horizontal overflow at mobile width (`document.documentElement.scrollWidth === window.innerWidth`) — only the intended carousel scrolls horizontally, verified by scrolling it to reveal the Duels card at the far end.
 - Confirmed via DOM inspection that all four Coming Soon cards (Trivia, Community Voting, Level 33, Duels) carry no `href` or click handler; only the Featured Soccer Predictions card does.
+
+**Trivia Playtest follow-up verification** (re-run after the change above):
+- `npx tsc --noEmit`, `npm test` (219/219), `npm run build`: all clean, re-run and unaffected.
+- DOM inspection re-confirmed: Soccer Predictions (`<a>`, Featured) and Trivia (`<a>`, Playtest) are the only two actionable cards; Community Voting, Level 33, and Duels remain inert `<div>` elements with no `href`.
+- `/trivia-playtest.html` confirmed `200`; its "Host a Trivia Session" and "Join a Trivia Session" buttons confirmed via direct click-through to land on the real, unmodified `/host.html` and `/participant.html`.
+- Desktop and mobile (375×812) screenshots confirm the Playtest pill (ivory outline) is visually distinct from and clearly subordinate to the Featured card's purple glow — never rendered as equivalent.
+- No page-level horizontal overflow at mobile width on either `/` or `/trivia-playtest.html` (`document.documentElement.scrollWidth === window.innerWidth`, verified on both).
+- `/host.html` and `/participant.html` re-confirmed byte-for-byte unchanged and directly reachable.
 
 Not deployed, per instruction.
 

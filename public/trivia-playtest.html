@@ -1,0 +1,157 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Trivia Playtest — URBANO Gaming</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /*
+   * Trivia Playtest destination shell. Routes invited reviewers into
+   * the already-existing, already-validated host.html/participant.html
+   * session surfaces — no new session logic, no new gameplay, no
+   * changes to those two files. Deliberately styled less prominently
+   * than the Featured Soccer Predictions destination (no purple
+   * Experience-Layer glow) — this is an invited playtest of validated
+   * engine capability, not a finished member-facing Experience. See
+   * APPLICATION_SHELL_IMPLEMENTATION_RECORD.md.
+   */
+  :root {
+    --bg-page: #0a0a0a;
+    --bg-card: #161616;
+    --surface-2: #1c1c1c;
+    --ink: #f5f1e8;
+    --primary-ink: #0a0a0a;
+    --muted: #9b9689;
+    --line: #2a2a2a;
+    --exp-purple: #7c3aed;
+    --exp-purple-glow: rgba(124, 58, 237, 0.45);
+    --exp-purple-bg: rgba(124, 58, 237, 0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg-page); color: var(--ink); margin: 0; padding: 0 0 60px;
+  }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; }
+
+  .shell-header {
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 720px; margin: 0 auto; padding: 20px 20px 0;
+  }
+  .brand { display: inline-flex; align-items: center; gap: 10px; }
+  .brand-mark { width: 24px; height: 26px; display: block; filter: drop-shadow(0 0 6px var(--exp-purple-glow)); }
+  .brand-word { font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; }
+  .brand-badge {
+    background: var(--exp-purple-bg); border: 1px solid var(--exp-purple);
+    color: var(--exp-purple); font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
+  }
+  .signin-btn {
+    font-size: 13px; font-weight: 600; padding: 9px 16px;
+    border-radius: 8px; border: 1px solid var(--ink); background: transparent;
+    color: var(--ink);
+  }
+  .signin-btn:hover { background: var(--surface-2); }
+  .signin-status {
+    display: none; max-width: 720px; margin: 10px auto 0; padding: 10px 20px 0;
+    font-size: 12.5px; color: var(--muted); line-height: 1.5;
+  }
+
+  .back-link {
+    max-width: 720px; margin: 18px auto 0; padding: 0 20px;
+    font-size: 13px; color: var(--muted); display: block;
+  }
+  .back-link:hover { color: var(--ink); }
+
+  .hero-card { max-width: 720px; margin: 24px auto 0; padding: 0 20px; }
+  .hero-inner {
+    border-radius: 18px; border: 1px solid var(--line); background: var(--bg-card);
+    padding: 40px 28px; text-align: center;
+  }
+  .icon { font-size: 34px; margin-bottom: 14px; display: block; }
+  .hero-inner h1 { font-size: clamp(24px, 5vw, 32px); font-weight: 800; margin: 0 0 12px; }
+  .hero-inner p {
+    color: var(--muted); font-size: 15px; line-height: 1.65; max-width: 480px; margin: 0 auto;
+  }
+  .status-row { display: flex; justify-content: center; margin-top: 22px; }
+  .status-pill {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 5px 12px; border-radius: 999px; background: transparent;
+    color: var(--ink); border: 1px solid var(--ink);
+  }
+
+  .actions {
+    max-width: 720px; margin: 24px auto 0; padding: 0 20px;
+    display: flex; gap: 12px;
+  }
+  .action-btn {
+    flex: 1; text-align: center; font-size: 14px; font-weight: 700;
+    padding: 14px 16px; border-radius: 10px;
+  }
+  .action-primary { background: var(--ink); color: var(--primary-ink); border: none; }
+  .action-secondary { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+
+  .info-section { max-width: 720px; margin: 20px auto 0; padding: 0 20px; }
+  .info-card {
+    border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2);
+    padding: 16px 20px; font-size: 13px; color: var(--muted); line-height: 1.6;
+  }
+
+  @media (max-width: 640px) {
+    .shell-header { padding: 16px 16px 0; }
+    .brand-word { font-size: 15px; }
+    .signin-btn { font-size: 12px; padding: 9px 12px; white-space: nowrap; }
+    .back-link, .hero-card, .actions, .info-section { padding-left: 16px; padding-right: 16px; }
+    .hero-inner { padding: 32px 20px; }
+    .actions { flex-direction: column; }
+  }
+</style>
+</head>
+<body>
+
+<div class="shell-header">
+  <div class="brand">
+    <img class="brand-mark" src="/urbano-mark.svg" alt="" />
+    <span class="brand-word">URBANO</span>
+    <span class="brand-badge">Gaming</span>
+  </div>
+  <button class="signin-btn" id="btn-signin">Sign in with URBANO</button>
+</div>
+<p class="signin-status" id="signin-status"></p>
+
+<a class="back-link" href="/">← Back to URBANO Gaming</a>
+
+<div class="hero-card">
+  <div class="hero-inner">
+    <span class="icon">🧠</span>
+    <h1>Trivia</h1>
+    <p>Host a game or join a live session and try the current URBANO Gaming Trivia experience.</p>
+    <div class="status-row">
+      <span class="status-pill">Playtest</span>
+    </div>
+  </div>
+</div>
+
+<div class="actions">
+  <a class="action-btn action-primary" href="/host.html">Host a Trivia Session</a>
+  <a class="action-btn action-secondary" href="/participant.html">Join a Trivia Session</a>
+</div>
+
+<div class="info-section">
+  <div class="info-card">This is an early playtest of URBANO Gaming Trivia — you're trying it before everyone else, and things may still be a little rough around the edges.</div>
+</div>
+
+<script src="/urbanoAuth.js"></script>
+<script>
+  UrbanoAuth.attachSignInButton(
+    document.getElementById("btn-signin"),
+    document.getElementById("signin-status")
+  );
+</script>
+
+</body>
+</html>

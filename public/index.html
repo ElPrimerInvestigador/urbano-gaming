@@ -134,7 +134,7 @@
     text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
   }
   .status-featured { background: var(--exp-purple-bg); color: var(--exp-purple); border: 1px solid var(--exp-purple); }
-  .status-available { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+  .status-playtest { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
   .status-soon { background: rgba(255,255,255,0.04); color: var(--muted); border: 1px solid var(--line); }
 
   .exp-card h3 { font-size: 16px; margin: 0; font-weight: 700; }
@@ -216,8 +216,9 @@
     },
     {
       title: "Trivia",
-      sub: "Live trivia, coming to URBANO Gaming.",
-      status: "soon",
+      sub: "Host or join a live session — try the current Trivia playtest.",
+      status: "playtest",
+      href: "/trivia-playtest.html",
     },
     {
       title: "Community Voting",
@@ -236,8 +237,8 @@
     },
   ];
 
-  const STATUS_LABEL = { featured: "Featured", available: "Available", soon: "Coming Soon" };
-  const STATUS_CLASS = { featured: "status-featured", available: "status-available", soon: "status-soon" };
+  const STATUS_LABEL = { featured: "Featured", playtest: "Playtest", soon: "Coming Soon" };
+  const STATUS_CLASS = { featured: "status-featured", playtest: "status-playtest", soon: "status-soon" };
 
   const carousel = document.getElementById("explore-carousel");
   carousel.innerHTML = CATALOG.map((item) => {
