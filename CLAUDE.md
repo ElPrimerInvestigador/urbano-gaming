@@ -8,7 +8,7 @@ This file is the repository-level operating contract for Claude. Read it before 
 - Legal and organizational owner: **TecnoMovi**
 - Product lineage: `TecnoMovi → URBANO → URBANO Gaming`
 - Canonical local repository: `Projects/Urbano Gaming/Software/urbano-gaming/`
-- Canonical GitHub repository: `ElPrimerInvestigador/urbano-gaming`
+- Canonical GitHub repository: `hiltontoro/urbano-gaming`
 - Production: `https://urbano-gaming-playtest.vercel.app`
 - Supabase project display name: `URBANO Gaming`
 
