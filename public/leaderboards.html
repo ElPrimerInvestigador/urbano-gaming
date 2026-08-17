@@ -3,19 +3,16 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Trivia Playtest — URBANO Gaming</title>
+<title>Leaderboards — URBANO Gaming</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   /*
-   * Trivia Playtest destination shell. Routes invited reviewers into
-   * the already-existing, already-validated host.html/participant.html
-   * session surfaces — no new session logic, no new gameplay, no
-   * changes to those two files. Deliberately styled less prominently
-   * than the Featured Soccer Predictions destination (no purple
-   * Experience-Layer glow) — this is an invited playtest of validated
-   * engine capability, not a finished member-facing Experience. See
+   * Leaderboards shell — a real, navigable destination with no
+   * fabricated users, scores, rankings, or venues. Every view below is
+   * an honest empty/future state; nothing here reads from or writes to
+   * the existing point_awards/standings implementation. See
    * APPLICATION_SHELL_IMPLEMENTATION_RECORD.md.
    */
   :root {
@@ -79,54 +76,47 @@
   }
   .nav-link.is-active { color: var(--ink); border-color: var(--ink); }
 
-  .back-link {
-    max-width: 720px; margin: 18px auto 0; padding: 0 20px;
-    font-size: 13px; color: var(--muted); display: block;
-  }
-  .back-link:hover { color: var(--ink); }
+  .section { max-width: 720px; margin: 0 auto; padding: 0 20px; }
+  .page-title { font-size: clamp(24px, 5vw, 30px); font-weight: 800; margin: 28px 0 6px; }
+  .page-sub { color: var(--muted); font-size: 14px; margin: 0 0 22px; line-height: 1.6; }
 
-  .hero-card { max-width: 720px; margin: 20px auto 0; padding: 0 20px; }
-  .hero-inner {
-    border-radius: 18px; border: 1px solid var(--line); background: var(--bg-card);
-    padding: 40px 28px; text-align: center;
+  .tab-row {
+    display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    margin-bottom: 18px; padding-bottom: 2px;
   }
-  .icon { font-size: 34px; margin-bottom: 14px; display: block; }
-  .hero-inner h1 { font-size: clamp(24px, 5vw, 32px); font-weight: 800; margin: 0 0 12px; }
-  .hero-inner p {
-    color: var(--muted); font-size: 15px; line-height: 1.65; max-width: 480px; margin: 0 auto;
+  .tab-row::-webkit-scrollbar { display: none; }
+  .tab-btn {
+    flex: 0 0 auto; font-size: 13.5px; font-weight: 700; padding: 10px 16px;
+    border-radius: 999px; border: 1px solid var(--line); background: transparent;
+    color: var(--muted);
   }
-  .status-row { display: flex; justify-content: center; margin-top: 22px; }
-  .status-pill {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-    padding: 5px 12px; border-radius: 999px; background: transparent;
-    color: var(--ink); border: 1px solid var(--ink);
+  .tab-btn.is-active { color: var(--ink); border-color: var(--ink); background: var(--surface-2); }
+
+  .filter-row { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .filter-chip {
+    font-size: 12.5px; font-weight: 600; padding: 7px 13px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
   }
 
-  .actions {
-    max-width: 720px; margin: 24px auto 0; padding: 0 20px;
-    display: flex; gap: 12px;
+  .empty-state {
+    border: 1px dashed var(--line); border-radius: 14px; padding: 36px 24px;
+    text-align: center; background: var(--bg-card);
   }
-  .action-btn {
-    flex: 1; text-align: center; font-size: 14px; font-weight: 700;
-    padding: 14px 16px; border-radius: 10px;
-  }
-  .action-primary { background: var(--ink); color: var(--primary-ink); border: none; }
-  .action-secondary { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+  .empty-title { font-size: 15px; font-weight: 700; margin: 0 0 6px; }
+  .empty-sub { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.55; max-width: 380px; margin: 0 auto; }
 
-  .info-section { max-width: 720px; margin: 20px auto 0; padding: 0 20px; }
   .info-card {
     border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2);
-    padding: 16px 20px; font-size: 13px; color: var(--muted); line-height: 1.6;
+    padding: 16px 20px; font-size: 13px; color: var(--muted); line-height: 1.6; margin-top: 20px;
   }
+  .info-card strong { color: var(--ink); }
 
   @media (max-width: 640px) {
     .shell-header { padding: 16px 16px 0; }
     .brand-word { font-size: 15px; }
     .signin-btn { font-size: 12px; padding: 9px 12px; white-space: nowrap; }
     .primary-nav { padding: 0 16px 2px; }
-    .back-link, .hero-card, .actions, .info-section { padding-left: 16px; padding-right: 16px; }
-    .hero-inner { padding: 32px 20px; }
-    .actions { flex-direction: column; }
+    .section { padding: 0 16px; }
   }
 </style>
 </head>
@@ -144,32 +134,48 @@
 
 <nav class="primary-nav">
   <a class="nav-link" href="/">Home</a>
-  <a class="nav-link is-active" href="/#play">Play</a>
+  <a class="nav-link" href="/#play">Play</a>
   <a class="nav-link" href="/#experiences">Experiences</a>
-  <a class="nav-link" href="/leaderboards.html">Leaderboards</a>
+  <a class="nav-link is-active" href="/leaderboards.html">Leaderboards</a>
   <a class="nav-link" href="/rewards.html">Rewards</a>
 </nav>
 
-<a class="back-link" href="/">← Back to URBANO Gaming</a>
+<div class="section">
+  <h1 class="page-title">Leaderboards</h1>
+  <p class="page-sub">See how you and your community stack up across URBANO Gaming.</p>
 
-<div class="hero-card">
-  <div class="hero-inner">
-    <span class="icon">🧠</span>
-    <h1>Trivia</h1>
-    <p>Host a game or join a live session and try the current URBANO Gaming Trivia experience.</p>
-    <div class="status-row">
-      <span class="status-pill">Playtest</span>
+  <div class="tab-row">
+    <button class="tab-btn is-active" data-tab="global">Global</button>
+    <button class="tab-btn" data-tab="by-game">By Game</button>
+    <button class="tab-btn" data-tab="circles">My Circles</button>
+  </div>
+
+  <div class="tab-panel" data-panel="global">
+    <div class="empty-state">
+      <p class="empty-title">No rankings yet.</p>
+      <p class="empty-sub">Play eligible URBANO Gaming experiences to enter the leaderboard.</p>
     </div>
   </div>
-</div>
 
-<div class="actions">
-  <a class="action-btn action-primary" href="/host.html">Host a Trivia Session</a>
-  <a class="action-btn action-secondary" href="/participant.html">Join a Trivia Session</a>
-</div>
+  <div class="tab-panel" data-panel="by-game" hidden>
+    <div class="filter-row">
+      <span class="filter-chip">Trivia</span>
+      <span class="filter-chip">Soccer Predictions</span>
+    </div>
+    <div class="empty-state">
+      <p class="empty-title">No rankings yet.</p>
+      <p class="empty-sub">Standings will appear here once a game or experience starts counting toward Leaderboards.</p>
+    </div>
+  </div>
 
-<div class="info-section">
-  <div class="info-card">This is an early playtest of URBANO Gaming Trivia — you're trying it before everyone else, and things may still be a little rough around the edges.</div>
+  <div class="tab-panel" data-panel="circles" hidden>
+    <div class="empty-state">
+      <p class="empty-title">Circles aren't connected yet.</p>
+      <p class="empty-sub">My Circles will show rankings among your friends and communities once URBANO identity is connected.</p>
+    </div>
+  </div>
+
+  <div class="info-card"><strong>Coming later:</strong> filtering by venue and location.</div>
 </div>
 
 <script src="/urbanoAuth.js"></script>
@@ -178,6 +184,19 @@
     document.getElementById("btn-signin"),
     document.getElementById("signin-status")
   );
+
+  const tabButtons = document.querySelectorAll(".tab-btn");
+  const tabPanels = document.querySelectorAll(".tab-panel");
+  tabButtons.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      tabButtons.forEach((b) => b.classList.remove("is-active"));
+      btn.classList.add("is-active");
+      const target = btn.dataset.tab;
+      tabPanels.forEach((panel) => {
+        panel.hidden = panel.dataset.panel !== target;
+      });
+    });
+  });
 </script>
 
 </body>

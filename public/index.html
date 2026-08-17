@@ -52,7 +52,22 @@
     max-width: 1080px; margin: 0 auto; padding: 20px 20px 0;
   }
   .brand { display: inline-flex; align-items: center; gap: 10px; }
-  .brand-mark { width: 24px; height: 26px; display: block; filter: drop-shadow(0 0 6px var(--exp-purple-glow)); }
+  /* Founder visual review: the mark previously used
+     filter: drop-shadow(...) directly on the <img>. drop-shadow blurs
+     the *alpha silhouette* of the image — since urbano-mark.svg is a
+     fully opaque square (not just the U shape), that traced a crisp
+     purple-glowing rectangle around the mark, reading as an unwanted
+     box/border. Fixed by moving the glow to a separate, blurred
+     radial-gradient pseudo-element positioned behind the mark, which
+     produces a soft atmospheric halo instead of outlining the image's
+     own rectangular edge. The mark asset itself is untouched. */
+  .brand-mark-wrap { position: relative; display: inline-flex; width: 24px; height: 26px; flex-shrink: 0; }
+  .brand-mark-wrap::before {
+    content: ""; position: absolute; inset: -9px;
+    background: radial-gradient(circle, var(--exp-purple-glow) 0%, transparent 70%);
+    filter: blur(4px); z-index: 0;
+  }
+  .brand-mark { position: relative; z-index: 1; width: 24px; height: 26px; display: block; }
   .brand-word { font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; }
   .brand-badge {
     background: var(--exp-purple-bg); border: 1px solid var(--exp-purple);
@@ -71,14 +86,32 @@
     font-size: 12.5px; color: var(--muted); line-height: 1.5;
   }
 
+  /* Primary navigation — the smallest structure that gives URBANO
+     Gaming a durable app shape: Home/Play/Experiences are anchors on
+     this one page; Leaderboards/Rewards are their own small static
+     pages. No router, no framework — plain links, matching every
+     other page in this shell. Horizontally scrollable so it never
+     wraps awkwardly on narrow phones. */
+  .primary-nav {
+    display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    max-width: 1080px; margin: 16px auto 0; padding: 0 20px 2px;
+  }
+  .primary-nav::-webkit-scrollbar { display: none; }
+  .nav-link {
+    flex: 0 0 auto; font-size: 13px; font-weight: 600; color: var(--muted);
+    padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .nav-link.is-active { color: var(--ink); border-color: var(--ink); }
+
   /* Hero */
-  .hero { max-width: 1080px; margin: 0 auto; padding: 44px 20px 8px; text-align: center; }
+  .hero { max-width: 1080px; margin: 0 auto; padding: 36px 20px 8px; text-align: center; }
   .hero h1 {
     font-size: clamp(28px, 5vw, 40px); font-weight: 800; letter-spacing: -0.01em;
     margin: 0 0 12px;
   }
   .hero p {
-    color: var(--muted); font-size: 15px; max-width: 480px; margin: 0 auto; line-height: 1.6;
+    color: var(--muted); font-size: 15px; max-width: 560px; margin: 0 auto; line-height: 1.6;
   }
 
   .section { max-width: 1080px; margin: 0 auto; padding: 0 20px; }
@@ -86,32 +119,67 @@
     font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
     color: var(--muted); margin: 40px 0 12px;
   }
+  .section-note { font-size: 12.5px; color: var(--muted); margin: 10px 0 0; }
 
   /* Featured card */
   .featured-card {
-    display: block; position: relative; overflow: hidden;
+    position: relative; overflow: hidden;
     border-radius: 16px; border: 1px solid var(--exp-purple);
     background:
       radial-gradient(120% 140% at 100% 0%, var(--exp-purple-bg), transparent 60%),
       var(--bg-card);
     box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.14), 0 0 30px var(--exp-purple-glow);
     padding: 28px 24px;
-    cursor: pointer;
   }
   .featured-eyebrow {
     display: inline-flex; align-items: center; gap: 6px;
     font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--exp-purple); margin-bottom: 10px;
+    color: var(--exp-purple); margin-bottom: 4px;
   }
-  .featured-card h2 { font-size: 26px; margin: 0 0 8px; font-weight: 800; }
-  .featured-card p { color: var(--muted); font-size: 15px; margin: 0 0 20px; max-width: 480px; line-height: 1.55; }
+  .featured-card h2 { font-size: 24px; margin: 6px 0 0; font-weight: 800; }
+
+  /* Match module — structured as a single-item horizontal track so a
+     second/third upcoming fixture can be appended later without
+     redesigning this section. Only one verified fixture exists today;
+     no slide controls are built since there's nothing yet to navigate
+     between. Original URBANO treatment (typography + gradients +
+     a subtle repeating diagonal texture evoking stadium light) —
+     deliberately no crests, no broadcast graphics, no third-party
+     marks; team names appear as plain text only. */
+  .match-track {
+    display: flex; gap: 14px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory; margin: 16px 0 6px; padding-bottom: 2px;
+  }
+  .match-track::-webkit-scrollbar { display: none; }
+  .match-slide {
+    flex: 0 0 100%; scroll-snap-align: start;
+    border-radius: 14px; border: 1px solid rgba(124, 58, 237, 0.35);
+    background:
+      linear-gradient(135deg, rgba(124,58,237,0.18) 0%, transparent 55%),
+      repeating-linear-gradient(135deg, rgba(255,255,255,0.025) 0 2px, transparent 2px 16px),
+      var(--surface-2);
+    padding: 22px 20px;
+  }
+  .match-teams {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 21px; font-weight: 800; margin: 0 0 14px; flex-wrap: wrap; text-align: center;
+  }
+  .match-vs {
+    font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .match-meta {
+    display: flex; flex-wrap: wrap; gap: 6px 18px; justify-content: center;
+    font-size: 12.5px; color: var(--muted);
+  }
+  .featured-note { color: var(--muted); font-size: 13.5px; margin: 16px 0 20px; }
   .featured-cta {
     display: inline-flex; align-items: center; gap: 8px;
     background: var(--primary-fill); color: var(--primary-ink);
     font-weight: 700; font-size: 14px; padding: 11px 20px; border-radius: 999px;
   }
 
-  /* Explore carousel */
+  /* Explore carousels (Skill Games, Experiences) */
   .carousel {
     display: flex; gap: 14px; overflow-x: auto; padding: 4px 20px 14px;
     margin: 0 -20px; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch;
@@ -151,11 +219,14 @@
     .shell-header { padding: 16px 16px 0; }
     .brand-word { font-size: 15px; }
     .signin-btn { font-size: 12px; padding: 9px 12px; white-space: nowrap; }
-    .hero { padding: 32px 16px 4px; }
+    .primary-nav { padding: 0 16px 2px; }
+    .hero { padding: 28px 16px 4px; }
     .section { padding: 0 16px; }
     .carousel { padding: 4px 16px 14px; margin: 0 -16px; }
     .featured-card { padding: 22px 18px; }
-    .featured-card h2 { font-size: 22px; }
+    .featured-card h2 { font-size: 20px; }
+    .match-slide { padding: 18px 16px; }
+    .match-teams { font-size: 18px; }
   }
 </style>
 </head>
@@ -163,7 +234,7 @@
 
 <div class="shell-header">
   <div class="brand">
-    <img class="brand-mark" src="/urbano-mark.svg" alt="" />
+    <span class="brand-mark-wrap"><img class="brand-mark" src="/urbano-mark.svg" alt="" /></span>
     <span class="brand-word">URBANO</span>
     <span class="brand-badge">Gaming</span>
   </div>
@@ -171,26 +242,52 @@
 </div>
 <p class="signin-status" id="signin-status"></p>
 
+<nav class="primary-nav">
+  <a class="nav-link is-active" href="/">Home</a>
+  <a class="nav-link" href="/#play">Play</a>
+  <a class="nav-link" href="/#experiences">Experiences</a>
+  <a class="nav-link" href="/leaderboards.html">Leaderboards</a>
+  <a class="nav-link" href="/rewards.html">Rewards</a>
+</nav>
+
 <div class="hero">
   <h1>Play, predict, and compete with your community.</h1>
-  <p>URBANO Gaming brings trivia, predictions, and live experiences to the moments you're already sharing together.</p>
+  <p>Trivia, predictions, competitive minigames, and live experiences — built for playing together.</p>
 </div>
 
 <div class="section">
   <div class="section-label">Featured</div>
-  <a class="featured-card" href="/soccer-predictions.html">
-    <div class="featured-eyebrow">⚽ Featured Experience</div>
+  <div class="featured-card">
+    <div class="featured-eyebrow">⚽ Featured Match</div>
     <h2>Soccer Predictions</h2>
-    <p>Predict the biggest matches. Compete with the community.</p>
-    <span class="featured-cta">Enter Soccer Predictions →</span>
-  </a>
+    <div class="match-track">
+      <div class="match-slide">
+        <div class="match-teams">
+          <span>Espanyol</span>
+          <span class="match-vs">vs</span>
+          <span>Real Madrid</span>
+        </div>
+        <div class="match-meta">
+          <span>LaLiga · Sat, Aug 22</span>
+          <span>RCDE Stadium</span>
+          <span>21:30 Madrid · 13:30 Tegucigalpa</span>
+        </div>
+      </div>
+    </div>
+    <p class="featured-note">Prediction experience opening soon.</p>
+    <a class="featured-cta" href="/soccer-predictions.html">Enter Soccer Predictions →</a>
+  </div>
 </div>
 
-<div class="section">
-  <div class="section-label">Explore Games &amp; Experiences</div>
-  <div class="carousel" id="explore-carousel">
-    <!-- populated by script below -->
-  </div>
+<div class="section" id="play">
+  <div class="section-label">Skill Games</div>
+  <div class="carousel" id="games-carousel"></div>
+  <p class="section-note">More competitive games are on the way.</p>
+</div>
+
+<div class="section" id="experiences">
+  <div class="section-label">Experiences</div>
+  <div class="carousel" id="experiences-carousel"></div>
 </div>
 
 <footer>URBANO Gaming — part of URBANO</footer>
@@ -202,24 +299,29 @@
     document.getElementById("signin-status")
   );
 
-  // Catalog is member-facing Experiences, not a rendering of the
-  // internal Interaction Engine Taxonomy — see
-  // APPLICATION_SHELL_IMPLEMENTATION_RECORD.md. Locked (Coming Soon)
-  // entries render no href/onclick at all, so they are visually
-  // discoverable but never actionable.
-  const CATALOG = [
-    {
-      title: "Soccer Predictions",
-      sub: "Predict the biggest matches. Compete with the community.",
-      status: "featured",
-      href: "/soccer-predictions.html",
-    },
+  // Two separate, member-facing catalogs — Skill Games (short-form
+  // competitive play) vs. Experiences (broader social/participatory
+  // moments, including the future orchestrated Level 33). Neither is a
+  // rendering of the internal Interaction Engine Taxonomy — see
+  // APPLICATION_SHELL_IMPLEMENTATION_RECORD.md. Soccer Predictions is
+  // deliberately not duplicated into the Experiences carousel below —
+  // it's already the Featured module above, and repeating a full card
+  // for it here would be redundant, not additive.
+  const SKILL_GAMES_CATALOG = [
     {
       title: "Trivia",
       sub: "Host or join a live session — try the current Trivia playtest.",
       status: "playtest",
       href: "/trivia-playtest.html",
     },
+    {
+      title: "Duels",
+      sub: "Head-to-head challenges between members.",
+      status: "soon",
+    },
+  ];
+
+  const EXPERIENCES_CATALOG = [
     {
       title: "Community Voting",
       sub: "Vote for your favorites in live moments.",
@@ -230,28 +332,28 @@
       sub: "A new way to play together, coming to URBANO Gaming.",
       status: "soon",
     },
-    {
-      title: "Duels",
-      sub: "Head-to-head challenges between members.",
-      status: "soon",
-    },
   ];
 
   const STATUS_LABEL = { featured: "Featured", playtest: "Playtest", soon: "Coming Soon" };
   const STATUS_CLASS = { featured: "status-featured", playtest: "status-playtest", soon: "status-soon" };
 
-  const carousel = document.getElementById("explore-carousel");
-  carousel.innerHTML = CATALOG.map((item) => {
-    const locked = item.status === "soon";
-    const tag = locked ? "div" : "a";
-    const hrefAttr = locked ? "" : ` href="${item.href}"`;
-    return `<${tag} class="exp-card ${locked ? "is-locked" : "is-actionable"}"${hrefAttr}>
-      <span class="status-pill ${STATUS_CLASS[item.status]}">${STATUS_LABEL[item.status]}</span>
-      <h3>${item.title}</h3>
-      <p class="exp-sub">${item.sub}</p>
-      <span class="exp-action">${locked ? "Coming soon" : "Open →"}</span>
-    </${tag}>`;
-  }).join("");
+  function renderCatalog(items, targetId) {
+    const el = document.getElementById(targetId);
+    el.innerHTML = items.map((item) => {
+      const locked = item.status === "soon";
+      const tag = locked ? "div" : "a";
+      const hrefAttr = locked ? "" : ` href="${item.href}"`;
+      return `<${tag} class="exp-card ${locked ? "is-locked" : "is-actionable"}"${hrefAttr}>
+        <span class="status-pill ${STATUS_CLASS[item.status]}">${STATUS_LABEL[item.status]}</span>
+        <h3>${item.title}</h3>
+        <p class="exp-sub">${item.sub}</p>
+        <span class="exp-action">${locked ? "Coming soon" : "Open →"}</span>
+      </${tag}>`;
+    }).join("");
+  }
+
+  renderCatalog(SKILL_GAMES_CATALOG, "games-carousel");
+  renderCatalog(EXPERIENCES_CATALOG, "experiences-carousel");
 </script>
 
 </body>

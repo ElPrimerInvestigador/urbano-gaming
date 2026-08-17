@@ -3,20 +3,19 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Trivia Playtest — URBANO Gaming</title>
+<title>Rewards — URBANO Gaming</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   /*
-   * Trivia Playtest destination shell. Routes invited reviewers into
-   * the already-existing, already-validated host.html/participant.html
-   * session surfaces — no new session logic, no new gameplay, no
-   * changes to those two files. Deliberately styled less prominently
-   * than the Featured Soccer Predictions destination (no purple
-   * Experience-Layer glow) — this is an invited playtest of validated
-   * engine capability, not a finished member-facing Experience. See
-   * APPLICATION_SHELL_IMPLEMENTATION_RECORD.md.
+   * Rewards shell — a real, navigable destination communicating future
+   * Gaming progression categories, with no fabricated owned items or
+   * balances. Explicitly does not implement currency, exchange rates,
+   * point balances, Lifestyle-point minting, commerce redemption, or
+   * any Reward Economy logic — see the "URBANO Ecosystem Benefits"
+   * section below and APPLICATION_SHELL_IMPLEMENTATION_RECORD.md for
+   * the architectural boundary this UI is deliberately honest about.
    */
   :root {
     --bg-page: #0a0a0a;
@@ -26,6 +25,8 @@
     --primary-ink: #0a0a0a;
     --muted: #9b9689;
     --line: #2a2a2a;
+    --gold: #d4af37;
+    --gold-bg: rgba(212, 175, 55, 0.12);
     --exp-purple: #7c3aed;
     --exp-purple-glow: rgba(124, 58, 237, 0.45);
     --exp-purple-bg: rgba(124, 58, 237, 0.12);
@@ -79,54 +80,40 @@
   }
   .nav-link.is-active { color: var(--ink); border-color: var(--ink); }
 
-  .back-link {
-    max-width: 720px; margin: 18px auto 0; padding: 0 20px;
-    font-size: 13px; color: var(--muted); display: block;
-  }
-  .back-link:hover { color: var(--ink); }
+  .section { max-width: 720px; margin: 0 auto; padding: 0 20px; }
+  .page-title { font-size: clamp(24px, 5vw, 30px); font-weight: 800; margin: 28px 0 6px; }
+  .page-sub { color: var(--muted); font-size: 14px; margin: 0 0 26px; line-height: 1.6; }
 
-  .hero-card { max-width: 720px; margin: 20px auto 0; padding: 0 20px; }
-  .hero-inner {
-    border-radius: 18px; border: 1px solid var(--line); background: var(--bg-card);
-    padding: 40px 28px; text-align: center;
+  .reward-section { margin-bottom: 22px; }
+  .reward-section h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700;
+    color: var(--muted); margin: 0 0 10px; display: flex; align-items: center; gap: 8px;
   }
-  .icon { font-size: 34px; margin-bottom: 14px; display: block; }
-  .hero-inner h1 { font-size: clamp(24px, 5vw, 32px); font-weight: 800; margin: 0 0 12px; }
-  .hero-inner p {
-    color: var(--muted); font-size: 15px; line-height: 1.65; max-width: 480px; margin: 0 auto;
+  .empty-state {
+    border: 1px dashed var(--line); border-radius: 14px; padding: 22px 20px;
+    background: var(--bg-card);
   }
-  .status-row { display: flex; justify-content: center; margin-top: 22px; }
+  .empty-title { font-size: 14px; font-weight: 700; margin: 0 0 4px; }
+  .empty-sub { font-size: 13px; color: var(--muted); margin: 0; line-height: 1.55; }
+
   .status-pill {
-    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-    padding: 5px 12px; border-radius: 999px; background: transparent;
-    color: var(--ink); border: 1px solid var(--ink);
+    font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 999px; background: rgba(255,255,255,0.04);
+    color: var(--muted); border: 1px solid var(--line);
   }
 
-  .actions {
-    max-width: 720px; margin: 24px auto 0; padding: 0 20px;
-    display: flex; gap: 12px;
+  .boundary-card {
+    border: 1px solid var(--gold); border-radius: 12px; background: var(--gold-bg);
+    padding: 18px 20px; font-size: 13px; color: var(--ink); line-height: 1.65; margin-top: 8px;
   }
-  .action-btn {
-    flex: 1; text-align: center; font-size: 14px; font-weight: 700;
-    padding: 14px 16px; border-radius: 10px;
-  }
-  .action-primary { background: var(--ink); color: var(--primary-ink); border: none; }
-  .action-secondary { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
-
-  .info-section { max-width: 720px; margin: 20px auto 0; padding: 0 20px; }
-  .info-card {
-    border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2);
-    padding: 16px 20px; font-size: 13px; color: var(--muted); line-height: 1.6;
-  }
+  .boundary-card strong { color: var(--gold); }
 
   @media (max-width: 640px) {
     .shell-header { padding: 16px 16px 0; }
     .brand-word { font-size: 15px; }
     .signin-btn { font-size: 12px; padding: 9px 12px; white-space: nowrap; }
     .primary-nav { padding: 0 16px 2px; }
-    .back-link, .hero-card, .actions, .info-section { padding-left: 16px; padding-right: 16px; }
-    .hero-inner { padding: 32px 20px; }
-    .actions { flex-direction: column; }
+    .section { padding: 0 16px; }
   }
 </style>
 </head>
@@ -144,32 +131,54 @@
 
 <nav class="primary-nav">
   <a class="nav-link" href="/">Home</a>
-  <a class="nav-link is-active" href="/#play">Play</a>
+  <a class="nav-link" href="/#play">Play</a>
   <a class="nav-link" href="/#experiences">Experiences</a>
   <a class="nav-link" href="/leaderboards.html">Leaderboards</a>
-  <a class="nav-link" href="/rewards.html">Rewards</a>
+  <a class="nav-link is-active" href="/rewards.html">Rewards</a>
 </nav>
 
-<a class="back-link" href="/">← Back to URBANO Gaming</a>
+<div class="section">
+  <h1 class="page-title">Rewards</h1>
+  <p class="page-sub">Your URBANO Gaming progress, recognition, and future perks — all in one place.</p>
 
-<div class="hero-card">
-  <div class="hero-inner">
-    <span class="icon">🧠</span>
-    <h1>Trivia</h1>
-    <p>Host a game or join a live session and try the current URBANO Gaming Trivia experience.</p>
-    <div class="status-row">
-      <span class="status-pill">Playtest</span>
+  <div class="reward-section">
+    <h2>Achievements</h2>
+    <div class="empty-state">
+      <p class="empty-title">No achievements yet.</p>
+      <p class="empty-sub">Milestones you unlock through play will show up here.</p>
     </div>
   </div>
-</div>
 
-<div class="actions">
-  <a class="action-btn action-primary" href="/host.html">Host a Trivia Session</a>
-  <a class="action-btn action-secondary" href="/participant.html">Join a Trivia Session</a>
-</div>
+  <div class="reward-section">
+    <h2>Unlockables</h2>
+    <div class="empty-state">
+      <p class="empty-title">No unlockables yet.</p>
+      <p class="empty-sub">Future content earned through participation will appear here.</p>
+    </div>
+  </div>
 
-<div class="info-section">
-  <div class="info-card">This is an early playtest of URBANO Gaming Trivia — you're trying it before everyone else, and things may still be a little rough around the edges.</div>
+  <div class="reward-section">
+    <h2>Collections</h2>
+    <div class="empty-state">
+      <p class="empty-title">Nothing collected yet.</p>
+      <p class="empty-sub">Your URBANO Gaming history and mementos will live here over time.</p>
+    </div>
+  </div>
+
+  <div class="reward-section">
+    <h2>Cosmetic Rewards</h2>
+    <div class="empty-state">
+      <p class="empty-title">No cosmetics yet.</p>
+      <p class="empty-sub">Future avatars, skins, and visual customizations will appear here as they're released.</p>
+    </div>
+  </div>
+
+  <div class="reward-section">
+    <h2>URBANO Ecosystem Benefits <span class="status-pill">Coming Soon</span></h2>
+    <div class="boundary-card">
+      <strong>Gaming and URBANO Lifestyle rewards are separate today.</strong> As URBANO Gaming grows, eligible participation may unlock broader URBANO benefits — but Gaming progress does not automatically convert into currency or points, and no such exchange exists yet.
+    </div>
+  </div>
 </div>
 
 <script src="/urbanoAuth.js"></script>

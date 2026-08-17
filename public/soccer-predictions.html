@@ -10,9 +10,11 @@
 <style>
   /*
    * Soccer Predictions destination shell. Pre-launch: no prediction
-   * mechanics, match data, scoring, or auth are implemented here — see
-   * APPLICATION_SHELL_IMPLEMENTATION_RECORD.md. Reuses the same
-   * identity tokens as index.html/host.html/participant.html.
+   * mechanics, match data APIs, scoring, geolocation, or auth are
+   * implemented here — see APPLICATION_SHELL_IMPLEMENTATION_RECORD.md.
+   * The one fixture shown is real, founder-verified schedule
+   * information, not fabricated content. Reuses the same identity
+   * tokens as index.html/host.html/participant.html.
    */
   :root {
     --bg-page: #0a0a0a;
@@ -41,7 +43,13 @@
     max-width: 720px; margin: 0 auto; padding: 20px 20px 0;
   }
   .brand { display: inline-flex; align-items: center; gap: 10px; }
-  .brand-mark { width: 24px; height: 26px; display: block; filter: drop-shadow(0 0 6px var(--exp-purple-glow)); }
+  .brand-mark-wrap { position: relative; display: inline-flex; width: 24px; height: 26px; flex-shrink: 0; }
+  .brand-mark-wrap::before {
+    content: ""; position: absolute; inset: -9px;
+    background: radial-gradient(circle, var(--exp-purple-glow) 0%, transparent 70%);
+    filter: blur(4px); z-index: 0;
+  }
+  .brand-mark { position: relative; z-index: 1; width: 24px; height: 26px; display: block; }
   .brand-word { font-size: 17px; font-weight: 700; color: var(--ink); letter-spacing: 0.02em; }
   .brand-badge {
     background: var(--exp-purple-bg); border: 1px solid var(--exp-purple);
@@ -59,6 +67,18 @@
     font-size: 12.5px; color: var(--muted); line-height: 1.5;
   }
 
+  .primary-nav {
+    display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    max-width: 720px; margin: 16px auto 0; padding: 0 20px 2px;
+  }
+  .primary-nav::-webkit-scrollbar { display: none; }
+  .nav-link {
+    flex: 0 0 auto; font-size: 13px; font-weight: 600; color: var(--muted);
+    padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  .nav-link.is-active { color: var(--ink); border-color: var(--ink); }
+
   .back-link {
     max-width: 720px; margin: 18px auto 0; padding: 0 20px;
     font-size: 13px; color: var(--muted); display: block;
@@ -66,7 +86,7 @@
   .back-link:hover { color: var(--ink); }
 
   .hero-card {
-    max-width: 720px; margin: 24px auto 0; padding: 0 20px;
+    max-width: 720px; margin: 20px auto 0; padding: 0 20px;
   }
   .hero-inner {
     border-radius: 18px; border: 1px solid var(--exp-purple);
@@ -74,17 +94,37 @@
       radial-gradient(120% 160% at 100% 0%, var(--exp-purple-bg), transparent 60%),
       var(--bg-card);
     box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.14), 0 0 34px var(--exp-purple-glow);
-    padding: 40px 28px;
+    padding: 36px 26px;
     text-align: center;
   }
-  .ball { font-size: 34px; margin-bottom: 14px; display: block; }
-  .hero-inner h1 { font-size: clamp(24px, 5vw, 32px); font-weight: 800; margin: 0 0 12px; }
+  .ball { font-size: 30px; margin-bottom: 10px; display: block; }
+  .hero-inner h1 { font-size: clamp(22px, 5vw, 28px); font-weight: 800; margin: 0 0 18px; }
+
+  /* Real fixture card — same original, no-crest treatment as the
+     landing page's Featured module. Structured to later hold more
+     than one match without redesign. */
+  .match-slide {
+    border-radius: 14px; border: 1px solid rgba(124, 58, 237, 0.35);
+    background:
+      linear-gradient(135deg, rgba(124,58,237,0.18) 0%, transparent 55%),
+      repeating-linear-gradient(135deg, rgba(255,255,255,0.025) 0 2px, transparent 2px 16px),
+      var(--surface-2);
+    padding: 20px; margin: 0 0 18px; text-align: center;
+  }
+  .match-teams {
+    display: flex; align-items: center; justify-content: center; gap: 14px;
+    font-size: 20px; font-weight: 800; margin: 0 0 12px; flex-wrap: wrap;
+  }
+  .match-vs { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
+  .match-meta {
+    display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: center;
+    font-size: 12.5px; color: var(--muted);
+  }
+
   .hero-inner p {
     color: var(--muted); font-size: 15px; line-height: 1.65; max-width: 480px; margin: 0 auto;
   }
-  .status-row {
-    display: flex; justify-content: center; margin-top: 22px;
-  }
+  .status-row { display: flex; justify-content: center; margin-top: 20px; }
   .status-pill {
     font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,0.04);
@@ -104,8 +144,10 @@
     .shell-header { padding: 16px 16px 0; }
     .brand-word { font-size: 15px; }
     .signin-btn { font-size: 12px; padding: 9px 12px; white-space: nowrap; }
+    .primary-nav { padding: 0 16px 2px; }
     .back-link, .hero-card, .info-section { padding-left: 16px; padding-right: 16px; }
-    .hero-inner { padding: 32px 20px; }
+    .hero-inner { padding: 28px 18px; }
+    .match-teams { font-size: 17px; }
   }
 </style>
 </head>
@@ -113,7 +155,7 @@
 
 <div class="shell-header">
   <div class="brand">
-    <img class="brand-mark" src="/urbano-mark.svg" alt="" />
+    <span class="brand-mark-wrap"><img class="brand-mark" src="/urbano-mark.svg" alt="" /></span>
     <span class="brand-word">URBANO</span>
     <span class="brand-badge">Gaming</span>
   </div>
@@ -121,12 +163,32 @@
 </div>
 <p class="signin-status" id="signin-status"></p>
 
+<nav class="primary-nav">
+  <a class="nav-link" href="/">Home</a>
+  <a class="nav-link" href="/#play">Play</a>
+  <a class="nav-link is-active" href="/#experiences">Experiences</a>
+  <a class="nav-link" href="/leaderboards.html">Leaderboards</a>
+  <a class="nav-link" href="/rewards.html">Rewards</a>
+</nav>
+
 <a class="back-link" href="/">← Back to URBANO Gaming</a>
 
 <div class="hero-card">
   <div class="hero-inner">
     <span class="ball">⚽</span>
     <h1>Soccer Predictions</h1>
+    <div class="match-slide">
+      <div class="match-teams">
+        <span>Espanyol</span>
+        <span class="match-vs">vs</span>
+        <span>Real Madrid</span>
+      </div>
+      <div class="match-meta">
+        <span>LaLiga · Sat, Aug 22</span>
+        <span>RCDE Stadium</span>
+        <span>21:30 Madrid · 13:30 Tegucigalpa</span>
+      </div>
+    </div>
     <p>Predict the biggest matches and compete with the community. We're putting the finishing touches on this experience — check back soon to make your picks.</p>
     <div class="status-row">
       <span class="status-pill">Opening Soon</span>
