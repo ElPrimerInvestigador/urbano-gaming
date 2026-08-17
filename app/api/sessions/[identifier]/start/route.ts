@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { startSession } from "@/lib/session/startSession";
 import { SupabaseSessionRepository } from "@/lib/session/db/supabaseSessionRepository";
-import type { VotingCandidateSource } from "@/lib/session/types";
+import type { VotingCandidateSource, SegmentTarget } from "@/lib/session/types";
 import {
   SessionNotFoundError,
   HostTokenMismatchError,
   LobbyNotLockedError,
   PreviousInteractionNotRevealedError,
+  NoCurrentSegmentToContinueError,
   EmptyPromptTextError,
   PromptTextTooLongError,
   PreparedQuestionNotFoundError,
@@ -37,6 +38,12 @@ import {
  * exclusive with preparedQuestionId; promptText IS still required for
  * both Voting sub-cases, unlike the prepared-question path.
  *
+ * Slice 008 (Segment / Turn grouping): an optional segmentTarget —
+ * "NEW_SEGMENT" (default when omitted) or "CURRENT_SEGMENT" — selects
+ * whether this Interaction Instance starts a new member-facing Turn or
+ * joins the session's existing current one. Omitting it entirely
+ * reproduces every pre-Slice-008 client's exact behavior.
+ *
  * The dynamic segment is named [identifier] for the same reason the
  * join/lock/complete/GET routes share it. Route is thin by design:
  * transport concerns only. All logic lives in startSession(), which is
@@ -62,12 +69,14 @@ export async function POST(
   let promptText: unknown;
   let preparedQuestionId: unknown;
   let votingCandidateSource: unknown;
+  let segmentTarget: unknown;
   try {
     const body = (await request.json()) as Record<string, unknown>;
     hostToken = body?.hostToken;
     promptText = body?.promptText;
     preparedQuestionId = body?.preparedQuestionId;
     votingCandidateSource = body?.votingCandidateSource;
+    segmentTarget = body?.segmentTarget;
   } catch {
     return NextResponse.json(
       { error: "Request body must be valid JSON." },
@@ -133,6 +142,24 @@ export async function POST(
   }
 
   if (
+    segmentTarget !== undefined &&
+    segmentTarget !== null &&
+    segmentTarget !== "NEW_SEGMENT" &&
+    segmentTarget !== "CURRENT_SEGMENT"
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          'segmentTarget, if supplied, must be "NEW_SEGMENT" or "CURRENT_SEGMENT".',
+      },
+      { status: 400 }
+    );
+  }
+
+  const normalizedSegmentTarget: SegmentTarget =
+    segmentTarget === "CURRENT_SEGMENT" ? "CURRENT_SEGMENT" : "NEW_SEGMENT";
+
+  if (
     !hasPreparedQuestionId &&
     !normalizedVotingCandidateSource &&
     typeof promptText !== "string"
@@ -162,7 +189,8 @@ export async function POST(
       hostToken,
       typeof promptText === "string" ? promptText : "",
       hasPreparedQuestionId ? (preparedQuestionId as string) : null,
-      normalizedVotingCandidateSource
+      normalizedVotingCandidateSource,
+      normalizedSegmentTarget
     );
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
@@ -176,6 +204,9 @@ export async function POST(
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
     if (err instanceof PreviousInteractionNotRevealedError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof NoCurrentSegmentToContinueError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
     if (

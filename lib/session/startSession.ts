@@ -1,10 +1,15 @@
 import type { SessionRepository } from "./db/sessionRepository";
-import type { StartSessionResult, VotingCandidateSource } from "./types";
+import type {
+  StartSessionResult,
+  VotingCandidateSource,
+  SegmentTarget,
+} from "./types";
 import {
   SessionNotFoundError,
   HostTokenMismatchError,
   LobbyNotLockedError,
   PreviousInteractionNotRevealedError,
+  NoCurrentSegmentToContinueError,
   EmptyPromptTextError,
   PromptTextTooLongError,
   InvalidVotingCandidatesError,
@@ -91,6 +96,16 @@ function validateAndTrimPromptText(text: string): string {
  * a SUBMISSION source's eligibility (belongs to this session, is
  * OPEN_RESPONSE, is RESULT_REVEAL, has submissions) is deep enough that
  * only the atomic function can authoritatively check it.
+ *
+ * Slice 008 (Segment / Turn grouping): an optional segmentTarget,
+ * defaulting to "NEW_SEGMENT" when omitted — every pre-Slice-008 caller
+ * keeps working unchanged. "CURRENT_SEGMENT" is the mechanism behind
+ * the Best Joke proving case: attaching a new Interaction Instance (e.g.
+ * Voting) to the same Turn an earlier one (e.g. Open Response) already
+ * ran in, rather than starting a new Turn. The fast-path
+ * NoCurrentSegmentToContinueError check below mirrors this function's
+ * existing previousInteraction fast-path exactly — an immediate,
+ * cheap rejection ahead of the repository's own authoritative re-check.
  */
 export async function startSession(
   repo: SessionRepository,
@@ -98,7 +113,8 @@ export async function startSession(
   hostToken: string,
   promptText: string,
   preparedQuestionId?: string | null,
-  votingCandidateSource?: VotingCandidateSource | null
+  votingCandidateSource?: VotingCandidateSource | null,
+  segmentTarget: SegmentTarget = "NEW_SEGMENT"
 ): Promise<StartSessionResult> {
   if (preparedQuestionId && votingCandidateSource) {
     throw new AmbiguousStartSessionTargetError();
@@ -154,12 +170,17 @@ export async function startSession(
     throw new PreviousInteractionNotRevealedError(previousInteraction.state);
   }
 
+  if (segmentTarget === "CURRENT_SEGMENT" && !previousInteraction) {
+    throw new NoCurrentSegmentToContinueError();
+  }
+
   const result = await repo.startSession(
     session.sessionId,
     hostToken,
     trimmedPromptText,
     preparedQuestionId,
-    normalizedVotingCandidateSource
+    normalizedVotingCandidateSource,
+    segmentTarget
   );
 
   return {
@@ -168,5 +189,6 @@ export async function startSession(
     promptId: result.promptId,
     state: result.state,
     engineType: result.engineType,
+    segmentNumber: result.segmentNumber,
   };
 }

@@ -431,7 +431,7 @@
         <div id="votingStartForm" class="collapsed">
           <textarea id="votingPromptTextInput" rows="1" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="Vote prompt, e.g. &quot;Vote for the funniest!&quot;"></textarea>
           <textarea id="votingCandidatesInput" rows="3" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="One candidate per line (at least two)"></textarea>
-          <button class="btn-secondary" id="btn-start-voting-from-submissions" style="display:none; margin-bottom:8px;" onclick="startVotingFromSubmissions()">Start Voting on the previous Turn's responses instead</button>
+          <button class="btn-secondary" id="btn-start-voting-from-submissions" style="display:none; margin-bottom:8px;" onclick="startVotingFromSubmissions()">Continue this Turn with Voting on those responses</button>
         </div>
         <button class="btn-primary" id="btn-primary-action"></button>
         <div class="secondary-start-toggle" id="secondaryStartToggle" style="display:none;">
@@ -631,6 +631,14 @@ let hostState = { sessionId: null, roomCode: null, hostToken: null };
 let sessionLifecycleState = null;
 let interactionLifecycleState = null;
 let interactionNumber = null;
+// Slice 008 (Segment / Turn grouping): the member-facing Turn identity.
+// Deliberately a separate variable from interactionNumber, which keeps
+// its pre-Slice-008 meaning (current-interaction-changed detection,
+// used by the cache-invalidation block below) unchanged — one Segment
+// can contain more than one Interaction Instance (Best Joke: Open
+// Response then Voting, same Turn), so interactionNumber can advance
+// while segmentNumber stays the same.
+let segmentNumber = null;
 // Tracks the last interactionNumber this tab has seen, so a newly
 // started interaction can be detected and lastKnownSubmissions cleared
 // for it (see applySessionSnapshot) — otherwise a tab that never
@@ -1410,12 +1418,12 @@ function renderStepper() {
 
 function renderInteractionLabel() {
   const el = document.getElementById("interactionLabel");
-  if (!interactionNumber) {
+  if (!segmentNumber) {
     el.style.display = "none";
     return;
   }
   el.style.display = "block";
-  el.textContent = `Turn ${interactionNumber}`;
+  el.textContent = `Turn ${segmentNumber}`;
 }
 
 function updateActionAvailability() {
@@ -1553,7 +1561,13 @@ function resolvePrimaryAction() {
   // "the next prepared question," when one exists; Open Response's is
   // always "ask for text." Both stay reachable — only which one is the
   // *primary* action changes, and the host can flip between them.
-  const turnNumber = (interactionNumber || 0) + 1;
+  // Slice 008: every action reachable from here (startSession,
+  // startNextQuestion, startVoting) sends the default NEW_SEGMENT
+  // target, so the Turn number they are about to create is always
+  // segmentNumber + 1. "Continue this Turn with Voting" is a distinct
+  // control (btn-start-voting-from-submissions, below) whose label is
+  // static and does not use turnNumber at all.
+  const turnNumber = (segmentNumber || 0) + 1;
 
   // Slice 007 (Voting Engine). Voting is a third, always-available
   // alternative at this exact decision point — shown via its own toggle,
@@ -1897,6 +1911,10 @@ function applySessionSnapshot(data) {
     }
     interactionNumber = data.interactionNumber;
   }
+  // Slice 008: segmentNumber is tracked independently of the
+  // interactionNumber block above — see this file's segmentNumber
+  // declaration comment for why the two must not be conflated.
+  if ("segmentNumber" in data) segmentNumber = data.segmentNumber;
   renderStepper();
   renderInteractionLabel();
   updateActionAvailability();
@@ -2043,6 +2061,13 @@ async function startVoting() {
 // from the Turn that just finished (currentInteractionInstanceId, at
 // the moment this button is even shown — see resolvePrimaryAction's
 // votingSourceEligible check) rather than an arbitrary past Turn.
+// Slice 008 (Segment / Turn grouping): segmentTarget CURRENT_SEGMENT is
+// what keeps this Voting phase on the *same* Turn as the Open Response
+// phase it sources from, rather than starting a new one — the Best
+// Joke proving case. This is the only start-family call site in this
+// file that ever sends CURRENT_SEGMENT; every other one (startSession,
+// startNextQuestion, startVoting) intentionally omits segmentTarget so
+// the server default (NEW_SEGMENT) applies.
 async function startVotingFromSubmissions() {
   const promptText =
     document.getElementById("votingPromptTextInput").value || "Vote for your favorite!";
@@ -2053,6 +2078,7 @@ async function startVotingFromSubmissions() {
       type: "SUBMISSION",
       sourceInteractionInstanceId: currentInteractionInstanceId,
     },
+    segmentTarget: "CURRENT_SEGMENT",
   });
   show("START_SESSION (Voting from submissions) (" + r.status + ")", r.json);
   if (r.status === 200) {

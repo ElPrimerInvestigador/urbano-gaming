@@ -49,6 +49,20 @@ export async function getSession(
   const interactionNumber =
     interactionInstances.length > 0 ? interactionInstances.length : null;
 
+  // Slice 008 (Segment / Turn grouping): segmentNumber is the
+  // member-facing Turn identity — the current Interaction Instance's
+  // Segment's own segment_ordinal, a durable allocated value, not a
+  // derived count. Deliberately looked up by matching
+  // currentInteraction.segmentId rather than assumed to be the last
+  // element of the ordered segments list, so this stays correct by
+  // construction rather than by an ordering coincidence.
+  const segments = currentInteraction
+    ? await repo.getSegmentsForSession(sessionId)
+    : [];
+  const segmentNumber =
+    segments.find((s) => s.segmentId === currentInteraction?.segmentId)
+      ?.segmentOrdinal ?? null;
+
   // Slice 003 (Second Interaction Engine): resolved once, up front,
   // since both currentPrompt's shape and submissions' visibility now
   // depend on which engine produced the current interaction.
@@ -287,6 +301,7 @@ export async function getSession(
       displayName: participant.displayName,
     })),
     interactionNumber,
+    segmentNumber,
     interactionState: currentInteraction?.state ?? null,
     currentInteractionInstanceId: currentInteraction?.interactionInstanceId ?? null,
     currentEngineType: currentInteraction?.engineType ?? null,

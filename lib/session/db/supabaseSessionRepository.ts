@@ -8,6 +8,7 @@ import type {
   EngineType,
   VotingCandidateSource,
   VotingResultSummary,
+  SegmentTarget,
 } from "../types";
 import {
   RoomCodeCollisionError,
@@ -21,6 +22,7 @@ import {
   PromptNotActiveError,
   SubmissionsNotClosedError,
   PreviousInteractionNotRevealedError,
+  NoCurrentSegmentToContinueError,
   EmptyPromptTextError,
   InteractionInstanceNotEligibleError,
   ParticipantNotInSessionError,
@@ -42,6 +44,7 @@ import type {
   SessionCompletedEventRecord,
   PromptRecord,
   InteractionInstanceRecord,
+  SegmentRecord,
   SubmissionRecord,
   SubmissionsClosedEventRecord,
   ResultsRevealedEventRecord,
@@ -420,11 +423,29 @@ export class SupabaseSessionRepository implements SessionRepository {
     return (data ?? []).map((row) => ({
       interactionInstanceId: row.interaction_instance_id,
       sessionId: row.session_id,
+      segmentId: row.segment_id,
       promptId: row.prompt_id,
       state: row.state as InteractionState,
       engineType: row.engine_type as EngineType,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+    }));
+  }
+
+  async getSegmentsForSession(sessionId: string): Promise<SegmentRecord[]> {
+    const { data, error } = await this.client
+      .from("segments")
+      .select("*")
+      .eq("session_id", sessionId)
+      .order("segment_ordinal", { ascending: true });
+
+    if (error) throw error;
+
+    return (data ?? []).map((row) => ({
+      segmentId: row.segment_id,
+      sessionId: row.session_id,
+      segmentOrdinal: row.segment_ordinal,
+      createdAt: row.created_at,
     }));
   }
 
@@ -445,12 +466,14 @@ export class SupabaseSessionRepository implements SessionRepository {
     hostToken: string,
     promptText: string,
     preparedQuestionId?: string | null,
-    votingCandidateSource?: VotingCandidateSource | null
+    votingCandidateSource?: VotingCandidateSource | null,
+    segmentTarget: SegmentTarget = "NEW_SEGMENT"
   ): Promise<{
     interactionInstanceId: string;
     promptId: string;
     state: InteractionState;
     engineType: EngineType;
+    segmentNumber: number;
   }> {
     const { data, error } = await this.client.rpc("start_session_atomically", {
       p_session_id: sessionId,
@@ -466,6 +489,7 @@ export class SupabaseSessionRepository implements SessionRepository {
         votingCandidateSource?.type === "SUBMISSION"
           ? votingCandidateSource.sourceInteractionInstanceId
           : null,
+      p_segment_target: segmentTarget,
     });
 
     if (error) {
@@ -501,6 +525,14 @@ export class SupabaseSessionRepository implements SessionRepository {
         throw new PreviousInteractionNotRevealedError(
           extractStateFromGuardMessage(error.message) as InteractionState | undefined
         );
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("NO_CURRENT_SEGMENT_TO_CONTINUE")
+      ) {
+        throw new NoCurrentSegmentToContinueError();
       }
 
       if (
@@ -569,6 +601,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       promptId: row.prompt_id,
       state: row.state as InteractionState,
       engineType: row.engine_type as EngineType,
+      segmentNumber: row.segment_ordinal,
     };
   }
 

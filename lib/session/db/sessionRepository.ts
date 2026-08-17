@@ -6,6 +6,7 @@ import type {
   VotingCandidateSource,
   VotingCandidateSummary,
   VotingResultSummary,
+  SegmentTarget,
 } from "../types";
 
 export interface SessionEventRecord {
@@ -62,15 +63,49 @@ export interface PromptRecord {
  * Slice 003 (Second Interaction Engine): engineType is the single
  * source of truth for which engine produced this interaction —
  * 'OPEN_RESPONSE' for every row that predates this slice.
+ *
+ * Slice 008 (Segment / Turn grouping): segmentId is the Interaction
+ * Instance's Segment membership — every row now belongs to exactly one
+ * Segment, including every pre-Slice-008 row (each backfilled into its
+ * own one-Interaction-Instance Segment; see 0036's migration comment).
+ * Retained alongside sessionId rather than replacing it — every
+ * existing query filtering by sessionId keeps working unchanged; the
+ * composite (session_id, segment_id) foreign key (0036) is what
+ * prevents the two from ever disagreeing.
  */
 export interface InteractionInstanceRecord {
   interactionInstanceId: string;
   sessionId: string;
+  segmentId: string;
   promptId: string;
   state: InteractionState;
   engineType: EngineType;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * Slice 008 (Segment / Turn grouping). A Segment groups one or more
+ * Interaction Instances under one stable, member-facing Turn identity.
+ * segmentOrdinal IS that Turn number — a durable value allocated once,
+ * atomically, inside start_session_atomically's existing per-session
+ * row lock (see that migration's comment for why this is safe without
+ * an advisory lock or a separate counter table), not a derived count or
+ * an artifact of createdAt ordering. createdAt is audit/history
+ * information only; it plays no role in Turn identity.
+ *
+ * Deliberately has no stored lifecycle/state column — whether a Segment
+ * is still current, still accepting another Interaction Instance, or
+ * has been superseded is entirely derived from its own most-recent
+ * Interaction Instance's state and from whether a newer Segment exists,
+ * mirroring InteractionInstanceRecord's own "derive, don't persist"
+ * precedent one level up.
+ */
+export interface SegmentRecord {
+  segmentId: string;
+  sessionId: string;
+  segmentOrdinal: number;
+  createdAt: string;
 }
 
 /**
@@ -440,6 +475,16 @@ export interface SessionRepository {
   ): Promise<InteractionInstanceRecord[]>;
 
   /**
+   * Slice 008 (Segment / Turn grouping). List every Segment for a
+   * session, ordered by segmentOrdinal ascending. Callers derive "the
+   * current Segment" as the last element (or null if the array is
+   * empty — no Segment has ever been created). Mirrors
+   * getInteractionInstancesForSession's exact division of
+   * responsibility: one query, no separate "current"/"count" methods.
+   */
+  getSegmentsForSession(sessionId: string): Promise<SegmentRecord[]>;
+
+  /**
    * Slice 001. Atomically re-verify the supplied host token and that
    * the session is LOBBY_LOCKED, re-verify that the session's current
    * interaction instance (if any) is at RESULT_REVEAL, insert a new
@@ -524,18 +569,42 @@ export interface SessionRepository {
    * - throw VotingSourceInteractionNotEligibleError only when that
    *   interaction instance exists but is not OPEN_RESPONSE, not
    *   RESULT_REVEAL, or has zero submissions.
+   *
+   * Slice 008 (Segment / Turn grouping): gains an optional segmentTarget,
+   * defaulting to "NEW_SEGMENT" when omitted — every pre-Slice-008 call
+   * site keeps working unchanged. "NEW_SEGMENT" allocates the next
+   * segmentOrdinal for this session (COALESCE(MAX(segment_ordinal), 0) + 1,
+   * computed only after the session-row lock this method already holds
+   * — see 0037's migration comment for why that lock is what makes this
+   * safe without an advisory lock or a separate counter table) and
+   * creates a new Segment row before creating the Interaction Instance.
+   * "CURRENT_SEGMENT" creates no new Segment: it reuses the session's
+   * existing current Segment's id and ordinal, attaching only a new
+   * Interaction Instance to it — this is the mechanism behind the Best
+   * Joke proving case (Open Response, then Voting, same Turn). Every
+   * pre-existing precondition (previous interaction instance, if any,
+   * must be RESULT_REVEAL) applies identically to both targets.
+   *
+   * Implementations must additionally:
+   * - throw NoCurrentSegmentToContinueError only when segmentTarget is
+   *   "CURRENT_SEGMENT" and no Interaction Instance (and therefore no
+   *   Segment) has ever been created for this session;
+   * - return segmentNumber (the resolved Segment's segmentOrdinal)
+   *   alongside the existing fields.
    */
   startSession(
     sessionId: string,
     hostToken: string,
     promptText: string,
     preparedQuestionId?: string | null,
-    votingCandidateSource?: VotingCandidateSource | null
+    votingCandidateSource?: VotingCandidateSource | null,
+    segmentTarget?: SegmentTarget
   ): Promise<{
     interactionInstanceId: string;
     promptId: string;
     state: InteractionState;
     engineType: EngineType;
+    segmentNumber: number;
   }>;
 
   /**

@@ -49,6 +49,21 @@ export type VotingCandidateSource =
   | { type: "SUBMISSION"; sourceInteractionInstanceId: string };
 
 /**
+ * Slice 008 (Segment / Turn grouping). Which Segment a new Interaction
+ * Instance joins. "NEW_SEGMENT" allocates a new Segment (a new
+ * member-facing Turn) and is the default, preserving every pre-Slice-008
+ * call site's exact behavior unchanged. "CURRENT_SEGMENT" attaches the
+ * new Interaction Instance to the session's existing current Segment
+ * instead — the mechanism the Best Joke proving case uses to add Voting
+ * to the same Turn an Open Response phase already ran in. Requires a
+ * current Interaction Instance to exist and be RESULT_REVEAL, exactly
+ * mirroring the existing PreviousInteractionNotRevealedError precondition
+ * (see NoCurrentSegmentToContinueError for the one additional case this
+ * adds: no Segment exists yet at all).
+ */
+export type SegmentTarget = "NEW_SEGMENT" | "CURRENT_SEGMENT";
+
+/**
  * Slice 007. A Voting Candidate as exposed by GET_SESSION — a stable
  * id plus a presentation reference. `label` is this slice's text-only
  * presentation field, not a claim about the final non-text Candidate
@@ -171,6 +186,15 @@ export interface StartSessionResult {
   promptId: string;
   state: InteractionState;
   engineType: EngineType;
+  /**
+   * Slice 008. The member-facing Turn number of the Segment this
+   * Interaction Instance belongs to — unchanged from the caller's prior
+   * Turn when segmentTarget was CURRENT_SEGMENT, incremented by one when
+   * it was NEW_SEGMENT (the default). Lets a host UI update its Turn
+   * label immediately from this response, without waiting on the next
+   * GET_SESSION poll.
+   */
+  segmentNumber: number;
 }
 
 /**
@@ -365,6 +389,19 @@ export interface PrepareQuestionsResult {
  * host and participant alike, with no role gating: unlike
  * preparedQuestions' correct answers, there is nothing to protect
  * about the existence or room code of a next game.
+ *
+ * Slice 008 (Segment / Turn grouping): `segmentNumber` is the
+ * member-facing Turn identity — the current Segment's segment_ordinal,
+ * a durable, database-allocated value, not a derived count. It is a
+ * deliberately different field from `interactionNumber`, which keeps its
+ * pre-Slice-008 meaning unchanged (a 1-indexed count of Interaction
+ * Instances, used only for the host/participant clients' own current-
+ * interaction-changed cache invalidation). One Segment may contain more
+ * than one Interaction Instance (the Best Joke proving case: Open
+ * Response then Voting, same Turn), so segmentNumber can stay the same
+ * across a GET_SESSION call where interactionNumber has advanced — this
+ * is expected, not a bug. Null before any Segment has ever been created
+ * for this session.
  */
 export interface GetSessionResult {
   sessionId: string;
@@ -372,6 +409,7 @@ export interface GetSessionResult {
   stateVersion: number;
   participants: ParticipantSummary[];
   interactionNumber: number | null;
+  segmentNumber: number | null;
   interactionState: InteractionState | null;
   currentInteractionInstanceId: string | null;
   currentEngineType: EngineType | null;
@@ -564,6 +602,25 @@ export class PreviousInteractionNotRevealedError extends Error {
         : "The current interaction has not been revealed yet."
     );
     this.name = "PreviousInteractionNotRevealedError";
+  }
+}
+
+/**
+ * Slice 008 (Segment / Turn grouping). Raised when START_SESSION is
+ * invoked with segmentTarget "CURRENT_SEGMENT" but the session has no
+ * current Segment to continue — either no Interaction Instance has ever
+ * been started, or (structurally impossible today, but named for
+ * completeness) no Segment exists to attach one to. Distinct from
+ * PreviousInteractionNotRevealedError, which fires when a current
+ * Segment exists but its latest Interaction Instance is not yet
+ * RESULT_REVEAL.
+ */
+export class NoCurrentSegmentToContinueError extends Error {
+  constructor() {
+    super(
+      "There is no current Segment to continue — start a new Turn instead."
+    );
+    this.name = "NoCurrentSegmentToContinueError";
   }
 }
 

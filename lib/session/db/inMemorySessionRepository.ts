@@ -5,6 +5,7 @@ import type {
   EngineType,
   VotingCandidateSource,
   VotingResultSummary,
+  SegmentTarget,
 } from "../types";
 import {
   RoomCodeCollisionError,
@@ -18,6 +19,7 @@ import {
   PromptNotActiveError,
   SubmissionsNotClosedError,
   PreviousInteractionNotRevealedError,
+  NoCurrentSegmentToContinueError,
   EmptyPromptTextError,
   PromptTextTooLongError,
   InteractionInstanceNotEligibleError,
@@ -40,6 +42,7 @@ import type {
   SessionCompletedEventRecord,
   PromptRecord,
   InteractionInstanceRecord,
+  SegmentRecord,
   SubmissionRecord,
   SubmissionsClosedEventRecord,
   ResultsRevealedEventRecord,
@@ -85,6 +88,14 @@ export class InMemorySessionRepository implements SessionRepository {
    * created dynamically from host-supplied text via startSession.
    */
   private interactionInstances = new Map<string, InteractionInstanceRecord>();
+
+  /**
+   * Slice 008 (Segment / Turn grouping). Keyed by segmentId. No stored
+   * "current" pointer — the current Segment is always the one whose
+   * segmentOrdinal is highest for a given session (see
+   * getCurrentSegmentForSession).
+   */
+  private segments = new Map<string, SegmentRecord>();
 
   /**
    * Slice 002 (Scored Multi-Round Experience). Keyed by pointAwardId,
@@ -144,6 +155,19 @@ export class InMemorySessionRepository implements SessionRepository {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
     return instances.length > 0 ? instances[instances.length - 1] : null;
+  }
+
+  /**
+   * Slice 008. The current Segment for a session is the one with the
+   * highest segmentOrdinal — never a stored pointer, mirroring
+   * getCurrentInteractionInstance's identical derivation one level up.
+   */
+  private getCurrentSegmentForSession(sessionId: string): SegmentRecord | null {
+    const segments = [...this.segments.values()]
+      .filter((segment) => segment.sessionId === sessionId)
+      .sort((a, b) => a.segmentOrdinal - b.segmentOrdinal);
+
+    return segments.length > 0 ? segments[segments.length - 1] : null;
   }
 
   private validateAndTrimPromptText(text: string): string {
@@ -399,17 +423,25 @@ export class InMemorySessionRepository implements SessionRepository {
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
+  async getSegmentsForSession(sessionId: string): Promise<SegmentRecord[]> {
+    return [...this.segments.values()]
+      .filter((segment) => segment.sessionId === sessionId)
+      .sort((a, b) => a.segmentOrdinal - b.segmentOrdinal);
+  }
+
   async startSession(
     sessionId: string,
     hostToken: string,
     promptText: string,
     preparedQuestionId?: string | null,
-    votingCandidateSource?: VotingCandidateSource | null
+    votingCandidateSource?: VotingCandidateSource | null,
+    segmentTarget: SegmentTarget = "NEW_SEGMENT"
   ): Promise<{
     interactionInstanceId: string;
     promptId: string;
     state: InteractionState;
     engineType: EngineType;
+    segmentNumber: number;
   }> {
     // Authoritative host-token and session-state re-check, independent of
     // any earlier application-layer lookup. Mirrors
@@ -431,7 +463,9 @@ export class InMemorySessionRepository implements SessionRepository {
 
     // Re-invocable precondition: the session's current interaction
     // instance, if any, must already be RESULT_REVEAL before another
-    // one may begin.
+    // one may begin. Applies identically to both segmentTargets — see
+    // 0037's migration comment for why CURRENT_SEGMENT does not relax
+    // this.
     const previousInteraction = this.getCurrentInteractionInstance(sessionId);
     if (previousInteraction && previousInteraction.state !== "RESULT_REVEAL") {
       throw new PreviousInteractionNotRevealedError(previousInteraction.state);
@@ -441,6 +475,32 @@ export class InMemorySessionRepository implements SessionRepository {
     // function's identical guard — see 0033's comment.
     if (preparedQuestionId && votingCandidateSource) {
       throw new AmbiguousStartSessionTargetError();
+    }
+
+    // Slice 008 (Segment / Turn grouping): resolve which Segment the new
+    // Interaction Instance joins. NEW_SEGMENT allocates the next
+    // segmentOrdinal for this session — safe here because, unlike real
+    // Postgres, this in-memory double is single-threaded, so there is no
+    // MAX+1 race to protect against; the real database's equivalent
+    // safety comes from the session-row lock (see 0037's comment).
+    // CURRENT_SEGMENT reuses the existing current Segment untouched.
+    let segment: SegmentRecord;
+    if (segmentTarget === "CURRENT_SEGMENT") {
+      const currentSegment = this.getCurrentSegmentForSession(sessionId);
+      if (!currentSegment) {
+        throw new NoCurrentSegmentToContinueError();
+      }
+      segment = currentSegment;
+    } else {
+      const currentSegment = this.getCurrentSegmentForSession(sessionId);
+      const nextOrdinal = currentSegment ? currentSegment.segmentOrdinal + 1 : 1;
+      segment = {
+        segmentId: randomUUID(),
+        sessionId,
+        segmentOrdinal: nextOrdinal,
+        createdAt: new Date().toISOString(),
+      };
+      this.segments.set(segment.segmentId, segment);
     }
 
     const now = new Date().toISOString();
@@ -513,6 +573,7 @@ export class InMemorySessionRepository implements SessionRepository {
     const interactionInstance: InteractionInstanceRecord = {
       interactionInstanceId,
       sessionId,
+      segmentId: segment.segmentId,
       promptId,
       state: "PROMPT_ACTIVE",
       engineType,
@@ -559,6 +620,7 @@ export class InMemorySessionRepository implements SessionRepository {
       promptId,
       state: "PROMPT_ACTIVE",
       engineType,
+      segmentNumber: segment.segmentOrdinal,
     };
   }
 
@@ -938,6 +1000,11 @@ export class InMemorySessionRepository implements SessionRepository {
   /** Test-only helper, not part of the repository interface. */
   _allInteractionInstances() {
     return [...this.interactionInstances.values()];
+  }
+
+  /** Test-only helper, not part of the repository interface. */
+  _allSegments() {
+    return [...this.segments.values()];
   }
 
   async createPreparedQuestions(
