@@ -4,7 +4,7 @@
 
 ## Current Stage
 
-Seven vertical slices are implemented, tested, and live-verified against
+Eight vertical slices are implemented, tested, and live-verified against
 production. UI Convergence Tier 1, Structural Tier 2, Experience Layer
 v1, and subsequent host hierarchy refinements are also committed.
 
@@ -17,6 +17,7 @@ v1, and subsequent host hierarchy refinements are also committed.
 | 005 — Session Continuity | Rematches (linked successor sessions) and independent re-joining | Implemented, tested, live-verified on a real device in production. No formal constitutional acceptance ceremony; no `History/Slices/Slice_005/` yet. |
 | 006 — Authoring Workspace | Create/Import/Review content authoring, engine-agnostic at the workspace level | Implemented, tested, live-verified in production, including a first-time-host UX pass. No formal constitutional acceptance ceremony; no `History/Slices/Slice_006/` yet. |
 | 007 — Voting Engine (Proving Case) | A third Interaction Engine — host-authored or Open-Response-derived Candidates → Voting → derived `placement` → reveal, proving Candidate Resolution across an Interaction Instance boundary | **Accepted, closed, and applied to production** (checkpoint `3f17206`; Product architecture checkpoint `433b61e`). Implemented, tested (219 in-memory + 34 contract tests), validated against a local database-backed environment and a full browser operational simulation, then migrated to production (`0030`–`0034`) and verified live via an 18-step production smoke test. Same deliberate deferral as 003–006: no formal constitutional acceptance ceremony, no `History/Slices/Slice_007/`. See `SLICE_007_IMPLEMENTATION_RECORD.md`. |
+| 008 — Segment / Turn Grouping | A real `Segment` object grouping one or more Interaction Instances under one stable member-facing Turn identity — proving the Best Joke case (Open Response, then Voting, same Turn) | **Accepted, closed, and applied to production** (checkpoint `e3b885e`). Implemented, tested (230 in-memory + 41 contract tests), validated against a local database-backed environment, an engineered concurrency proof of the underlying row-lock mechanism, and a full browser operational simulation, then migrated to production (`0035`–`0037`) and verified live via a full production Best Joke proving case (Segment/Turn persistence across an Open Response → Voting composition, a Multiple Choice regression, session completion, and rematch isolation). Same deliberate deferral as 003–007: no formal constitutional acceptance ceremony, no `History/Slices/Slice_008/`. See `SLICE_008_IMPLEMENTATION_RECORD.md`. |
 
 The user has described everything through Slice 005 as "the current
 production baseline" following a real multi-game playtest, and Slice
@@ -37,6 +38,27 @@ smoke test covering both Candidate-source paths, vote casting and
 revision, participant-specific isolation, tie ranking, session
 completion, and rematch continuity. See `SLICE_007_IMPLEMENTATION_RECORD.md`'s
 "Production Validation" section for the full evidence.
+
+Slice 008 is **accepted, closed, and applied to production**, at the
+same tier as 003–007. Its three new migrations (0035–0037) were first
+verified against a local Postgres instance — including a full migration
+rehearsal against representative pre-Slice-008 historical data, and an
+engineered concurrency proof (two raw, separate Postgres connections)
+of the parent Session-row lock that makes atomic Segment-ordinal
+allocation safe — then applied to the live Supabase project and
+verified there directly (backfill correctness, all constraints,
+`start_session_atomically`'s new signature and default, and
+empirically-confirmed RLS/grant behavior on the new `segments` table).
+Old-application/new-schema compatibility was proven against real
+production traffic before the accepted commit was deployed. Automatic
+deployment was briefly affected by a one-time, post-ownership-transfer
+Vercel production-domain binding gap (not a GitHub↔Vercel integration
+defect); once corrected, the canonical URL was independently
+re-verified to serve the accepted commit, and a full production Best
+Joke proving case passed — Turn persistence across an Open
+Response→Voting composition within one Segment, a Multiple Choice
+regression, session completion, and rematch isolation. See
+`SLICE_008_IMPLEMENTATION_RECORD.md` for the full evidence.
 
 ## Historical pending state — superseded
 
@@ -72,10 +94,13 @@ paused to do UI Convergence first.
 - Local development folder, git repository, and GitHub repository
   connected and synchronized.
 - Production deployment: Vercel project `urbano-gaming-playtest`,
-  aliased at `https://urbano-gaming-playtest.vercel.app`. The former Level 33 alias was retired under MIG-005. Deployed via
-  the Vercel CLI (no GitHub auto-deploy integration).
+  aliased at `https://urbano-gaming-playtest.vercel.app`. The former Level 33 alias was retired under MIG-005. As of Slice 008,
+  deployment is GitHub-integrated: an accepted commit pushed to `origin/main`
+  triggers Vercel's automatic production deployment — manual `vercel --prod`
+  and manual alias repointing are no longer the normal path, reserved
+  only for diagnosing/repairing an actual automatic-deployment failure.
 - Supabase project backing all persistence; all migrations through
-  `0034` applied.
+  `0037` applied.
 
 ## Validation summary
 
@@ -94,25 +119,42 @@ paused to do UI Convergence first.
   itself — migrations 0030–0034 applied to the live Supabase project
   and an 18-step production smoke test passed with no defects found —
   accepted, closed, and now live-verified like Slices 001–006.
+- Slice 008 adds 11 in-memory tests (230 total) and 7 contract tests
+  (41 total), and has been verified against a local database-backed
+  Postgres environment (migrations 0035–0037 applied and confirmed,
+  including a full historical-backfill rehearsal and an engineered
+  concurrency proof of the row-lock allocation mechanism) and a full
+  browser operational simulation, then against production itself —
+  migrations 0035–0037 applied to the live Supabase project and a full
+  Best Joke production proving case (Turn/Segment persistence across
+  an Open Response→Voting composition, Multiple Choice regression,
+  session completion, rematch isolation) passed with no defects
+  found — accepted, closed, and now live-verified like Slices 001–007.
 
 ---
 
 Prepared: ✅
 Designed: ✅ (per-slice; Experience Composition designed at the
   capability level, not yet slice-designed)
-Implemented: ✅ (Slices 001–007, UI Convergence Tier 1, Structural Tier
+Implemented: ✅ (Slices 001–008, UI Convergence Tier 1, Structural Tier
   2, Experience Layer v1, and host hierarchy refinements)
 Integrated: ✅
 Validated: ✅ (see Validation summary above)
 Operational Simulation: Complete for every slice through 006, including
   live production playtests. Complete for Slice 007 against a local
   database-backed environment and browser session, and against
-  production itself via an 18-step production smoke test.
+  production itself via an 18-step production smoke test. Complete for
+  Slice 008 against a local database-backed environment (including a
+  migration rehearsal and an engineered concurrency proof) and browser
+  session, and against production itself via a full Best Joke
+  production proving case.
 Architecture Review: Complete for Slice 001 (against
-  `State_Architecture.md`); informal for 002–007 (design-review
-  conversations, not a formal constitutional Architecture Review pass)
-Constitutionally Accepted: Slices 001–002 only. 003–007 deliberately
+  `State_Architecture.md`); informal for 002–008 (design-review
+  conversations, not a formal constitutional Architecture Review pass —
+  Slice 008's own design went through three founder-directed review
+  rounds before implementation was authorized)
+Constitutionally Accepted: Slices 001–002 only. 003–008 deliberately
   not yet reconstructed as constitutional history — see "Current Stage"
-  above. Slice 007 is founder-accepted and closed at the same tier as
-  003–006, which is a distinct question from constitutional
-  acceptance — see its table row above.
+  above. Slices 007 and 008 are founder-accepted and closed at the same
+  tier as 003–006, which is a distinct question from constitutional
+  acceptance — see their table rows above.
