@@ -297,6 +297,13 @@
   }
   #btn-primary-action { width: 100%; font-size: 16px; padding: 14px 16px; }
 
+  /* Trivia Game composition correction (post-Slice-009). */
+  .trivia-final-results-banner {
+    margin-bottom: 10px; padding: 10px 14px; border-radius: 8px;
+    font-size: 13px; font-weight: 600; text-align: center;
+    background: var(--gold-bg); color: var(--accent); border: 1px solid var(--accent);
+  }
+
   /* Slice 009 (Engine Selection + PARTICIPANTS Voting). One explicit
      "Choose Turn Type" selector replaces the previous default-plus-
      toggle pair and the separately always-on Voting toggle — see
@@ -441,6 +448,14 @@
            (see resolvePrimaryAction) — this is not a fixed Lock/Start/
            Close/Reveal sequence assumed by the UI. -->
       <div class="primary-action-bar" id="primaryActionBar" style="display:none;">
+        <!-- Trivia Game composition correction (post-Slice-009 founder
+             playtest follow-up): shown only when the Multiple Choice
+             question that just revealed was the last prepared question
+             — the Trivia Game's own "Final Results" moment. Session
+             standings (already visible in the Standings card) are the
+             Trivia Game's result; no new Game Outcome object. See
+             resolvePrimaryAction()'s triviaJustFinished branch. -->
+        <div class="trivia-final-results-banner" id="triviaFinalResultsBanner" style="display:none;">Final Results — Trivia complete. See Standings.</div>
         <!-- Slice 009 (Engine Selection + PARTICIPANTS Voting): a single,
              explicit "Choose Turn Type" selector — shown only at the
              "time to start the next Turn" decision point — replaces the
@@ -688,6 +703,13 @@ let interactionNumber = null;
 // Response then Voting, same Turn), so interactionNumber can advance
 // while segmentNumber stays the same.
 let segmentNumber = null;
+// Trivia Game composition correction (post-Slice-009 founder playtest
+// follow-up). Mirrors GET_SESSION's questionProgress field exactly —
+// { current, total } while currentEngineType is "MULTIPLE_CHOICE", null
+// otherwise. Drives the "Question X of N" label in place of "Turn N"
+// for Trivia specifically; every other Experience's Segment label is
+// unchanged. See renderInteractionLabel().
+let questionProgress = null;
 // Tracks the last interactionNumber this tab has seen, so a newly
 // started interaction can be detected and lastKnownSubmissions cleared
 // for it (see applySessionSnapshot) — otherwise a tab that never
@@ -1452,8 +1474,20 @@ function renderStepper() {
   }).join("");
 }
 
+// Trivia Game composition correction (post-Slice-009). Segment is
+// internal architecture, not universal public vocabulary — "Turn" is
+// Experience-specific (Level 33-style progression), and Trivia's own
+// public progression vocabulary is Question. Only Trivia gets this
+// substitution; Open Response and Voting keep "Turn N" unchanged. The
+// underlying segmentNumber/questionProgress data and their domain
+// meaning are untouched — this is presentation only.
 function renderInteractionLabel() {
   const el = document.getElementById("interactionLabel");
+  if (currentEngineType === "MULTIPLE_CHOICE" && questionProgress) {
+    el.style.display = "block";
+    el.textContent = `Question ${questionProgress.current} of ${questionProgress.total}`;
+    return;
+  }
   if (!segmentNumber) {
     el.style.display = "none";
     return;
@@ -1563,6 +1597,7 @@ function resolvePrimaryAction() {
     openResponseForm.classList.add("collapsed");
     triviaForm.classList.add("collapsed");
     votingForm.classList.add("collapsed");
+    document.getElementById("triviaFinalResultsBanner").style.display = "none";
   }
 
   if (!sessionLifecycleState || sessionLifecycleState === "SESSION_COMPLETE") {
@@ -1579,17 +1614,32 @@ function resolvePrimaryAction() {
     return;
   }
 
+  // Trivia Game composition correction (post-Slice-009): while a
+  // Multiple Choice question is active or closed, one "Next Question"
+  // action replaces the separate Close Submissions / Reveal Results
+  // steps — see triviaNextQuestion(). Every other engine keeps its
+  // existing separate-step flow unchanged.
   if (interactionLifecycleState === "PROMPT_ACTIVE") {
     hideTurnTypeUI();
-    btn.textContent = "Close Submissions";
-    btn.onclick = closeSubmissions;
+    if (currentEngineType === "MULTIPLE_CHOICE") {
+      btn.textContent = "Next Question";
+      btn.onclick = triviaNextQuestion;
+    } else {
+      btn.textContent = "Close Submissions";
+      btn.onclick = closeSubmissions;
+    }
     return;
   }
 
   if (interactionLifecycleState === "SUBMISSIONS_CLOSED") {
     hideTurnTypeUI();
-    btn.textContent = "Reveal Results";
-    btn.onclick = revealResults;
+    if (currentEngineType === "MULTIPLE_CHOICE") {
+      btn.textContent = "Next Question";
+      btn.onclick = triviaNextQuestion;
+    } else {
+      btn.textContent = "Reveal Results";
+      btn.onclick = revealResults;
+    }
     return;
   }
 
@@ -1600,9 +1650,43 @@ function resolvePrimaryAction() {
   // be created is always segmentNumber + 1. SUBMISSION is the one
   // exception — see startTurn().
   const turnNumber = (segmentNumber || 0) + 1;
+  const hasNextQuestion = !!lowestUnconsumedPreparedQuestion();
+
+  // Trivia Game composition correction: a revealed Multiple Choice
+  // question with another prepared question still queued stays in
+  // "Trivia mode" — one more "Next Question" click continues the same
+  // Segment (CURRENT_SEGMENT) instead of returning to Choose Turn Type.
+  // This is what keeps an N-question Trivia Game to one Segment instead
+  // of one Segment per question, per the accepted composition.
+  if (
+    currentEngineType === "MULTIPLE_CHOICE" &&
+    interactionLifecycleState === "RESULT_REVEAL" &&
+    hasNextQuestion
+  ) {
+    hideTurnTypeUI();
+    document.getElementById("triviaFinalResultsBanner").style.display = "none";
+    btn.textContent = "Next Question";
+    btn.onclick = triviaNextQuestion;
+    return;
+  }
+
   turnTypeSelector.style.display = "block";
 
-  const hasNextQuestion = !!lowestUnconsumedPreparedQuestion();
+  // Trivia Game composition correction: a Multiple Choice question just
+  // revealed with no further prepared question queued — the Trivia
+  // Game itself is finished. Session standings already are the Trivia
+  // Game's final result (see the implementation record); no new Game
+  // Outcome object is introduced. Surfaced as a small banner alongside
+  // the still-available Choose Turn Type selector, since the host may
+  // legitimately start a different Experience (or more Trivia, if more
+  // questions are added) next in the same Session.
+  const triviaJustFinished =
+    currentEngineType === "MULTIPLE_CHOICE" &&
+    interactionLifecycleState === "RESULT_REVEAL" &&
+    !hasNextQuestion;
+  document.getElementById("triviaFinalResultsBanner").style.display =
+    triviaJustFinished ? "block" : "none";
+
   const votingSourceEligible =
     currentEngineType === "OPEN_RESPONSE" && interactionLifecycleState === "RESULT_REVEAL";
   const votingParticipantsEligible = lastKnownParticipants.length >= 2;
@@ -1667,7 +1751,11 @@ function resolvePrimaryAction() {
     }
   }
 
-  btn.textContent = `Start Turn ${turnNumber}`;
+  // Trivia Game composition correction: "Start Turn N" is Segment
+  // vocabulary; Trivia's own public start action reads "Start Trivia,"
+  // matching its Question-based progression rather than Turn-based.
+  // Open Response and Voting are unchanged.
+  btn.textContent = selectedTurnType === "MULTIPLE_CHOICE" ? "Start Trivia" : `Start Turn ${turnNumber}`;
   btn.onclick = startTurn;
 }
 
@@ -1982,6 +2070,7 @@ function applySessionSnapshot(data) {
   // interactionNumber block above — see this file's segmentNumber
   // declaration comment for why the two must not be conflated.
   if ("segmentNumber" in data) segmentNumber = data.segmentNumber;
+  if ("questionProgress" in data) questionProgress = data.questionProgress;
   renderStepper();
   renderInteractionLabel();
   updateActionAvailability();
@@ -2170,6 +2259,72 @@ async function revealResults() {
   // Same shape caveat as CLOSE_SUBMISSIONS — see comment there.
   if (r.status === 200) { renderNotice(null); await hostRefresh(); }
   else renderNotice(classifyError(r));
+}
+
+// Trivia Game composition correction (post-Slice-009 founder playtest
+// follow-up). One host action, reused at every state a Multiple Choice
+// question can be in (PROMPT_ACTIVE, SUBMISSIONS_CLOSED, RESULT_REVEAL
+// with a next prepared question queued) — composes the existing,
+// already-independently-atomic closeSubmissions/revealResults/startTurn
+// operations client-side, in sequence, rather than introducing a new
+// database function. This is safe to compose: each of the three RPCs
+// is already row-locked and exactly-once under concurrency (the same
+// guarantee Slice 001/008's own concurrent-START_SESSION tests already
+// prove for the last step), so a second, racing call to this function —
+// from this tab or a stale one — can only ever have its own steps
+// rejected by the same preconditions that already guard every other
+// call site in this file; it can never silently duplicate a Segment or
+// a question.
+//
+// Reads live state (via hostRefresh, which repopulates
+// interactionLifecycleState from a fresh GET_SESSION) between every
+// step rather than assuming the previous step's success carries
+// forward — so a genuine partial failure (e.g. reveal succeeds but the
+// next question's start fails) leaves the UI showing exactly what
+// actually committed. A second "Next Question" click naturally resumes
+// from that real state, because this function always asks "what state
+// are we in right now," never "what step was I on" — the same
+// self-healing property resolvePrimaryAction() already relies on
+// everywhere else in this file.
+let triviaAdvanceInFlight = false;
+async function triviaNextQuestion() {
+  if (triviaAdvanceInFlight) return;
+  triviaAdvanceInFlight = true;
+  const btn = document.getElementById("btn-primary-action");
+  btn.disabled = true;
+  try {
+    if (interactionLifecycleState === "PROMPT_ACTIVE") {
+      const r = await postJson(`/api/sessions/${hostState.sessionId}/close-submissions`, { hostToken: hostState.hostToken });
+      show("CLOSE_SUBMISSIONS (" + r.status + ")", r.json);
+      if (r.status !== 200) { renderNotice(classifyError(r)); return; }
+      renderNotice(null);
+      await hostRefresh();
+    }
+    if (interactionLifecycleState === "SUBMISSIONS_CLOSED") {
+      const r = await postJson(`/api/sessions/${hostState.sessionId}/reveal`, { hostToken: hostState.hostToken });
+      show("REVEAL_RESULTS (" + r.status + ")", r.json);
+      if (r.status !== 200) { renderNotice(classifyError(r)); return; }
+      renderNotice(null);
+      await hostRefresh();
+    }
+    if (interactionLifecycleState === "RESULT_REVEAL") {
+      const next = lowestUnconsumedPreparedQuestion();
+      if (!next) return; // final question already revealed — nothing left to advance to.
+      const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, {
+        hostToken: hostState.hostToken,
+        turnConfig: { engineType: "MULTIPLE_CHOICE", preparedQuestionId: next.preparedQuestionId },
+        segmentTarget: "CURRENT_SEGMENT",
+      });
+      show("START_SESSION (" + r.status + ")", r.json);
+      if (r.status !== 200) { renderNotice(classifyError(r)); return; }
+      renderNotice(null);
+      await hostRefresh();
+    }
+  } finally {
+    triviaAdvanceInFlight = false;
+    btn.disabled = false;
+    updateActionAvailability();
+  }
 }
 
 // Slice 002 (Scored Multi-Round Experience). Idempotency-key lifecycle:

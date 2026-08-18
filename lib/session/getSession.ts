@@ -264,8 +264,21 @@ export async function getSession(
   // host must be able to review — and must never reach a participant,
   // who is equally authorized to call GET_SESSION at all, just not to
   // see this.
+  //
+  // Trivia Game composition correction (post-Slice-009): the same
+  // underlying query now also backs the participant-safe
+  // questionProgress field below, so it is fetched whenever either
+  // caller needs it — the host (always, as before) or a participant
+  // currently mid-Trivia (currentEngineType "MULTIPLE_CHOICE") — rather
+  // than only for the host, to avoid adding this query to every
+  // Open-Response/Voting participant's hot polled path.
+  const needsPreparedQuestions =
+    isHost || currentInteraction?.engineType === "MULTIPLE_CHOICE";
+  const allPreparedQuestions = needsPreparedQuestions
+    ? await repo.getPreparedQuestionsForSession(sessionId)
+    : [];
   const preparedQuestions = isHost
-    ? (await repo.getPreparedQuestionsForSession(sessionId)).map((q) => ({
+    ? allPreparedQuestions.map((q) => ({
         preparedQuestionId: q.preparedQuestionId,
         ordinal: q.ordinal,
         promptText: q.promptText,
@@ -275,6 +288,24 @@ export async function getSession(
         consumedAt: q.consumedAt,
       }))
     : null;
+
+  // Trivia Game composition correction (post-Slice-009): a
+  // participant-safe count-only projection of the same data — no
+  // question text, no options, no correctOptionIndex. `current` counts
+  // already-consumed prepared questions (strictly ordinal-ordered
+  // consumption, enforced by lowestUnconsumedPreparedQuestion's own
+  // selection rule, so this count IS the current question's position);
+  // `total` counts every prepared question that exists for the
+  // session. Populated only during a Multiple Choice interaction — Open
+  // Response and Voting have no question-sequence concept.
+  const questionProgress =
+    currentInteraction?.engineType === "MULTIPLE_CHOICE"
+      ? {
+          current: allPreparedQuestions.filter((q) => q.consumedAt !== null)
+            .length,
+          total: allPreparedQuestions.length,
+        }
+      : null;
 
   // Session Continuity slice: a successor can only exist once this
   // session is SESSION_COMPLETE (CREATE_SUCCESSOR_SESSION requires it),
@@ -316,5 +347,6 @@ export async function getSession(
     currentVotingCandidates,
     myVoteCandidateId,
     votingResults,
+    questionProgress,
   };
 }

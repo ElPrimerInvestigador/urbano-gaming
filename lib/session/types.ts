@@ -358,6 +358,27 @@ export interface PreparedQuestionSummary {
   consumedAt: string | null;
 }
 
+/**
+ * Trivia Game composition correction (founder production-playtest
+ * follow-up, post-Slice-009). A participant-safe read model of "where
+ * are we in this Multiple Choice question sequence" — unlike
+ * `preparedQuestions` (host-only, carries `correctOptionIndex` and
+ * every question's own text), this carries no authoring content at
+ * all: `current` is simply a count of already-consumed prepared
+ * questions, `total` a count of every prepared question that exists
+ * for the session, both already-public facts derivable from data any
+ * caller could already infer indirectly. Populated whenever
+ * `currentEngineType` is `"MULTIPLE_CHOICE"`, null otherwise (Open
+ * Response and Voting have no question-sequence concept to report).
+ * `total` is intentionally session-wide, not scoped to one Segment —
+ * this slice deliberately does not introduce a named Question Set/Quiz
+ * entity; see the Trivia Game composition implementation record.
+ */
+export interface QuestionProgress {
+  current: number;
+  total: number;
+}
+
 /** One question as supplied to PREPARE_QUESTIONS, before validation. */
 export interface PrepareQuestionsInput {
   promptText: string;
@@ -487,6 +508,12 @@ export interface GetSessionResult {
    * concept to withhold from anyone.
    */
   votingResults: VotingResultSummary[] | null;
+  /**
+   * Trivia Game composition correction (post-Slice-009). See
+   * `QuestionProgress`'s own doc comment for exactly what this does
+   * and does not carry.
+   */
+  questionProgress: QuestionProgress | null;
 }
 
 /** Raised when a generated room code collides with an active session. */

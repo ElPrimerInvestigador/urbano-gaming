@@ -35,6 +35,15 @@ describe("GET_SESSION", () => {
     expect(result.currentInteractionInstanceId).toBeNull();
   });
 
+  it("returns a null questionProgress for a fresh session with no current interaction (Trivia Game composition correction)", async () => {
+    const repo = new InMemorySessionRepository();
+    const session = await createSession(repo);
+
+    const result = await getSession(repo, session.sessionId, session.hostToken);
+
+    expect(result.questionProgress).toBeNull();
+  });
+
   it("returns the participant list with display names, ordered by join time, and no tokens", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);

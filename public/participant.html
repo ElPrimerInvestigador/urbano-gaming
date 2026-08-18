@@ -64,6 +64,9 @@
   h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
   .subtitle { color: var(--muted); margin-top: 0; margin-bottom: 20px; font-size: 14px; }
 
+  /* Trivia Game composition correction (post-Slice-009). */
+  .room-code-hint { text-align: center; color: var(--muted); font-size: 13px; margin-top: 8px; }
+
   .stepper { display: flex; justify-content: space-between; margin: 24px 0; }
   .step { flex: 1; text-align: center; position: relative; }
   .step:not(:last-child)::after {
@@ -245,6 +248,11 @@
 
 <div id="game-panels" style="display:none;">
   <div id="stepper" class="stepper"></div>
+  <!-- Trivia Game composition correction (post-Slice-009). Mirrors
+       host.html's interactionLabel: a sibling above the cards, shown
+       only when the server reports questionProgress (Multiple Choice
+       Trivia). Absent for Open Response and Voting. -->
+  <div id="questionProgressLabel" class="room-code-hint" style="display:none;"></div>
 
   <div id="state-card" class="card"></div>
 
@@ -642,12 +650,27 @@ function renderStateCard(state) {
 // than adding a parallel UI; correctOptionIndex stays null until
 // RESULT_REVEAL (see getSession.ts), so it is never rendered before
 // that regardless of which branch below executes.
-function renderPrompt(state, currentPrompt, votingCandidates) {
+function renderPrompt(state, currentPrompt, votingCandidates, questionProgress) {
   const promptCard = document.getElementById("promptCard");
   const submitCard = document.getElementById("submitCard");
   const optionsCard = document.getElementById("optionsCard");
   const votingCard = document.getElementById("votingCard");
   const isMultipleChoice = !!(currentPrompt && currentPrompt.options);
+
+  // Trivia Game composition correction (post-Slice-009 founder playtest
+  // follow-up): "Question X of N" is Trivia's own public progression
+  // vocabulary, shown whenever the server reports questionProgress
+  // (i.e. currentEngineType is "MULTIPLE_CHOICE" — see
+  // getSession.ts's questionProgress field). Open Response and Voting
+  // are unaffected; this label is simply absent for them, exactly as it
+  // already was before this correction.
+  const progressLabel = document.getElementById("questionProgressLabel");
+  if (questionProgress) {
+    progressLabel.style.display = "block";
+    progressLabel.textContent = `Question ${questionProgress.current} of ${questionProgress.total}`;
+  } else {
+    progressLabel.style.display = "none";
+  }
   // Slice 007 (Voting Engine): inferred from votingCandidates' presence,
   // the same style isMultipleChoice already uses for currentPrompt.options
   // — Voting's Candidates live in their own field, not currentPrompt.
@@ -994,7 +1017,7 @@ function applySessionSnapshot(data) {
   const effectiveState = computeEffectiveState(data.state, data.interactionState);
   renderStepper(effectiveState);
   renderStateCard(effectiveState);
-  renderPrompt(effectiveState, data.currentPrompt, data.currentVotingCandidates);
+  renderPrompt(effectiveState, data.currentPrompt, data.currentVotingCandidates, data.questionProgress);
   if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
   if ("submissions" in data) {
     renderResults(data.submissions, data.state);
