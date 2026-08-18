@@ -21,12 +21,10 @@ async function setupActiveSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
   const participant = await joinSession(repo, session.roomCode, "Alex");
   await lockLobby(repo, session.sessionId, session.hostToken);
-  const interaction = await startSession(
-    repo,
-    session.sessionId,
-    session.hostToken,
-    "Prompt text"
-  );
+  const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+    engineType: "OPEN_RESPONSE",
+    promptText: "Prompt text",
+  });
   return { session, participant, interaction };
 }
 
@@ -158,12 +156,10 @@ describe("SUBMIT_RESPONSE", () => {
     const alex = await joinSession(repo, session.roomCode, "Alex");
     const jordan = await joinSession(repo, session.roomCode, "Jordan");
     await lockLobby(repo, session.sessionId, session.hostToken);
-    const interaction = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "Prompt text"
-    );
+    const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt text",
+    });
 
     await submitResponse(repo, session.sessionId, alex.participantToken, "Alex's answer");
     await submitResponse(repo, session.sessionId, jordan.participantToken, "Jordan's answer");
@@ -251,12 +247,10 @@ describe("SUBMIT_RESPONSE", () => {
       await closeSubmissions(repo, session.sessionId, session.hostToken);
       await revealResults(repo, session.sessionId, session.hostToken);
 
-      const secondInteraction = await startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Second prompt"
-      );
+      const secondInteraction = await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Second prompt",
+      });
 
       const firstSubmissions = await repo.getSubmissionsForInteractionInstance(
         firstInteraction.interactionInstanceId
@@ -280,7 +274,10 @@ describe("SUBMIT_RESPONSE", () => {
       );
       await closeSubmissions(repo, session.sessionId, session.hostToken);
       await revealResults(repo, session.sessionId, session.hostToken);
-      await startSession(repo, session.sessionId, session.hostToken, "Second prompt");
+      await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Second prompt",
+      });
 
       const result = await submitResponse(
         repo,

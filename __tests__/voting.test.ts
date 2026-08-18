@@ -19,7 +19,6 @@ import {
   VotingSourceInteractionNotFoundError,
   VotingSourceInteractionNotEligibleError,
   InvalidCandidateSelectionError,
-  AmbiguousStartSessionTargetError,
 } from "../lib/session/types";
 
 async function setupLockedSession(repo: InMemorySessionRepository) {
@@ -36,14 +35,11 @@ async function startHostAuthoredVoting(
   session: { sessionId: string; hostToken: string },
   candidates: string[] = ["Pizza", "Tacos", "Sushi"]
 ) {
-  return startSession(
-    repo,
-    session.sessionId,
-    session.hostToken,
-    "Vote for your favorite!",
-    null,
-    { type: "HOST_AUTHORED", candidates }
-  );
+  return startSession(repo, session.sessionId, session.hostToken, {
+    engineType: "VOTING",
+    promptText: "Vote for your favorite!",
+    candidateSource: { type: "HOST_AUTHORED", candidates },
+  });
 }
 
 describe("START_SESSION with a HOST_AUTHORED votingCandidateSource", () => {
@@ -103,54 +99,37 @@ describe("START_SESSION with a HOST_AUTHORED votingCandidateSource", () => {
     const { session } = await setupLockedSession(repo);
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken, "", null, {
-        type: "HOST_AUTHORED",
-        candidates: ["Pizza", "Tacos"],
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "VOTING",
+        promptText: "",
+        candidateSource: { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos"] },
       })
     ).rejects.toThrow();
   });
 
-  it("rejects supplying both preparedQuestionId and votingCandidateSource — an ambiguous request, not silently resolved", async () => {
-    const repo = new InMemorySessionRepository();
-    const { session } = await setupLockedSession(repo);
-    const prepared = await prepareQuestions(repo, session.sessionId, session.hostToken, [
-      { promptText: "Cats or dogs?", options: ["Cats", "Dogs"], correctOptionIndex: 0 },
-    ]);
-
-    await expect(
-      startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Vote for your favorite!",
-        prepared.questions[0].preparedQuestionId,
-        { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos"] }
-      )
-    ).rejects.toBeInstanceOf(AmbiguousStartSessionTargetError);
-
-    // Re-verified directly at the repository layer too, mirroring the
-    // atomic function's own authoritative re-check.
-    await expect(
-      repo.startSession(
-        session.sessionId,
-        session.hostToken,
-        "Vote for your favorite!",
-        prepared.questions[0].preparedQuestionId,
-        { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos"] }
-      )
-    ).rejects.toBeInstanceOf(AmbiguousStartSessionTargetError);
-  });
+  // Slice 009: the "ambiguous preparedQuestionId + votingCandidateSource"
+  // scenario this test previously proved is now structurally impossible
+  // to construct through StartTurnConfig — it is a real TypeScript
+  // discriminated union, so "both a preparedQuestionId and a
+  // candidateSource" no longer type-checks at either the domain
+  // (startSession) or repository (repo.startSession) call sites this
+  // test exercised. AmbiguousStartSessionTargetError remains real and
+  // reachable, but only at the one place still parsing untyped input —
+  // the API route's legacy flat-shape compatibility shim (see
+  // app/api/sessions/[identifier]/start/route.ts) — and, as
+  // defense-in-depth, inside start_session_atomically itself (see
+  // votingSupabaseRepository.contract.test.ts's live-Postgres proof of
+  // that SQL-level check, invoked directly via RPC since the typed
+  // repository method can no longer construct this request either).
 });
 
 describe("START_SESSION with a SUBMISSION votingCandidateSource (Open Response composition)", () => {
   async function setupRevealedOpenResponse(repo: InMemorySessionRepository) {
     const { session, alex, jordan, sam } = await setupLockedSession(repo);
-    const interaction = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "Tell us your best joke!"
-    );
+    const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Tell us your best joke!",
+    });
     await submitResponse(repo, session.sessionId, alex.participantToken, "Why did the chicken cross the road?");
     await submitResponse(repo, session.sessionId, jordan.participantToken, "Knock knock.");
     await closeSubmissions(repo, session.sessionId, session.hostToken);
@@ -162,14 +141,11 @@ describe("START_SESSION with a SUBMISSION votingCandidateSource (Open Response c
     const repo = new InMemorySessionRepository();
     const { session, interaction } = await setupRevealedOpenResponse(repo);
 
-    const started = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "Vote for the funniest!",
-      null,
-      { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId }
-    );
+    const started = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for the funniest!",
+      candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId },
+    });
 
     expect(started.engineType).toBe("VOTING");
     const candidates = await repo.getVotingCandidatesForInteraction(
@@ -194,14 +170,11 @@ describe("START_SESSION with a SUBMISSION votingCandidateSource (Open Response c
     await lockLobby(repo, otherSession.sessionId, otherSession.hostToken);
 
     await expect(
-      startSession(
-        repo,
-        otherSession.sessionId,
-        otherSession.hostToken,
-        "Vote for the funniest!",
-        null,
-        { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId }
-      )
+      startSession(repo, otherSession.sessionId, otherSession.hostToken, {
+        engineType: "VOTING",
+        promptText: "Vote for the funniest!",
+        candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId },
+      })
     ).rejects.toBeInstanceOf(VotingSourceInteractionNotFoundError);
   });
 
@@ -218,24 +191,19 @@ describe("START_SESSION with a SUBMISSION votingCandidateSource (Open Response c
   it("rejects sourcing from the current, not-yet-revealed interaction via the existing re-invocation precondition", async () => {
     const repo = new InMemorySessionRepository();
     const { session, alex } = await setupLockedSession(repo);
-    const interaction = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "Tell us your best joke!"
-    );
+    const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Tell us your best joke!",
+    });
     await submitResponse(repo, session.sessionId, alex.participantToken, "Knock knock.");
     // deliberately not closed/revealed yet
 
     await expect(
-      startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Vote for the funniest!",
-        null,
-        { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId }
-      )
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "VOTING",
+        promptText: "Vote for the funniest!",
+        candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId },
+      })
     ).rejects.toBeInstanceOf(PreviousInteractionNotRevealedError);
   });
 
@@ -258,50 +226,39 @@ describe("START_SESSION with a SUBMISSION votingCandidateSource (Open Response c
     const prepared = await prepareQuestions(repo, session.sessionId, session.hostToken, [
       { promptText: "Cats or dogs?", options: ["Cats", "Dogs"], correctOptionIndex: 0 },
     ]);
-    const interaction = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
     await submitResponse(repo, session.sessionId, alex.participantToken, "0");
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Vote for the funniest!",
-        null,
-        { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId }
-      )
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "VOTING",
+        promptText: "Vote for the funniest!",
+        candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId },
+      })
     ).rejects.toBeInstanceOf(VotingSourceInteractionNotEligibleError);
   });
 
   it("rejects a revealed Open Response interaction with zero submissions", async () => {
     const repo = new InMemorySessionRepository();
     const { session } = await setupLockedSession(repo);
-    const interaction = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "Tell us your best joke!"
-    );
+    const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Tell us your best joke!",
+    });
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Vote for the funniest!",
-        null,
-        { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId }
-      )
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "VOTING",
+        promptText: "Vote for the funniest!",
+        candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: interaction.interactionInstanceId },
+      })
     ).rejects.toBeInstanceOf(VotingSourceInteractionNotEligibleError);
   });
 });
@@ -401,7 +358,10 @@ describe("CAST_VOTE", () => {
   it("rejects casting a vote while the current interaction is not VOTING", async () => {
     const repo = new InMemorySessionRepository();
     const { session, alex } = await setupLockedSession(repo);
-    await startSession(repo, session.sessionId, session.hostToken, "Open response prompt");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Open response prompt",
+    });
 
     await expect(
       castVote(repo, session.sessionId, alex.participantToken, "11111111-1111-1111-1111-111111111111")
@@ -535,7 +495,10 @@ describe("GET_SESSION: myVoteCandidateId — the first participant-identity-scop
   it("is null for any participant when the current interaction is not VOTING", async () => {
     const repo = new InMemorySessionRepository();
     const s = await setupLockedSession(repo);
-    await startSession(repo, s.session.sessionId, s.session.hostToken, "Open response prompt");
+    await startSession(repo, s.session.sessionId, s.session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Open response prompt",
+    });
 
     const alexView = await getSession(repo, s.session.sessionId, s.alex.participantToken);
     expect(alexView.myVoteCandidateId).toBeNull();
@@ -548,28 +511,31 @@ describe("Composition and regression: Voting alongside Open Response and Multipl
     const s = await setupLockedSession(repo);
 
     // Turn 1: Open Response.
-    const openResponse = await startSession(
-      repo,
-      s.session.sessionId,
-      s.session.hostToken,
-      "Tell us your best joke!"
-    );
+    const openResponse = await startSession(repo, s.session.sessionId, s.session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Tell us your best joke!",
+    });
     await submitResponse(repo, s.session.sessionId, s.alex.participantToken, "Joke A");
     await submitResponse(repo, s.session.sessionId, s.jordan.participantToken, "Joke B");
     await closeSubmissions(repo, s.session.sessionId, s.session.hostToken);
     await revealResults(repo, s.session.sessionId, s.session.hostToken);
 
     // Turn 2: Voting, composed from Turn 1's submissions.
-    const voting = await startSession(
-      repo,
-      s.session.sessionId,
-      s.session.hostToken,
-      "Vote for the funniest!",
-      null,
-      { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId }
-    );
+    const voting = await startSession(repo, s.session.sessionId, s.session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for the funniest!",
+      candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId },
+    });
     const cands = await repo.getVotingCandidatesForInteraction(voting.interactionInstanceId);
-    await castVote(repo, s.session.sessionId, s.alex.participantToken, cands[0].candidateId);
+    // Slice 009: SUBMISSION-sourced Candidates are now attributed to
+    // their submission's own author (cands[0] is Alex's own "Joke A"),
+    // and self-vote is prohibited — so cands[0]'s two votes come from
+    // Jordan and Sam (neither is its author) instead of Alex, keeping
+    // this test's original "winner has 2 votes" shape intact. Alex
+    // votes for Jordan's Candidate (cands[1]) instead, which is not
+    // his own either.
+    await castVote(repo, s.session.sessionId, s.alex.participantToken, cands[1].candidateId);
+    await castVote(repo, s.session.sessionId, s.jordan.participantToken, cands[0].candidateId);
     await castVote(repo, s.session.sessionId, s.sam.participantToken, cands[0].candidateId);
     await closeSubmissions(repo, s.session.sessionId, s.session.hostToken);
     await revealResults(repo, s.session.sessionId, s.session.hostToken);
@@ -579,13 +545,10 @@ describe("Composition and regression: Voting alongside Open Response and Multipl
     const prepared = await prepareQuestions(repo, s.session.sessionId, s.session.hostToken, [
       { promptText: "Cats or dogs?", options: ["Cats", "Dogs"], correctOptionIndex: 1, points: 15 },
     ]);
-    const mc = await startSession(
-      repo,
-      s.session.sessionId,
-      s.session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    const mc = await startSession(repo, s.session.sessionId, s.session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
     await submitResponse(repo, s.session.sessionId, s.alex.participantToken, "1");
     await closeSubmissions(repo, s.session.sessionId, s.session.hostToken);
     await revealResults(repo, s.session.sessionId, s.session.hostToken);

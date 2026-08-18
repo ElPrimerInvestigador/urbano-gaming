@@ -4,6 +4,7 @@ import {
   SessionNotFoundError,
   SessionAccessDeniedError,
   PromptNotActiveError,
+  SelfVoteNotAllowedError,
 } from "./types";
 
 /**
@@ -33,6 +34,13 @@ import {
  * state, current interaction instance's state and engine type, and
  * the candidate's own membership in that interaction instance, inside
  * the same atomic operation that performs the upsert.
+ *
+ * Slice 009 (Engine Selection + PARTICIPANTS Voting): a self-vote
+ * fast-path is added below, mirroring the existing discipline —
+ * immediate, cheap rejection ahead of the repository's own
+ * authoritative re-check (which uses the same structured
+ * participantId attribution, re-read inside its own atomic operation,
+ * not trusted from this earlier lookup).
  */
 export async function castVote(
   repo: SessionRepository,
@@ -69,6 +77,18 @@ export async function castVote(
     currentInteraction.engineType !== "VOTING"
   ) {
     throw new PromptNotActiveError(currentInteraction?.state);
+  }
+
+  const candidates = await repo.getVotingCandidatesForInteraction(
+    currentInteraction.interactionInstanceId
+  );
+  const candidate = candidates.find((c) => c.candidateId === candidateId);
+  if (
+    candidate &&
+    candidate.participantId !== null &&
+    candidate.participantId === participant.participantId
+  ) {
+    throw new SelfVoteNotAllowedError();
   }
 
   const result = await repo.castVote(

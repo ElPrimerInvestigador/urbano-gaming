@@ -6,9 +6,9 @@ import type {
   SessionState,
   InteractionState,
   EngineType,
-  VotingCandidateSource,
   VotingResultSummary,
   SegmentTarget,
+  StartTurnConfig,
 } from "../types";
 import {
   RoomCodeCollisionError,
@@ -35,6 +35,7 @@ import {
   VotingSourceInteractionNotEligibleError,
   InvalidCandidateSelectionError,
   AmbiguousStartSessionTargetError,
+  SelfVoteNotAllowedError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -450,23 +451,25 @@ export class SupabaseSessionRepository implements SessionRepository {
   }
 
   /**
-   * Slice 007 (Voting Engine): votingCandidateSource arrives here as
-   * one structured TypeScript union — this is the one point where it
-   * is decomposed into the flat SQL parameters
-   * start_session_atomically (0033) actually accepts. Postgres has no
-   * native discriminated-union type, and this repository's existing
+   * Slice 007 (Voting Engine) / Slice 009 (Engine Selection +
+   * PARTICIPANTS Voting): `config` (StartTurnConfig) arrives here as
+   * one structured, discriminated TypeScript union — this is the one
+   * point where it is decomposed into the flat SQL parameters
+   * start_session_atomically actually accepts. Postgres has no native
+   * discriminated-union type, and this repository's existing
    * convention already favors flat, typed parameters (multiple_choice_details.options
    * is the one existing jsonb column, used because it's genuinely
    * array-shaped data, not for symmetry with a TypeScript type) — so
    * the decomposition happens in this adapter, not by forcing the
    * database to accept a JSON blob merely to mirror the domain shape.
+   * "PARTICIPANTS" needs no extra parameter at all — the RPC already
+   * has p_session_id, and that's the entire input PARTICIPANTS sourcing
+   * requires.
    */
   async startSession(
     sessionId: string,
     hostToken: string,
-    promptText: string,
-    preparedQuestionId?: string | null,
-    votingCandidateSource?: VotingCandidateSource | null,
+    config: StartTurnConfig,
     segmentTarget: SegmentTarget = "NEW_SEGMENT"
   ): Promise<{
     interactionInstanceId: string;
@@ -475,19 +478,26 @@ export class SupabaseSessionRepository implements SessionRepository {
     engineType: EngineType;
     segmentNumber: number;
   }> {
+    const preparedQuestionId =
+      config.engineType === "MULTIPLE_CHOICE" ? config.preparedQuestionId : null;
+    const promptText =
+      config.engineType === "OPEN_RESPONSE" || config.engineType === "VOTING"
+        ? config.promptText
+        : "";
+    const candidateSource =
+      config.engineType === "VOTING" ? config.candidateSource : null;
+
     const { data, error } = await this.client.rpc("start_session_atomically", {
       p_session_id: sessionId,
       p_host_token: hostToken,
       p_prompt_text: promptText,
-      p_prepared_question_id: preparedQuestionId ?? null,
-      p_voting_source_type: votingCandidateSource?.type ?? null,
+      p_prepared_question_id: preparedQuestionId,
+      p_voting_source_type: candidateSource?.type ?? null,
       p_voting_candidates:
-        votingCandidateSource?.type === "HOST_AUTHORED"
-          ? votingCandidateSource.candidates
-          : null,
+        candidateSource?.type === "HOST_AUTHORED" ? candidateSource.candidates : null,
       p_voting_source_interaction_instance_id:
-        votingCandidateSource?.type === "SUBMISSION"
-          ? votingCandidateSource.sourceInteractionInstanceId
+        candidateSource?.type === "SUBMISSION"
+          ? candidateSource.sourceInteractionInstanceId
           : null,
       p_segment_target: segmentTarget,
     });
@@ -1001,6 +1011,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       interactionInstanceId: row.interaction_instance_id,
       ordinal: row.ordinal,
       label: row.label,
+      participantId: row.participant_id,
       createdAt: row.created_at,
     }));
   }
@@ -1093,6 +1104,14 @@ export class SupabaseSessionRepository implements SessionRepository {
         error.message.includes("INVALID_CANDIDATE_SELECTION")
       ) {
         throw new InvalidCandidateSelectionError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SELF_VOTE_NOT_ALLOWED")
+      ) {
+        throw new SelfVoteNotAllowedError();
       }
 
       throw error;

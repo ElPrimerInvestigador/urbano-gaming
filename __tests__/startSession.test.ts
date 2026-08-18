@@ -28,7 +28,7 @@ describe("START_SESSION", () => {
       repo,
       session.sessionId,
       session.hostToken,
-      "What's your favorite pizza topping?"
+      { engineType: "OPEN_RESPONSE", promptText: "What's your favorite pizza topping?" }
     );
 
     expect(result.sessionId).toBe(session.sessionId);
@@ -42,7 +42,10 @@ describe("START_SESSION", () => {
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
-    await startSession(repo, session.sessionId, session.hostToken, "Prompt text");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt text",
+    });
 
     const stored = await repo.getSessionById(session.sessionId);
     expect(stored?.state).toBe("LOBBY_LOCKED");
@@ -54,7 +57,10 @@ describe("START_SESSION", () => {
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
-    const result = await startSession(repo, session.sessionId, session.hostToken, "Prompt text");
+    const result = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt text",
+    });
     const events = repo._getEventsForSession(session.sessionId);
 
     const startedEvent = events.find((e) => e.eventType === "INTERACTION_STARTED");
@@ -75,7 +81,7 @@ describe("START_SESSION", () => {
       repo,
       session.sessionId,
       session.hostToken,
-      "  Pizza night!  "
+      { engineType: "OPEN_RESPONSE", promptText: "  Pizza night!  " }
     );
 
     const prompt = await repo.getPromptById(result.promptId);
@@ -88,7 +94,10 @@ describe("START_SESSION", () => {
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken, "   ")
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "   ",
+      })
     ).rejects.toBeInstanceOf(EmptyPromptTextError);
   });
 
@@ -98,7 +107,10 @@ describe("START_SESSION", () => {
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken, "a".repeat(1001))
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "a".repeat(1001),
+      })
     ).rejects.toBeInstanceOf(PromptTextTooLongError);
   });
 
@@ -107,7 +119,10 @@ describe("START_SESSION", () => {
     const session = await createSession(repo);
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken, "Prompt text")
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt text",
+      })
     ).rejects.toBeInstanceOf(LobbyNotLockedError);
   });
 
@@ -115,10 +130,16 @@ describe("START_SESSION", () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
-    await startSession(repo, session.sessionId, session.hostToken, "First prompt");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "First prompt",
+    });
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken, "Second prompt")
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Second prompt",
+      })
     ).rejects.toBeInstanceOf(PreviousInteractionNotRevealedError);
   });
 
@@ -126,11 +147,17 @@ describe("START_SESSION", () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
-    await startSession(repo, session.sessionId, session.hostToken, "First prompt");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "First prompt",
+    });
     await closeSubmissions(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken, "Second prompt")
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Second prompt",
+      })
     ).rejects.toBeInstanceOf(PreviousInteractionNotRevealedError);
   });
 
@@ -141,7 +168,10 @@ describe("START_SESSION", () => {
     await completeSession(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(repo, session.sessionId, session.hostToken, "Prompt text")
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt text",
+      })
     ).rejects.toBeInstanceOf(LobbyNotLockedError);
   });
 
@@ -151,7 +181,10 @@ describe("START_SESSION", () => {
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(repo, session.sessionId, "wrong-token", "Prompt text")
+      startSession(repo, session.sessionId, "wrong-token", {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt text",
+      })
     ).rejects.toBeInstanceOf(HostTokenMismatchError);
 
     expect(repo._allInteractionInstances()).toHaveLength(0);
@@ -165,7 +198,7 @@ describe("START_SESSION", () => {
         repo,
         "11111111-1111-1111-1111-111111111111",
         "any-token",
-        "Prompt text"
+        { engineType: "OPEN_RESPONSE", promptText: "Prompt text" }
       )
     ).rejects.toBeInstanceOf(SessionNotFoundError);
   });
@@ -177,8 +210,14 @@ describe("START_SESSION", () => {
       await lockLobby(repo, session.sessionId, session.hostToken);
 
       const attempts = await Promise.allSettled([
-        startSession(repo, session.sessionId, session.hostToken, "Prompt A"),
-        startSession(repo, session.sessionId, session.hostToken, "Prompt B"),
+        startSession(repo, session.sessionId, session.hostToken, {
+          engineType: "OPEN_RESPONSE",
+          promptText: "Prompt A",
+        }),
+        startSession(repo, session.sessionId, session.hostToken, {
+          engineType: "OPEN_RESPONSE",
+          promptText: "Prompt B",
+        }),
       ]);
 
       const successes = attempts.filter((a) => a.status === "fulfilled");
@@ -194,7 +233,10 @@ describe("START_SESSION", () => {
       const session = await createSession(repo);
 
       await expect(
-        repo.startSession(session.sessionId, session.hostToken, "Prompt text")
+        repo.startSession(session.sessionId, session.hostToken, {
+          engineType: "OPEN_RESPONSE",
+          promptText: "Prompt text",
+        })
       ).rejects.toBeInstanceOf(LobbyNotLockedError);
     });
 
@@ -204,7 +246,10 @@ describe("START_SESSION", () => {
       await lockLobby(repo, session.sessionId, session.hostToken);
 
       await expect(
-        repo.startSession(session.sessionId, "wrong-token", "Prompt text")
+        repo.startSession(session.sessionId, "wrong-token", {
+          engineType: "OPEN_RESPONSE",
+          promptText: "Prompt text",
+        })
       ).rejects.toBeInstanceOf(HostTokenMismatchError);
     });
 
@@ -229,7 +274,7 @@ describe("START_SESSION", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "Pizza night!"
+        { engineType: "OPEN_RESPONSE", promptText: "Pizza night!" }
       );
 
       const result = await getSession(repo, session.sessionId, session.hostToken);
@@ -249,7 +294,7 @@ describe("START_SESSION", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "Prompt text"
+        { engineType: "OPEN_RESPONSE", promptText: "Prompt text" }
       );
       await completeSession(repo, session.sessionId, session.hostToken);
 
@@ -265,7 +310,10 @@ describe("START_SESSION", () => {
     const session = await createSession(repo);
     const participant = await joinSession(repo, session.roomCode, "Alex");
     await lockLobby(repo, session.sessionId, session.hostToken);
-    await startSession(repo, session.sessionId, session.hostToken, "Prompt text");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt text",
+    });
 
     const result = await getSession(repo, session.sessionId, session.hostToken);
 
@@ -286,7 +334,7 @@ describe("START_SESSION", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "First prompt"
+        { engineType: "OPEN_RESPONSE", promptText: "First prompt" }
       );
       await closeSubmissions(repo, session.sessionId, session.hostToken);
       await revealResults(repo, session.sessionId, session.hostToken);
@@ -295,7 +343,7 @@ describe("START_SESSION", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "Second prompt"
+        { engineType: "OPEN_RESPONSE", promptText: "Second prompt" }
       );
 
       expect(second.interactionInstanceId).not.toBe(first.interactionInstanceId);
@@ -315,11 +363,17 @@ describe("START_SESSION", () => {
       const session = await createSession(repo);
       await lockLobby(repo, session.sessionId, session.hostToken);
 
-      await startSession(repo, session.sessionId, session.hostToken, "Prompt 1");
+      await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt 1",
+      });
       await closeSubmissions(repo, session.sessionId, session.hostToken);
       await revealResults(repo, session.sessionId, session.hostToken);
 
-      await startSession(repo, session.sessionId, session.hostToken, "Prompt 2");
+      await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt 2",
+      });
       await closeSubmissions(repo, session.sessionId, session.hostToken);
       await revealResults(repo, session.sessionId, session.hostToken);
 
@@ -327,7 +381,7 @@ describe("START_SESSION", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "Prompt 3"
+        { engineType: "OPEN_RESPONSE", promptText: "Prompt 3" }
       );
 
       const result = await getSession(repo, session.sessionId, session.hostToken);
@@ -341,11 +395,17 @@ describe("START_SESSION", () => {
       const session = await createSession(repo);
       await lockLobby(repo, session.sessionId, session.hostToken);
 
-      await startSession(repo, session.sessionId, session.hostToken, "Prompt 1");
+      await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt 1",
+      });
       await closeSubmissions(repo, session.sessionId, session.hostToken);
       await revealResults(repo, session.sessionId, session.hostToken);
 
-      await startSession(repo, session.sessionId, session.hostToken, "Prompt 2");
+      await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt 2",
+      });
 
       const result = await getSession(repo, session.sessionId, session.hostToken);
       // Current interaction is PROMPT_ACTIVE, so submissions stays null —

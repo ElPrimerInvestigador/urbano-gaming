@@ -21,12 +21,10 @@ async function setupClosedSession(repo: InMemorySessionRepository) {
   const alex = await joinSession(repo, session.roomCode, "Alex");
   const jordan = await joinSession(repo, session.roomCode, "Jordan");
   await lockLobby(repo, session.sessionId, session.hostToken);
-  const interaction = await startSession(
-    repo,
-    session.sessionId,
-    session.hostToken,
-    "Prompt text"
-  );
+  const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+    engineType: "OPEN_RESPONSE",
+    promptText: "Prompt text",
+  });
   await submitResponse(repo, session.sessionId, alex.participantToken, "Alex's answer");
   await submitResponse(repo, session.sessionId, jordan.participantToken, "Jordan's answer");
   await closeSubmissions(repo, session.sessionId, session.hostToken);
@@ -60,7 +58,10 @@ describe("REVEAL_RESULTS", () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
     await lockLobby(repo, session.sessionId, session.hostToken);
-    await startSession(repo, session.sessionId, session.hostToken, "Prompt text");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt text",
+    });
 
     await expect(
       revealResults(repo, session.sessionId, session.hostToken)
@@ -160,12 +161,10 @@ describe("REVEAL_RESULTS", () => {
       const firstReveal = await revealResults(repo, session.sessionId, session.hostToken);
       expect(firstReveal.state).toBe("RESULT_REVEAL");
 
-      const second = await startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Second prompt"
-      );
+      const second = await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Second prompt",
+      });
       await submitResponse(repo, session.sessionId, alex.participantToken, "Alex round 2");
       await submitResponse(repo, session.sessionId, jordan.participantToken, "Jordan round 2");
       await closeSubmissions(repo, session.sessionId, session.hostToken);

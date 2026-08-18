@@ -47,7 +47,7 @@ describe("Slice 008 — Segment / Turn grouping", () => {
       repo,
       session.sessionId,
       session.hostToken,
-      "Prompt 1"
+      { engineType: "OPEN_RESPONSE", promptText: "Prompt 1" }
     );
 
     expect(started.segmentNumber).toBe(1);
@@ -60,7 +60,10 @@ describe("Slice 008 — Segment / Turn grouping", () => {
     const repo = new InMemorySessionRepository();
     const { session } = await setupLockedSession(repo);
 
-    await startSession(repo, session.sessionId, session.hostToken, "Prompt 1");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt 1",
+    });
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
 
@@ -68,7 +71,7 @@ describe("Slice 008 — Segment / Turn grouping", () => {
       repo,
       session.sessionId,
       session.hostToken,
-      "Prompt 2"
+      { engineType: "OPEN_RESPONSE", promptText: "Prompt 2" }
     );
 
     expect(second.segmentNumber).toBe(2);
@@ -79,15 +82,24 @@ describe("Slice 008 — Segment / Turn grouping", () => {
     const repo = new InMemorySessionRepository();
     const { session } = await setupLockedSession(repo);
 
-    const first = await startSession(repo, session.sessionId, session.hostToken, "Prompt 1");
+    const first = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt 1",
+    });
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
 
-    const second = await startSession(repo, session.sessionId, session.hostToken, "Prompt 2");
+    const second = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt 2",
+    });
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
 
-    const third = await startSession(repo, session.sessionId, session.hostToken, "Prompt 3");
+    const third = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt 3",
+    });
 
     expect([first.segmentNumber, second.segmentNumber, third.segmentNumber]).toEqual([1, 2, 3]);
   });
@@ -100,7 +112,7 @@ describe("Slice 008 — Segment / Turn grouping", () => {
       repo,
       session.sessionId,
       session.hostToken,
-      "Tell us your best joke!"
+      { engineType: "OPEN_RESPONSE", promptText: "Tell us your best joke!" }
     );
     await submitResponse(
       repo,
@@ -115,9 +127,14 @@ describe("Slice 008 — Segment / Turn grouping", () => {
       repo,
       session.sessionId,
       session.hostToken,
-      "Vote for the funniest!",
-      null,
-      { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId },
+      {
+        engineType: "VOTING",
+        promptText: "Vote for the funniest!",
+        candidateSource: {
+          type: "SUBMISSION",
+          sourceInteractionInstanceId: openResponse.interactionInstanceId,
+        },
+      },
       "CURRENT_SEGMENT"
     );
 
@@ -135,8 +152,14 @@ describe("Slice 008 — Segment / Turn grouping", () => {
     const { session } = await setupLockedSession(repo);
 
     const attempts = await Promise.allSettled([
-      startSession(repo, session.sessionId, session.hostToken, "Prompt A"),
-      startSession(repo, session.sessionId, session.hostToken, "Prompt B"),
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt A",
+      }),
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt B",
+      }),
     ]);
 
     const successes = attempts.filter((a) => a.status === "fulfilled");
@@ -163,9 +186,11 @@ describe("Slice 008 — Segment / Turn grouping", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "Vote for the funniest!",
-        null,
-        { type: "HOST_AUTHORED", candidates: ["A", "B"] },
+        {
+          engineType: "VOTING",
+          promptText: "Vote for the funniest!",
+          candidateSource: { type: "HOST_AUTHORED", candidates: ["A", "B"] },
+        },
         "CURRENT_SEGMENT"
       )
     ).rejects.toBeInstanceOf(NoCurrentSegmentToContinueError);
@@ -177,7 +202,10 @@ describe("Slice 008 — Segment / Turn grouping", () => {
     const repo = new InMemorySessionRepository();
     const { session } = await setupLockedSession(repo);
 
-    await startSession(repo, session.sessionId, session.hostToken, "Prompt 1");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt 1",
+    });
     // Still PROMPT_ACTIVE — never closed or revealed.
 
     await expect(
@@ -185,9 +213,11 @@ describe("Slice 008 — Segment / Turn grouping", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "Vote for the funniest!",
-        null,
-        { type: "HOST_AUTHORED", candidates: ["A", "B"] },
+        {
+          engineType: "VOTING",
+          promptText: "Vote for the funniest!",
+          candidateSource: { type: "HOST_AUTHORED", candidates: ["A", "B"] },
+        },
         "CURRENT_SEGMENT"
       )
     ).rejects.toBeInstanceOf(PreviousInteractionNotRevealedError);
@@ -201,7 +231,7 @@ describe("Slice 008 — Segment / Turn grouping", () => {
       repo,
       session.sessionId,
       session.hostToken,
-      "Tell us your best joke!"
+      { engineType: "OPEN_RESPONSE", promptText: "Tell us your best joke!" }
     );
     await submitResponse(repo, session.sessionId, alex.participantToken, "Knock knock.");
     await closeSubmissions(repo, session.sessionId, session.hostToken);
@@ -211,9 +241,14 @@ describe("Slice 008 — Segment / Turn grouping", () => {
       repo,
       session.sessionId,
       session.hostToken,
-      "Vote for the funniest!",
-      null,
-      { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId },
+      {
+        engineType: "VOTING",
+        promptText: "Vote for the funniest!",
+        candidateSource: {
+          type: "SUBMISSION",
+          sourceInteractionInstanceId: openResponse.interactionInstanceId,
+        },
+      },
       "CURRENT_SEGMENT"
     );
 
@@ -235,7 +270,7 @@ describe("Slice 008 — Segment / Turn grouping", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "Tell us your best joke!"
+        { engineType: "OPEN_RESPONSE", promptText: "Tell us your best joke!" }
       );
       expect(openResponse.segmentNumber).toBe(1);
 
@@ -253,9 +288,14 @@ describe("Slice 008 — Segment / Turn grouping", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "Vote for the funniest!",
-        null,
-        { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId },
+        {
+          engineType: "VOTING",
+          promptText: "Vote for the funniest!",
+          candidateSource: {
+            type: "SUBMISSION",
+            sourceInteractionInstanceId: openResponse.interactionInstanceId,
+          },
+        },
         "CURRENT_SEGMENT"
       );
       expect(voting.segmentNumber).toBe(1);
@@ -268,7 +308,7 @@ describe("Slice 008 — Segment / Turn grouping", () => {
         repo,
         session.sessionId,
         session.hostToken,
-        "Next ad-hoc question"
+        { engineType: "OPEN_RESPONSE", promptText: "Next ad-hoc question" }
       );
       expect(nextTurn.segmentNumber).toBe(2);
 
@@ -281,7 +321,10 @@ describe("Slice 008 — Segment / Turn grouping", () => {
     const repo = new InMemorySessionRepository();
     const { session } = await setupLockedSession(repo);
 
-    await startSession(repo, session.sessionId, session.hostToken, "Prompt 1");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt 1",
+    });
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
     await completeSession(repo, session.sessionId, session.hostToken);
@@ -301,7 +344,7 @@ describe("Slice 008 — Segment / Turn grouping", () => {
       repo,
       successor.sessionId,
       successor.hostToken,
-      "New game, Prompt 1"
+      { engineType: "OPEN_RESPONSE", promptText: "New game, Prompt 1" }
     );
 
     expect(firstOfSuccessor.segmentNumber).toBe(1);
@@ -315,7 +358,10 @@ describe("Slice 008 — Segment / Turn grouping", () => {
     const repo = new InMemorySessionRepository();
     const { session } = await setupLockedSession(repo);
 
-    const started = await startSession(repo, session.sessionId, session.hostToken, "Prompt 1");
+    const started = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt 1",
+    });
     expect(started.segmentNumber).toBe(1);
 
     // Interpretation 2 (administrative termination): completing while

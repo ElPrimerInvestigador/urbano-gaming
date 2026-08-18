@@ -1,0 +1,66 @@
+-- Migration: 0038_add_participant_id_to_voting_candidates
+-- Slice 009 — Engine Selection + PARTICIPANTS Voting.
+--
+-- A nullable, structured attribution column on voting_candidates:
+-- which participant (if any) a Candidate corresponds to. Populated at
+-- creation, inside start_session_atomically (0039), by Candidate
+-- source:
+--
+--   PARTICIPANTS  -> the participant IS the candidate; participant_id
+--                     is that participant's own participant_id.
+--   SUBMISSION    -> the candidate is that submission's own author;
+--                     participant_id is submissions.participant_id,
+--                     already a required, non-null column (0009) — so
+--                     this attribution is exact, not inferred.
+--   HOST_AUTHORED -> no participant produced this Candidate;
+--                     participant_id stays null.
+--
+-- This is real, queryable attribution — not the informal provenance
+-- that already lives in INTERACTION_STARTED's payload (see 0031's own
+-- comment on that distinction) — added specifically to make self-vote
+-- enforcement (0040) possible: cast_vote_atomically needs to compare a
+-- Candidate's participant_id against the voting participant's own id,
+-- which requires this column to exist as real, indexed data, not
+-- something re-derived per vote from event payloads.
+--
+-- Never projected back to any participant-facing read path in this
+-- slice (GET_SESSION's VotingCandidateSummary carries only candidateId/
+-- ordinal/label, unchanged) — attribution here is host/server-internal
+-- only, so that Voting still shows only who a Candidate *is*
+-- (label), never who is *safe or unsafe to vote for by name*, which
+-- would leak identity information the label itself does not.
+--
+-- on delete set null (deliberately NOT cascade, unlike
+-- submissions.participant_id's on delete cascade in 0009): a
+-- Candidate's label is already an immutable, self-contained
+-- presentation snapshot (0031) that must survive regardless of the
+-- attributed participant's own lifecycle — a Vote already cast against
+-- this Candidate, and this Candidate's own place in Voting results,
+-- must remain intact even if the underlying participant row were ever
+-- removed. In this application no code path today deletes a
+-- participants row individually (the only removal is
+-- participants.session_id's own on delete cascade from sessions, and
+-- sessions themselves are never deleted by any code path) — this
+-- column's on delete behavior is chosen for correctness under that
+-- constraint's eventual relaxation, not because it is exercised today.
+--
+-- Indexed proactively: Postgres never automatically indexes a foreign
+-- key's referencing side (the exact lesson already recorded against
+-- segments/interaction_instances in Slice 008), and this column's own
+-- on delete set null action requires exactly this index to avoid a
+-- full table scan of voting_candidates on every participant delete or
+-- update touching participant_id.
+--
+-- No voting_candidates.session_id column, and no composite foreign key
+-- to participants, are added here — unlike votes' composite FK to
+-- voting_candidates (0032), participant_id here is never client-
+-- supplied; it is always derived server-side, inside
+-- start_session_atomically, from a participants query already scoped
+-- to p_session_id. There is no path by which this column could ever
+-- reference a participant belonging to a different session.
+
+alter table voting_candidates
+  add column participant_id uuid references participants(participant_id) on delete set null;
+
+create index if not exists voting_candidates_participant_id_idx
+  on voting_candidates (participant_id);

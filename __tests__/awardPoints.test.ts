@@ -26,12 +26,10 @@ async function setupRevealedSession(repo: InMemorySessionRepository) {
   const alex = await joinSession(repo, session.roomCode, "Alex");
   const jordan = await joinSession(repo, session.roomCode, "Jordan");
   await lockLobby(repo, session.sessionId, session.hostToken);
-  const interaction = await startSession(
-    repo,
-    session.sessionId,
-    session.hostToken,
-    "Prompt text"
-  );
+  const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+    engineType: "OPEN_RESPONSE",
+    promptText: "Prompt text",
+  });
   await submitResponse(repo, session.sessionId, alex.participantToken, "Alex answer");
   await submitResponse(repo, session.sessionId, jordan.participantToken, "Jordan answer");
   await closeSubmissions(repo, session.sessionId, session.hostToken);
@@ -137,7 +135,10 @@ describe("AWARD_POINTS", () => {
       );
 
       // Session moves on: a second interaction begins and is revealed.
-      await startSession(repo, session.sessionId, session.hostToken, "Second prompt");
+      await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Second prompt",
+      });
 
       const replay = await awardPoints(
         repo,
@@ -220,12 +221,10 @@ describe("AWARD_POINTS", () => {
     it("rejects a new award for an interaction that is not the session's current one", async () => {
       const repo = new InMemorySessionRepository();
       const { session, alex, interaction: firstInteraction } = await setupRevealedSession(repo);
-      const secondInteraction = await startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Second prompt"
-      );
+      const secondInteraction = await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Second prompt",
+      });
 
       await expect(
         awardPoints(
@@ -247,12 +246,10 @@ describe("AWARD_POINTS", () => {
       const session = await createSession(repo);
       const alex = await joinSession(repo, session.roomCode, "Alex");
       await lockLobby(repo, session.sessionId, session.hostToken);
-      const interaction = await startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Prompt text"
-      );
+      const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt text",
+      });
 
       await expect(
         awardPoints(
@@ -272,12 +269,10 @@ describe("AWARD_POINTS", () => {
       const session = await createSession(repo);
       const alex = await joinSession(repo, session.roomCode, "Alex");
       await lockLobby(repo, session.sessionId, session.hostToken);
-      const interaction = await startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Prompt text"
-      );
+      const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt text",
+      });
       await closeSubmissions(repo, session.sessionId, session.hostToken);
 
       await expect(
@@ -508,12 +503,10 @@ describe("AWARD_POINTS", () => {
         randomUUID()
       );
 
-      const secondInteraction = await startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "Second prompt"
-      );
+      const secondInteraction = await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Second prompt",
+      });
       await closeSubmissions(repo, session.sessionId, session.hostToken);
       await revealResults(repo, session.sessionId, session.hostToken);
       await awardPoints(

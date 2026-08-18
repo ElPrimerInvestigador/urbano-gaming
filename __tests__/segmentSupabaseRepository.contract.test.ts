@@ -157,7 +157,7 @@ describe("SupabaseSessionRepository contract — ordinal allocation against live
     const started = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Prompt 1"
+      { engineType: "OPEN_RESPONSE", promptText: "Prompt 1" }
     );
 
     expect(started.segmentNumber).toBe(1);
@@ -174,7 +174,7 @@ describe("SupabaseSessionRepository contract — ordinal allocation against live
     const openResponse = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Tell us your best joke!"
+      { engineType: "OPEN_RESPONSE", promptText: "Tell us your best joke!" }
     );
     expect(openResponse.segmentNumber).toBe(1);
 
@@ -194,9 +194,11 @@ describe("SupabaseSessionRepository contract — ordinal allocation against live
     const voting = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Vote for the funniest!",
-      null,
-      { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId },
+      {
+        engineType: "VOTING",
+        promptText: "Vote for the funniest!",
+        candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId },
+      },
       "CURRENT_SEGMENT"
     );
     expect(voting.segmentNumber).toBe(1);
@@ -216,7 +218,7 @@ describe("SupabaseSessionRepository contract — ordinal allocation against live
     const nextTurn = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Next ad-hoc question"
+      { engineType: "OPEN_RESPONSE", promptText: "Next ad-hoc question" }
     );
     expect(nextTurn.segmentNumber).toBe(2);
 
@@ -228,8 +230,14 @@ describe("SupabaseSessionRepository contract — ordinal allocation against live
     const { session } = await setupLockedSession();
 
     const attempts = await Promise.allSettled([
-      repository.startSession(session.sessionId, session.hostToken, "Prompt A"),
-      repository.startSession(session.sessionId, session.hostToken, "Prompt B"),
+      repository.startSession(session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt A",
+      }),
+      repository.startSession(session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Prompt B",
+      }),
     ]);
 
     const successes = attempts.filter((a) => a.status === "fulfilled");
@@ -251,7 +259,7 @@ describe("SupabaseSessionRepository contract — ordinal allocation against live
     await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Tell us your best joke!"
+      { engineType: "OPEN_RESPONSE", promptText: "Tell us your best joke!" }
     );
     await repository.closeSubmissions(session.sessionId, session.hostToken, {
       sessionId: session.sessionId,
@@ -268,17 +276,21 @@ describe("SupabaseSessionRepository contract — ordinal allocation against live
       repository.startSession(
         session.sessionId,
         session.hostToken,
-        "Vote for the funniest! (A)",
-        null,
-        { type: "HOST_AUTHORED", candidates: ["A1", "A2"] },
+        {
+          engineType: "VOTING",
+          promptText: "Vote for the funniest! (A)",
+          candidateSource: { type: "HOST_AUTHORED", candidates: ["A1", "A2"] },
+        },
         "CURRENT_SEGMENT"
       ),
       repository.startSession(
         session.sessionId,
         session.hostToken,
-        "Vote for the funniest! (B)",
-        null,
-        { type: "HOST_AUTHORED", candidates: ["B1", "B2"] },
+        {
+          engineType: "VOTING",
+          promptText: "Vote for the funniest! (B)",
+          candidateSource: { type: "HOST_AUTHORED", candidates: ["B1", "B2"] },
+        },
         "CURRENT_SEGMENT"
       ),
     ]);
@@ -308,7 +320,10 @@ describe("SupabaseSessionRepository contract — database-level integrity", () =
   it("rejects a duplicate (session_id, segment_ordinal) pair at the database level", async () => {
     const { session } = await setupLockedSession();
 
-    await repository.startSession(session.sessionId, session.hostToken, "Prompt 1");
+    await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt 1",
+    });
     const segments = await repository.getSegmentsForSession(session.sessionId);
     expect(segments).toHaveLength(1);
 
@@ -332,9 +347,12 @@ describe("SupabaseSessionRepository contract — database-level integrity", () =
     const startedA = await repository.startSession(
       sessionA.sessionId,
       sessionA.hostToken,
-      "Prompt in session A"
+      { engineType: "OPEN_RESPONSE", promptText: "Prompt in session A" }
     );
-    await repository.startSession(sessionB.sessionId, sessionB.hostToken, "Prompt in session B");
+    await repository.startSession(sessionB.sessionId, sessionB.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Prompt in session B",
+    });
 
     const segmentsB = await repository.getSegmentsForSession(sessionB.sessionId);
     expect(segmentsB).toHaveLength(1);

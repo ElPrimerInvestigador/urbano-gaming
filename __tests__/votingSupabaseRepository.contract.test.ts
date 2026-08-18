@@ -13,7 +13,7 @@ import {
   InvalidVotingCandidatesError,
   VotingSourceInteractionNotFoundError,
   VotingSourceInteractionNotEligibleError,
-  AmbiguousStartSessionTargetError,
+  SelfVoteNotAllowedError,
   type SessionRecord,
 } from "../lib/session/types";
 
@@ -162,13 +162,11 @@ describe("SupabaseSessionRepository contract — Candidate Resolution against li
   it("host-authored: resolves Voting-owned Candidate snapshots atomically at start", async () => {
     const { session } = await setupLockedSession(["Alex"]);
 
-    const started = await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "Vote for your favorite!",
-      null,
-      { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos", "Sushi"] }
-    );
+    const started = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite!",
+      candidateSource: { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos", "Sushi"] },
+    });
     expect(started.engineType).toBe("VOTING");
 
     const candidates = await repository.getVotingCandidatesForInteraction(
@@ -182,13 +180,11 @@ describe("SupabaseSessionRepository contract — Candidate Resolution against li
     const { session } = await setupLockedSession(["Alex"]);
 
     await expect(
-      repository.startSession(
-        session.sessionId,
-        session.hostToken,
-        "Vote for your favorite!",
-        null,
-        { type: "HOST_AUTHORED", candidates: ["Only one"] }
-      )
+      repository.startSession(session.sessionId, session.hostToken, {
+        engineType: "VOTING",
+        promptText: "Vote for your favorite!",
+        candidateSource: { type: "HOST_AUTHORED", candidates: ["Only one"] },
+      })
     ).rejects.toBeInstanceOf(InvalidVotingCandidatesError);
   });
 
@@ -196,11 +192,10 @@ describe("SupabaseSessionRepository contract — Candidate Resolution against li
     const { session, participants } = await setupLockedSession(["Alex", "Jordan"]);
     const [alex, jordan] = participants;
 
-    const openResponse = await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "Tell us your best joke!"
-    );
+    const openResponse = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Tell us your best joke!",
+    });
     await repository.submitResponse(session.sessionId, alex.participantId, alex.participantToken, "Joke A");
     await repository.submitResponse(session.sessionId, jordan.participantId, jordan.participantToken, "Joke B");
     await repository.closeSubmissions(session.sessionId, session.hostToken, {
@@ -214,13 +209,11 @@ describe("SupabaseSessionRepository contract — Candidate Resolution against li
       payload: {},
     });
 
-    const voting = await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "Vote for the funniest!",
-      null,
-      { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId }
-    );
+    const voting = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for the funniest!",
+      candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId },
+    });
     expect(voting.engineType).toBe("VOTING");
 
     const candidates = await repository.getVotingCandidatesForInteraction(voting.interactionInstanceId);
@@ -238,11 +231,10 @@ describe("SupabaseSessionRepository contract — Candidate Resolution against li
 
   it("rejects a SUBMISSION source that does not belong to this session, live", async () => {
     const { session: sourceSession, participants } = await setupLockedSession(["Alex"]);
-    const openResponse = await repository.startSession(
-      sourceSession.sessionId,
-      sourceSession.hostToken,
-      "Tell us your best joke!"
-    );
+    const openResponse = await repository.startSession(sourceSession.sessionId, sourceSession.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Tell us your best joke!",
+    });
     await repository.submitResponse(
       sourceSession.sessionId,
       participants[0].participantId,
@@ -262,13 +254,11 @@ describe("SupabaseSessionRepository contract — Candidate Resolution against li
 
     const { session: otherSession } = await setupLockedSession(["Casey"]);
     await expect(
-      repository.startSession(
-        otherSession.sessionId,
-        otherSession.hostToken,
-        "Vote for the funniest!",
-        null,
-        { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId }
-      )
+      repository.startSession(otherSession.sessionId, otherSession.hostToken, {
+        engineType: "VOTING",
+        promptText: "Vote for the funniest!",
+        candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId },
+      })
     ).rejects.toBeInstanceOf(VotingSourceInteractionNotFoundError);
   });
 
@@ -277,12 +267,10 @@ describe("SupabaseSessionRepository contract — Candidate Resolution against li
     const [prepared] = await repository.createPreparedQuestions(session.sessionId, [
       { promptText: "Cats or dogs?", options: ["Cats", "Dogs"], correctOptionIndex: 0, pointsForCorrect: 10 },
     ]);
-    const mc = await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.preparedQuestionId
-    );
+    const mc = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.preparedQuestionId,
+    });
     await repository.submitResponse(session.sessionId, participants[0].participantId, participants[0].participantToken, "0");
     await repository.closeSubmissions(session.sessionId, session.hostToken, {
       sessionId: session.sessionId,
@@ -296,44 +284,57 @@ describe("SupabaseSessionRepository contract — Candidate Resolution against li
     });
 
     await expect(
-      repository.startSession(
-        session.sessionId,
-        session.hostToken,
-        "Vote for the funniest!",
-        null,
-        { type: "SUBMISSION", sourceInteractionInstanceId: mc.interactionInstanceId }
-      )
+      repository.startSession(session.sessionId, session.hostToken, {
+        engineType: "VOTING",
+        promptText: "Vote for the funniest!",
+        candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: mc.interactionInstanceId },
+      })
     ).rejects.toBeInstanceOf(VotingSourceInteractionNotEligibleError);
   });
 
-  it("rejects an ambiguous preparedQuestionId + votingCandidateSource request, live", async () => {
+  // Slice 009: this test previously called repository.startSession(...)
+  // directly with both a preparedQuestionId and a votingCandidateSource
+  // to prove AMBIGUOUS_START_TARGET's SQL-level defense-in-depth (see
+  // start_session_atomically). That call shape no longer type-checks —
+  // StartTurnConfig is a real discriminated union, so the typed
+  // repository method can no longer construct an ambiguous request
+  // either (see AmbiguousStartSessionTargetError's Slice 009 doc
+  // comment in lib/session/types.ts). The SQL check itself is
+  // unchanged and still real (0039 carries it forward verbatim from
+  // 0037), so this test now calls the RPC directly via the raw
+  // Supabase client, bypassing SupabaseSessionRepository's typed
+  // wrapper entirely, to keep live proof that the database-level guard
+  // still fires independent of any TypeScript-layer prevention.
+  it("rejects an ambiguous preparedQuestionId + votingCandidateSource request at the SQL level, live (bypassing the typed repository method, which can no longer construct this request)", async () => {
     const { session } = await setupLockedSession(["Alex"]);
     const [prepared] = await repository.createPreparedQuestions(session.sessionId, [
       { promptText: "Cats or dogs?", options: ["Cats", "Dogs"], correctOptionIndex: 0, pointsForCorrect: 10 },
     ]);
 
-    await expect(
-      repository.startSession(
-        session.sessionId,
-        session.hostToken,
-        "Vote for your favorite!",
-        prepared.preparedQuestionId,
-        { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos"] }
-      )
-    ).rejects.toBeInstanceOf(AmbiguousStartSessionTargetError);
+    const { error } = await cleanupClient.rpc("start_session_atomically", {
+      p_session_id: session.sessionId,
+      p_host_token: session.hostToken,
+      p_prompt_text: "Vote for your favorite!",
+      p_prepared_question_id: prepared.preparedQuestionId,
+      p_voting_source_type: "HOST_AUTHORED",
+      p_voting_candidates: ["Pizza", "Tacos"],
+      p_voting_source_interaction_instance_id: null,
+      p_segment_target: "NEW_SEGMENT",
+    });
+
+    expect(error).not.toBeNull();
+    expect(error?.message).toContain("AMBIGUOUS_START_TARGET");
   });
 });
 
 describe("SupabaseSessionRepository contract — CAST_VOTE against live Postgres", () => {
   async function setupActiveVoting(displayNames: string[] = ["Alex", "Jordan", "Sam"]) {
     const { session, participants } = await setupLockedSession(displayNames);
-    const interaction = await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "Vote for your favorite!",
-      null,
-      { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos", "Sushi"] }
-    );
+    const interaction = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite!",
+      candidateSource: { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos", "Sushi"] },
+    });
     const candidates = await repository.getVotingCandidatesForInteraction(interaction.interactionInstanceId);
     return { session, participants, interaction, candidates };
   }
@@ -390,13 +391,11 @@ describe("SupabaseSessionRepository contract — CAST_VOTE against live Postgres
       eventType: "RESULTS_REVEALED",
       payload: {},
     });
-    await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "Second, independent round",
-      null,
-      { type: "HOST_AUTHORED", candidates: ["Cats", "Dogs"] }
-    );
+    await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Second, independent round",
+      candidateSource: { type: "HOST_AUTHORED", candidates: ["Cats", "Dogs"] },
+    });
 
     await expect(
       repository.castVote(
@@ -463,13 +462,11 @@ describe("SupabaseSessionRepository contract — CAST_VOTE against live Postgres
 describe("SupabaseSessionRepository contract — derived placement against live Postgres", () => {
   it("withholds per-candidate tally before reveal", async () => {
     const { session, participants } = await setupLockedSession(["Alex", "Jordan"]);
-    const interaction = await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "Vote for your favorite!",
-      null,
-      { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos"] }
-    );
+    const interaction = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite!",
+      candidateSource: { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos"] },
+    });
     const candidates = await repository.getVotingCandidatesForInteraction(interaction.interactionInstanceId);
     await repository.castVote(session.sessionId, participants[0].participantId, participants[0].participantToken, candidates[0].candidateId);
 
@@ -487,13 +484,11 @@ describe("SupabaseSessionRepository contract — derived placement against live 
 
   it("reveals tally and standard-competition rank, including a genuine tie and a zero-vote Candidate, hand-checked against raw rows", async () => {
     const { session, participants } = await setupLockedSession(["Alex", "Jordan", "Sam"]);
-    const interaction = await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "Vote for your favorite!",
-      null,
-      { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos", "Sushi"] }
-    );
+    const interaction = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite!",
+      candidateSource: { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos", "Sushi"] },
+    });
     const candidates = await repository.getVotingCandidatesForInteraction(interaction.interactionInstanceId);
 
     // Pizza and Tacos tie at 1 vote each; Sushi gets none.
@@ -529,13 +524,11 @@ describe("SupabaseSessionRepository contract — derived placement against live 
 
   it("participant-specific myVoteCandidateId does not leak between participants, live", async () => {
     const { session, participants } = await setupLockedSession(["Alex", "Jordan", "Sam"]);
-    const interaction = await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "Vote for your favorite!",
-      null,
-      { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos"] }
-    );
+    const interaction = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite!",
+      candidateSource: { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos"] },
+    });
     const candidates = await repository.getVotingCandidatesForInteraction(interaction.interactionInstanceId);
     await repository.castVote(session.sessionId, participants[0].participantId, participants[0].participantToken, candidates[0].candidateId);
     await repository.castVote(session.sessionId, participants[1].participantId, participants[1].participantToken, candidates[1].candidateId);
@@ -559,7 +552,10 @@ describe("SupabaseSessionRepository contract — Open Response / Multiple Choice
     const [alex, jordan] = participants;
 
     // Open Response, unaffected.
-    const openResponse = await repository.startSession(session.sessionId, session.hostToken, "Best joke?");
+    const openResponse = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Best joke?",
+    });
     await repository.submitResponse(session.sessionId, alex.participantId, alex.participantToken, "Joke A");
     await repository.closeSubmissions(session.sessionId, session.hostToken, {
       sessionId: session.sessionId,
@@ -575,13 +571,11 @@ describe("SupabaseSessionRepository contract — Open Response / Multiple Choice
     expect(orSubmissions[0].text).toBe("Joke A");
 
     // Voting in between.
-    const voting = await repository.startSession(
-      session.sessionId,
-      session.hostToken,
-      "Pick one",
-      null,
-      { type: "HOST_AUTHORED", candidates: ["A", "B"] }
-    );
+    const voting = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Pick one",
+      candidateSource: { type: "HOST_AUTHORED", candidates: ["A", "B"] },
+    });
     const candidates = await repository.getVotingCandidatesForInteraction(voting.interactionInstanceId);
     await repository.castVote(session.sessionId, alex.participantId, alex.participantToken, candidates[0].candidateId);
     await repository.closeSubmissions(session.sessionId, session.hostToken, {
@@ -600,7 +594,10 @@ describe("SupabaseSessionRepository contract — Open Response / Multiple Choice
     const [prepared] = await repository.createPreparedQuestions(session.sessionId, [
       { promptText: "Cats or dogs?", options: ["Cats", "Dogs"], correctOptionIndex: 1, pointsForCorrect: 20 },
     ]);
-    const mc = await repository.startSession(session.sessionId, session.hostToken, "", prepared.preparedQuestionId);
+    const mc = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.preparedQuestionId,
+    });
     expect(mc.engineType).toBe("MULTIPLE_CHOICE");
     await repository.submitResponse(session.sessionId, alex.participantId, alex.participantToken, "1");
     await repository.submitResponse(session.sessionId, jordan.participantId, jordan.participantToken, "0");
@@ -621,4 +618,173 @@ describe("SupabaseSessionRepository contract — Open Response / Multiple Choice
     expect(alexAward?.points).toBe(20);
     expect(jordanAward).toBeUndefined();
   }, 20000);
+});
+
+describe("SupabaseSessionRepository contract — PARTICIPANTS Candidate source against live Postgres (Slice 009)", () => {
+  it("snapshots one Candidate per current participant, attributed by real participant_id, live", async () => {
+    const { session, participants } = await setupLockedSession(["Alex", "Jordan", "Sam"]);
+
+    const started = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite person!",
+      candidateSource: { type: "PARTICIPANTS" },
+    });
+    expect(started.engineType).toBe("VOTING");
+
+    const candidates = await repository.getVotingCandidatesForInteraction(started.interactionInstanceId);
+    expect(candidates).toHaveLength(3);
+    expect(candidates.map((c) => c.participantId).sort()).toEqual(
+      participants.map((p) => p.participantId).sort()
+    );
+
+    // Hand-check against raw rows, independent of the repository's own
+    // read path.
+    const { data: rawCandidates } = await cleanupClient
+      .from("voting_candidates")
+      .select("participant_id")
+      .eq("interaction_instance_id", started.interactionInstanceId);
+    expect(rawCandidates?.map((r) => r.participant_id).sort()).toEqual(
+      participants.map((p) => p.participantId).sort()
+    );
+  });
+
+  it("rejects fewer than two participants, live", async () => {
+    const { session } = await setupLockedSession(["Alex"]);
+
+    await expect(
+      repository.startSession(session.sessionId, session.hostToken, {
+        engineType: "VOTING",
+        promptText: "Vote for your favorite person!",
+        candidateSource: { type: "PARTICIPANTS" },
+      })
+    ).rejects.toBeInstanceOf(InvalidVotingCandidatesError);
+  });
+
+  it("HOST_AUTHORED and SUBMISSION Candidates remain distinguishable by participant_id (null vs a real id) in the same schema, live", async () => {
+    const { session, participants } = await setupLockedSession(["Alex", "Jordan"]);
+    const [alex, jordan] = participants;
+
+    const openResponse = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Tell us your best joke!",
+    });
+    await repository.submitResponse(session.sessionId, alex.participantId, alex.participantToken, "Joke A");
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+
+    const submissionVoting = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for the funniest!",
+      candidateSource: { type: "SUBMISSION", sourceInteractionInstanceId: openResponse.interactionInstanceId },
+    });
+    const submissionCandidates = await repository.getVotingCandidatesForInteraction(
+      submissionVoting.interactionInstanceId
+    );
+    expect(submissionCandidates.every((c) => c.participantId === alex.participantId)).toBe(true);
+
+    await repository.closeSubmissions(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "SUBMISSIONS_CLOSED",
+      payload: {},
+    });
+    await repository.revealResults(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "RESULTS_REVEALED",
+      payload: {},
+    });
+
+    const hostAuthoredVoting = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite!",
+      candidateSource: { type: "HOST_AUTHORED", candidates: ["Pizza", "Tacos"] },
+    });
+    const hostAuthoredCandidates = await repository.getVotingCandidatesForInteraction(
+      hostAuthoredVoting.interactionInstanceId
+    );
+    expect(hostAuthoredCandidates.every((c) => c.participantId === null)).toBe(true);
+
+    void jordan;
+  });
+
+  it("voting_candidates.participant_id is ON DELETE SET NULL, not CASCADE — the Candidate row survives its attributed participant's removal, live", async () => {
+    const { session, participants } = await setupLockedSession(["Alex", "Jordan"]);
+    const [alex] = participants;
+
+    const started = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite person!",
+      candidateSource: { type: "PARTICIPANTS" },
+    });
+    const candidates = await repository.getVotingCandidatesForInteraction(started.interactionInstanceId);
+    const alexCandidate = candidates.find((c) => c.participantId === alex.participantId)!;
+    expect(alexCandidate).toBeDefined();
+
+    // No application code path deletes a participants row individually
+    // (see 0038's migration comment) — this directly exercises the
+    // constraint itself, via the raw client, independent of any
+    // repository method.
+    const { error: deleteError } = await cleanupClient
+      .from("participants")
+      .delete()
+      .eq("participant_id", alex.participantId);
+    expect(deleteError).toBeNull();
+
+    const { data: survivingCandidate, error: selectError } = await cleanupClient
+      .from("voting_candidates")
+      .select("candidate_id, label, participant_id")
+      .eq("candidate_id", alexCandidate.candidateId)
+      .single();
+    expect(selectError).toBeNull();
+    expect(survivingCandidate?.candidate_id).toBe(alexCandidate.candidateId);
+    expect(survivingCandidate?.label).toBe(alexCandidate.label);
+    expect(survivingCandidate?.participant_id).toBeNull();
+  });
+});
+
+describe("SupabaseSessionRepository contract — self-vote prohibition against live Postgres (Slice 009)", () => {
+  it("rejects a participant voting for their own PARTICIPANTS-sourced Candidate, live", async () => {
+    const { session, participants } = await setupLockedSession(["Alex", "Jordan"]);
+    const [alex] = participants;
+
+    const started = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite person!",
+      candidateSource: { type: "PARTICIPANTS" },
+    });
+    const candidates = await repository.getVotingCandidatesForInteraction(started.interactionInstanceId);
+    const ownCandidate = candidates.find((c) => c.participantId === alex.participantId)!;
+
+    await expect(
+      repository.castVote(session.sessionId, alex.participantId, alex.participantToken, ownCandidate.candidateId)
+    ).rejects.toBeInstanceOf(SelfVoteNotAllowedError);
+  });
+
+  it("allows voting for a different participant's Candidate, live", async () => {
+    const { session, participants } = await setupLockedSession(["Alex", "Jordan"]);
+    const [alex, jordan] = participants;
+
+    const started = await repository.startSession(session.sessionId, session.hostToken, {
+      engineType: "VOTING",
+      promptText: "Vote for your favorite person!",
+      candidateSource: { type: "PARTICIPANTS" },
+    });
+    const candidates = await repository.getVotingCandidatesForInteraction(started.interactionInstanceId);
+    const othersCandidate = candidates.find((c) => c.participantId === jordan.participantId)!;
+
+    const result = await repository.castVote(
+      session.sessionId,
+      alex.participantId,
+      alex.participantToken,
+      othersCandidate.candidateId
+    );
+    expect(result.candidateId).toBe(othersCandidate.candidateId);
+  });
 });

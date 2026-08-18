@@ -3,9 +3,9 @@ import type {
   SessionRecord,
   InteractionState,
   EngineType,
-  VotingCandidateSource,
   VotingResultSummary,
   SegmentTarget,
+  StartTurnConfig,
 } from "../types";
 import {
   RoomCodeCollisionError,
@@ -32,7 +32,7 @@ import {
   VotingSourceInteractionNotFoundError,
   VotingSourceInteractionNotEligibleError,
   InvalidCandidateSelectionError,
-  AmbiguousStartSessionTargetError,
+  SelfVoteNotAllowedError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -432,9 +432,7 @@ export class InMemorySessionRepository implements SessionRepository {
   async startSession(
     sessionId: string,
     hostToken: string,
-    promptText: string,
-    preparedQuestionId?: string | null,
-    votingCandidateSource?: VotingCandidateSource | null,
+    config: StartTurnConfig,
     segmentTarget: SegmentTarget = "NEW_SEGMENT"
   ): Promise<{
     interactionInstanceId: string;
@@ -471,11 +469,13 @@ export class InMemorySessionRepository implements SessionRepository {
       throw new PreviousInteractionNotRevealedError(previousInteraction.state);
     }
 
-    // Slice 007: authoritative re-check mirroring the atomic SQL
-    // function's identical guard — see 0033's comment.
-    if (preparedQuestionId && votingCandidateSource) {
-      throw new AmbiguousStartSessionTargetError();
-    }
+    // Slice 009: AmbiguousStartSessionTargetError is no longer checked
+    // here — config is a real discriminated union at this point, so
+    // "both a preparedQuestionId and a candidateSource" is structurally
+    // unreachable through this call. The error remains reachable only
+    // where untyped input still exists: the API route's legacy flat-
+    // shape compatibility shim, and the SQL RPC's own defense-in-depth
+    // re-check (unchanged).
 
     // Slice 008 (Segment / Turn grouping): resolve which Segment the new
     // Interaction Instance joins. NEW_SEGMENT allocates the next
@@ -507,12 +507,17 @@ export class InMemorySessionRepository implements SessionRepository {
     let promptTextToStore: string;
     let engineType: EngineType;
     let preparedQuestionToConsume: PreparedQuestionRecord | undefined;
-    let votingCandidateLabels: string[] | undefined;
+    // Slice 009: each entry pairs a Candidate's label with its
+    // structured participantId attribution (null for HOST_AUTHORED) —
+    // see VotingCandidateRecord's own comment for why this exists.
+    let votingCandidatesToCreate:
+      | Array<{ label: string; participantId: string | null }>
+      | undefined;
 
-    if (preparedQuestionId) {
+    if (config.engineType === "MULTIPLE_CHOICE") {
       // Slice 003: explicit prepared-question target — the caller
       // names the exact question, this method never infers one.
-      const prepared = this.preparedQuestions.get(preparedQuestionId);
+      const prepared = this.preparedQuestions.get(config.preparedQuestionId);
 
       if (!prepared || prepared.sessionId !== sessionId) {
         throw new PreparedQuestionNotFoundError();
@@ -525,15 +530,16 @@ export class InMemorySessionRepository implements SessionRepository {
       promptTextToStore = prepared.promptText;
       engineType = "MULTIPLE_CHOICE";
       preparedQuestionToConsume = prepared;
-    } else if (votingCandidateSource) {
+    } else if (config.engineType === "VOTING") {
       // Slice 007 (Voting Engine): unlike the prepared-question path,
-      // Voting always needs host-framed prompt text — neither
-      // Candidate source provides one.
-      promptTextToStore = this.validateAndTrimPromptText(promptText);
+      // Voting always needs host-framed prompt text — no Candidate
+      // source provides one.
+      promptTextToStore = this.validateAndTrimPromptText(config.promptText);
       engineType = "VOTING";
 
-      if (votingCandidateSource.type === "HOST_AUTHORED") {
-        const trimmed = votingCandidateSource.candidates.map((c) => c.trim());
+      const source = config.candidateSource;
+      if (source.type === "HOST_AUTHORED") {
+        const trimmed = source.candidates.map((c) => c.trim());
         const distinct = new Set(trimmed);
         if (
           trimmed.length < 2 ||
@@ -542,27 +548,55 @@ export class InMemorySessionRepository implements SessionRepository {
         ) {
           throw new InvalidVotingCandidatesError();
         }
-        votingCandidateLabels = trimmed;
-      } else {
-        const source = this.interactionInstances.get(
-          votingCandidateSource.sourceInteractionInstanceId
+        votingCandidatesToCreate = trimmed.map((label) => ({
+          label,
+          participantId: null,
+        }));
+      } else if (source.type === "SUBMISSION") {
+        const sourceInteraction = this.interactionInstances.get(
+          source.sourceInteractionInstanceId
         );
-        if (!source || source.sessionId !== sessionId) {
+        if (!sourceInteraction || sourceInteraction.sessionId !== sessionId) {
           throw new VotingSourceInteractionNotFoundError();
         }
-        if (source.engineType !== "OPEN_RESPONSE" || source.state !== "RESULT_REVEAL") {
+        if (
+          sourceInteraction.engineType !== "OPEN_RESPONSE" ||
+          sourceInteraction.state !== "RESULT_REVEAL"
+        ) {
           throw new VotingSourceInteractionNotEligibleError();
         }
         const sourceSubmissions = [...this.submissions.values()]
-          .filter((s) => s.interactionInstanceId === source.interactionInstanceId)
+          .filter(
+            (s) => s.interactionInstanceId === sourceInteraction.interactionInstanceId
+          )
           .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
         if (sourceSubmissions.length === 0) {
           throw new VotingSourceInteractionNotEligibleError();
         }
-        votingCandidateLabels = sourceSubmissions.map((s) => s.text);
+        // Slice 009: participantId now carried alongside label — the
+        // submission's own author, already read in this same query, at
+        // zero marginal cost.
+        votingCandidatesToCreate = sourceSubmissions.map((s) => ({
+          label: s.text,
+          participantId: s.participantId,
+        }));
+      } else {
+        // Slice 009: PARTICIPANTS — snapshot the session's current
+        // roster. Same ≥2 floor as HOST_AUTHORED; a Voting round with
+        // fewer than two Candidates is unusable regardless of source.
+        const roster = [...this.participants.values()]
+          .filter((p) => p.sessionId === sessionId)
+          .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
+        if (roster.length < 2) {
+          throw new InvalidVotingCandidatesError();
+        }
+        votingCandidatesToCreate = roster.map((p) => ({
+          label: p.displayName,
+          participantId: p.participantId,
+        }));
       }
     } else {
-      promptTextToStore = this.validateAndTrimPromptText(promptText);
+      promptTextToStore = this.validateAndTrimPromptText(config.promptText);
       engineType = "OPEN_RESPONSE";
     }
 
@@ -596,14 +630,15 @@ export class InMemorySessionRepository implements SessionRepository {
       });
     }
 
-    if (votingCandidateLabels) {
-      votingCandidateLabels.forEach((label, ordinal) => {
+    if (votingCandidatesToCreate) {
+      votingCandidatesToCreate.forEach(({ label, participantId }, ordinal) => {
         const candidateId = randomUUID();
         this.votingCandidates.set(candidateId, {
           candidateId,
           interactionInstanceId,
           ordinal,
           label,
+          participantId,
           createdAt: now,
         });
       });
@@ -1136,6 +1171,14 @@ export class InMemorySessionRepository implements SessionRepository {
     const candidate = this.votingCandidates.get(candidateId);
     if (!candidate || candidate.interactionInstanceId !== interactionInstanceId) {
       throw new InvalidCandidateSelectionError();
+    }
+
+    // Slice 009: self-vote prohibition. Only meaningful when the
+    // Candidate has structured participant attribution — HOST_AUTHORED
+    // Candidates (participantId always null) are never subject to
+    // this.
+    if (candidate.participantId !== null && candidate.participantId === participantId) {
+      throw new SelfVoteNotAllowedError();
     }
 
     const now = new Date().toISOString();

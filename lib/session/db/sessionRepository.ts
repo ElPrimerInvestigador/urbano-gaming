@@ -3,10 +3,10 @@ import type {
   SessionState,
   InteractionState,
   EngineType,
-  VotingCandidateSource,
   VotingCandidateSummary,
   VotingResultSummary,
   SegmentTarget,
+  StartTurnConfig,
 } from "../types";
 
 export interface SessionEventRecord {
@@ -127,20 +127,37 @@ export interface MultipleChoiceDetailsRecord {
 /**
  * Slice 007 (Voting Engine). A Voting Candidate — the output of
  * Candidate Resolution, Voting-owned and immutable once created,
- * regardless of which source (HOST_AUTHORED or SUBMISSION) produced
- * it. Provenance (which source produced a given Candidate) is
- * deliberately not a column here — it is recorded only in the
- * INTERACTION_STARTED event's payload, since nothing in Voting's own
- * tallying or reveal logic needs to read it back. If reveal-time
- * attribution ("submitted by Alex") becomes a real product need later,
- * promoting it to a column is a small additive migration, not a
- * redesign.
+ * regardless of which source (HOST_AUTHORED, SUBMISSION, or Slice 009's
+ * PARTICIPANTS) produced it.
+ *
+ * Slice 009 (Engine Selection + PARTICIPANTS Voting): `participantId`
+ * is the reveal-time attribution this table's original comment
+ * anticipated ("if reveal-time attribution becomes a real product
+ * need later, promoting it to a column is a small additive migration,
+ * not a redesign") — populated for PARTICIPANTS (the participant *is*
+ * the Candidate) and for SUBMISSION (the submission's own author,
+ * already known at zero marginal query cost), left `null` for
+ * HOST_AUTHORED (no participant identity exists behind an arbitrary
+ * host-typed string). Two consumers, both internal: self-vote
+ * enforcement now (see SelfVoteNotAllowedError), and Slice 010's future
+ * Candidate→participant scoring resolution. Deliberately never
+ * projected through GET_SESSION or any client-facing type — see
+ * VotingCandidateSummary, unchanged. `ON DELETE SET NULL`, not
+ * `CASCADE`: the Candidate's `label` is already an immutable snapshot
+ * independent of any live row (see Slice 007's own precedent); if a
+ * participant were ever removed by some future lifecycle feature (none
+ * exists today), the Candidate and its label survive, only the
+ * structured attribution degrades to unknown — deliberately different
+ * from `submissions.participant_id`'s own `ON DELETE CASCADE` (0009),
+ * which was never pressure-tested against this same "must survive"
+ * requirement and is not a precedent this column follows.
  */
 export interface VotingCandidateRecord {
   candidateId: string;
   interactionInstanceId: string;
   ordinal: number;
   label: string;
+  participantId: string | null;
   createdAt: string;
 }
 
@@ -537,32 +554,45 @@ export interface SessionRepository {
    *   already been consumed;
    * - return engineType alongside the existing fields.
    *
-   * Slice 007 (Voting Engine): gains an optional votingCandidateSource,
-   * mutually exclusive with preparedQuestionId (the domain layer
-   * enforces this before calling; this method re-enforces it
-   * authoritatively, same discipline as every other mutual-exclusivity
-   * rule in this method). When supplied, promptText IS still required
-   * (unlike the prepared-question path) — Voting always needs host-framed
-   * text ("Vote for your favorite!"), since neither candidate source
-   * provides one. Candidate Resolution happens here, inside this same
-   * atomic operation, for the same reason prepared-question consumption
-   * does: this is where the repository already resolves external
-   * content into a new Interaction Instance, and no separate
-   * orchestration layer exists in this codebase.
+   * Slice 007 (Voting Engine) / Slice 009 (Engine Selection +
+   * PARTICIPANTS Voting): the VOTING branch of StartTurnConfig carries
+   * a candidateSource, structurally exclusive from MULTIPLE_CHOICE's
+   * preparedQuestionId by construction (different union members, not
+   * different optional fields on one object) — the domain layer can no
+   * longer construct the ambiguous case; this method's own
+   * AmbiguousStartSessionTargetError check is retained as
+   * defense-in-depth. promptText IS still required for VOTING (unlike
+   * the prepared-question path) — Voting always needs host-framed text
+   * ("Vote for your favorite!"), since no candidate source provides
+   * one. Candidate Resolution happens here, inside this same atomic
+   * operation, for the same reason prepared-question consumption does.
    *
    * - type "HOST_AUTHORED": validate candidates has at least two
    *   distinct, non-empty (post-trim) entries — mirrors
    *   validateAndTrimOptions's floor — then insert each as a
    *   Voting-owned Candidate snapshot, ordinal-ordered as supplied.
+   *   participantId is null for every row (no participant identity
+   *   exists behind an arbitrary host-typed string).
    * - type "SUBMISSION": re-verify sourceInteractionInstanceId belongs
    *   to this session, is engineType OPEN_RESPONSE, is state
    *   RESULT_REVEAL, and has at least one submission; then copy each
-   *   submission's text into a new, Voting-owned Candidate snapshot.
-   *   The source interaction instance itself is never modified.
+   *   submission's text into a new, Voting-owned Candidate snapshot,
+   *   now also populating participantId from that submission's own
+   *   participantId (Slice 009 — zero marginal cost, since the query
+   *   already reads that row). The source interaction instance itself
+   *   is never modified.
+   * - type "PARTICIPANTS" (Slice 009): resolve the session's current
+   *   participant roster; require at least two participants (same
+   *   floor as HOST_AUTHORED — a Voting round needs ≥2 usable
+   *   Candidates); insert one Candidate per participant, label = that
+   *   participant's display_name at this moment, participantId =
+   *   that participant's own id. No extra input beyond the type
+   *   discriminator — the roster is already resolvable from sessionId.
    *
    * Implementations must additionally:
-   * - throw InvalidVotingCandidatesError only for the HOST_AUTHORED
-   *   candidate-count/emptiness failure;
+   * - throw InvalidVotingCandidatesError for the HOST_AUTHORED
+   *   candidate-count/emptiness failure, or when PARTICIPANTS resolves
+   *   fewer than two participants;
    * - throw VotingSourceInteractionNotFoundError only when
    *   sourceInteractionInstanceId does not identify an interaction
    *   instance belonging to this session;
@@ -595,9 +625,7 @@ export interface SessionRepository {
   startSession(
     sessionId: string,
     hostToken: string,
-    promptText: string,
-    preparedQuestionId?: string | null,
-    votingCandidateSource?: VotingCandidateSource | null,
+    config: StartTurnConfig,
     segmentTarget?: SegmentTarget
   ): Promise<{
     interactionInstanceId: string;
@@ -890,6 +918,17 @@ export interface SessionRepository {
    *   instance;
    * - return the resulting voteId, interactionInstanceId, candidateId,
    *   and updatedAt.
+   *
+   * Slice 009 (Engine Selection + PARTICIPANTS Voting): additionally
+   * re-verify, inside this same atomic operation, that the selected
+   * Candidate's participantId (see VotingCandidateRecord) does not
+   * match the voting participant's own id — this is the authoritative
+   * self-vote check; the domain layer's own fast-path re-check is not
+   * the sole guarantee, matching every other precondition in this
+   * method. Implementations must additionally throw
+   * SelfVoteNotAllowedError only in that case, and only when the
+   * Candidate has a non-null participantId — HOST_AUTHORED Candidates
+   * (participantId always null) are never subject to this check.
    */
   castVote(
     sessionId: string,

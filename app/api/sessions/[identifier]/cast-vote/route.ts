@@ -6,6 +6,7 @@ import {
   SessionAccessDeniedError,
   PromptNotActiveError,
   InvalidCandidateSelectionError,
+  SelfVoteNotAllowedError,
 } from "@/lib/session/types";
 
 /**
@@ -81,6 +82,9 @@ export async function POST(
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
     if (err instanceof InvalidCandidateSelectionError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    if (err instanceof SelfVoteNotAllowedError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
 

@@ -258,7 +258,7 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
     const firstStart = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Initial contract-test prompt"
+      { engineType: "OPEN_RESPONSE", promptText: "Initial contract-test prompt" }
     );
     expect(firstStart.state).toBe("PROMPT_ACTIVE");
     expect(firstStart.interactionInstanceId).toBeTruthy();
@@ -334,7 +334,7 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
     const secondStart = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Second contract-test prompt"
+      { engineType: "OPEN_RESPONSE", promptText: "Second contract-test prompt" }
     );
     expect(secondStart.state).toBe("PROMPT_ACTIVE");
     expect(secondStart.interactionInstanceId).not.toBe(firstStart.interactionInstanceId);
@@ -424,7 +424,7 @@ describe("SupabaseSessionRepository contract — AWARD_POINTS against live Postg
     const firstInteraction = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Award-points contract prompt"
+      { engineType: "OPEN_RESPONSE", promptText: "Award-points contract prompt" }
     );
     await repository.closeSubmissions(session.sessionId, session.hostToken, {
       sessionId: session.sessionId,
@@ -454,7 +454,7 @@ describe("SupabaseSessionRepository contract — AWARD_POINTS against live Postg
     const secondInteraction = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Second award-points contract prompt"
+      { engineType: "OPEN_RESPONSE", promptText: "Second award-points contract prompt" }
     );
 
     // Replay: identical (sessionId, idempotencyKey), every other
@@ -519,7 +519,7 @@ describe("SupabaseSessionRepository contract — AWARD_POINTS against live Postg
     const interaction = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Concurrent award-points contract prompt"
+      { engineType: "OPEN_RESPONSE", promptText: "Concurrent award-points contract prompt" }
     );
     await repository.closeSubmissions(session.sessionId, session.hostToken, {
       sessionId: session.sessionId,
@@ -575,7 +575,7 @@ describe("SupabaseSessionRepository contract — AWARD_POINTS against live Postg
     const interaction = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "Multiple-awards contract prompt"
+      { engineType: "OPEN_RESPONSE", promptText: "Multiple-awards contract prompt" }
     );
     await repository.closeSubmissions(session.sessionId, session.hostToken, {
       sessionId: session.sessionId,
@@ -650,8 +650,7 @@ describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+e
     const interaction = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "",
-      prepared.preparedQuestionId
+      { engineType: "MULTIPLE_CHOICE", preparedQuestionId: prepared.preparedQuestionId }
     );
     expect(interaction.engineType).toBe("MULTIPLE_CHOICE");
 
@@ -714,8 +713,7 @@ describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+e
     const interaction = await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "",
-      prepared.preparedQuestionId
+      { engineType: "MULTIPLE_CHOICE", preparedQuestionId: prepared.preparedQuestionId }
     );
 
     await repository.submitResponse(
@@ -784,8 +782,7 @@ describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+e
     await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "",
-      prepared.preparedQuestionId
+      { engineType: "MULTIPLE_CHOICE", preparedQuestionId: prepared.preparedQuestionId }
     );
 
     await repository.submitResponse(
@@ -828,7 +825,7 @@ describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+e
     await repository.startSession(
       session.sessionId,
       session.hostToken,
-      "An ordinary Open Response prompt"
+      { engineType: "OPEN_RESPONSE", promptText: "An ordinary Open Response prompt" }
     );
 
     await repository.submitResponse(

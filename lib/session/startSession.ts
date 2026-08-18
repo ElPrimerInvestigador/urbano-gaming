@@ -1,9 +1,5 @@
 import type { SessionRepository } from "./db/sessionRepository";
-import type {
-  StartSessionResult,
-  VotingCandidateSource,
-  SegmentTarget,
-} from "./types";
+import type { StartSessionResult, StartTurnConfig, SegmentTarget } from "./types";
 import {
   SessionNotFoundError,
   HostTokenMismatchError,
@@ -13,7 +9,6 @@ import {
   EmptyPromptTextError,
   PromptTextTooLongError,
   InvalidVotingCandidatesError,
-  AmbiguousStartSessionTargetError,
 } from "./types";
 
 const MAX_PROMPT_TEXT_LENGTH = 1000;
@@ -54,9 +49,7 @@ function validateAndTrimPromptText(text: string): string {
  * RESULT_REVEAL, and atomically creates a new interaction instance —
  * with a freshly created prompt — in PROMPT_ACTIVE, persisting an
  * INTERACTION_STARTED event. The session's own state and
- * state_version are never touched by this call. Nothing else — no
- * SESSION_INTRO (excluded from the MVP until it has defined product
- * meaning), no generalized engine selection, no modifiers.
+ * state_version are never touched by this call.
  *
  * Host-token, session-state, and previous-interaction authority: the
  * getSessionById / getInteractionInstancesForSession lookups below
@@ -67,67 +60,64 @@ function validateAndTrimPromptText(text: string): string {
  * interaction instance's state — and creating the prompt and
  * interaction instance — inside the same atomic operation.
  *
- * Slice 003 (Second Interaction Engine): an optional preparedQuestionId
- * starts a specific, previously-authored Multiple Choice question
- * instead of an Open Response interaction. When supplied, promptText
- * is not validated or used at all — the prompt text for a Multiple
- * Choice interaction comes from the prepared question itself, resolved
- * authoritatively by the repository. Deliberately explicit rather than
- * an implicit "use the next unconsumed prepared question" fallback:
- * the caller always names the exact question being started, so this
- * command's meaning never depends on hidden repository state. A host
- * UI may still present one "Start next question" button that
- * auto-selects the lowest unconsumed ordinal from GET_SESSION's
- * preparedQuestions field — but the request it sends here always
- * carries that specific id.
+ * Slice 009 (Engine Selection + PARTICIPANTS Voting): `config`
+ * (StartTurnConfig) replaces the previous shape of independent optional
+ * fields (promptText / preparedQuestionId / votingCandidateSource).
+ * Because it is a real discriminated union, "both a preparedQuestionId
+ * and a candidateSource" is now structurally unreachable through this
+ * function — AmbiguousStartSessionTargetError is no longer checked
+ * here (it remains reachable only where untyped input still exists:
+ * the API route's legacy flat-shape compatibility shim, and the SQL
+ * RPC's own defense-in-depth re-check).
  *
- * Slice 007 (Voting Engine): an optional votingCandidateSource starts a
- * VOTING interaction instead, mutually exclusive with
- * preparedQuestionId — supplying both explicitly throws
- * AmbiguousStartSessionTargetError rather than silently letting one
- * win, since silent precedence would mask a likely client bug. The
- * repository's atomic function re-enforces this same rejection
- * authoritatively. Unlike the prepared-question path,
- * promptText IS still required here — Voting always needs host-framed
- * text, since neither Candidate source supplies one. A HOST_AUTHORED
- * source's candidate list gets the same fast-path validation
- * prepareQuestions.ts's validateAndTrimOptions already applies to
- * Multiple Choice options (at least two distinct, non-empty entries);
- * a SUBMISSION source's eligibility (belongs to this session, is
- * OPEN_RESPONSE, is RESULT_REVEAL, has submissions) is deep enough that
- * only the atomic function can authoritatively check it.
+ * - OPEN_RESPONSE: promptText validated/trimmed exactly as before.
+ * - MULTIPLE_CHOICE: preparedQuestionId passed through untouched — the
+ *   prompt text for a Multiple Choice interaction comes from the
+ *   prepared question itself, resolved authoritatively by the
+ *   repository. Deliberately explicit rather than an implicit "use the
+ *   next unconsumed prepared question" fallback.
+ * - VOTING: promptText validated/trimmed (Voting always needs
+ *   host-framed text, since no Candidate source supplies one).
+ *   candidateSource "HOST_AUTHORED" gets the same fast-path validation
+ *   prepareQuestions.ts's validateAndTrimOptions already applies to
+ *   Multiple Choice options (at least two distinct, non-empty entries).
+ *   "SUBMISSION" eligibility is deep enough that only the repository's
+ *   atomic operation can authoritatively check it. "PARTICIPANTS" gets
+ *   its own fast-path floor check below — mirrors HOST_AUTHORED's own
+ *   ≥2-candidate floor, since a Voting round is equally unusable with
+ *   fewer than two Candidates regardless of source.
  *
- * Slice 008 (Segment / Turn grouping): an optional segmentTarget,
- * defaulting to "NEW_SEGMENT" when omitted — every pre-Slice-008 caller
- * keeps working unchanged. "CURRENT_SEGMENT" is the mechanism behind
- * the Best Joke proving case: attaching a new Interaction Instance (e.g.
- * Voting) to the same Turn an earlier one (e.g. Open Response) already
- * ran in, rather than starting a new Turn. The fast-path
- * NoCurrentSegmentToContinueError check below mirrors this function's
- * existing previousInteraction fast-path exactly — an immediate,
- * cheap rejection ahead of the repository's own authoritative re-check.
+ * `segmentTarget`, defaulting to "NEW_SEGMENT" when omitted (every
+ * pre-Slice-008 caller keeps working unchanged), remains a separate,
+ * orthogonal parameter — not part of StartTurnConfig. "CURRENT_SEGMENT"
+ * is the mechanism behind the Best Joke proving case: attaching a new
+ * Interaction Instance (e.g. Voting) to the same Turn an earlier one
+ * (e.g. Open Response) already ran in, rather than starting a new Turn.
+ * The fast-path NoCurrentSegmentToContinueError check below mirrors
+ * this function's existing previousInteraction fast-path exactly.
  */
 export async function startSession(
   repo: SessionRepository,
   sessionId: string,
   hostToken: string,
-  promptText: string,
-  preparedQuestionId?: string | null,
-  votingCandidateSource?: VotingCandidateSource | null,
+  config: StartTurnConfig,
   segmentTarget: SegmentTarget = "NEW_SEGMENT"
 ): Promise<StartSessionResult> {
-  if (preparedQuestionId && votingCandidateSource) {
-    throw new AmbiguousStartSessionTargetError();
-  }
+  let normalizedConfig: StartTurnConfig;
 
-  const trimmedPromptText = preparedQuestionId
-    ? ""
-    : validateAndTrimPromptText(promptText);
+  if (config.engineType === "OPEN_RESPONSE") {
+    normalizedConfig = {
+      engineType: "OPEN_RESPONSE",
+      promptText: validateAndTrimPromptText(config.promptText),
+    };
+  } else if (config.engineType === "MULTIPLE_CHOICE") {
+    normalizedConfig = config;
+  } else {
+    const trimmedPromptText = validateAndTrimPromptText(config.promptText);
+    const source = config.candidateSource;
 
-  let normalizedVotingCandidateSource: VotingCandidateSource | undefined;
-  if (votingCandidateSource) {
-    if (votingCandidateSource.type === "HOST_AUTHORED") {
-      const trimmed = votingCandidateSource.candidates.map((c) => c.trim());
+    if (source.type === "HOST_AUTHORED") {
+      const trimmed = source.candidates.map((c) => c.trim());
       const distinct = new Set(trimmed);
       if (
         trimmed.length < 2 ||
@@ -136,12 +126,17 @@ export async function startSession(
       ) {
         throw new InvalidVotingCandidatesError();
       }
-      normalizedVotingCandidateSource = {
-        type: "HOST_AUTHORED",
-        candidates: trimmed,
+      normalizedConfig = {
+        engineType: "VOTING",
+        promptText: trimmedPromptText,
+        candidateSource: { type: "HOST_AUTHORED", candidates: trimmed },
       };
     } else {
-      normalizedVotingCandidateSource = votingCandidateSource;
+      normalizedConfig = {
+        engineType: "VOTING",
+        promptText: trimmedPromptText,
+        candidateSource: source,
+      };
     }
   }
 
@@ -174,12 +169,23 @@ export async function startSession(
     throw new NoCurrentSegmentToContinueError();
   }
 
+  // Slice 009: PARTICIPANTS fast-path floor check — the same
+  // immediate, cheap rejection ahead of the repository's own
+  // authoritative re-check that every other precondition here follows.
+  if (
+    normalizedConfig.engineType === "VOTING" &&
+    normalizedConfig.candidateSource.type === "PARTICIPANTS"
+  ) {
+    const participants = await repo.getParticipantsForSession(sessionId);
+    if (participants.length < 2) {
+      throw new InvalidVotingCandidatesError();
+    }
+  }
+
   const result = await repo.startSession(
     session.sessionId,
     hostToken,
-    trimmedPromptText,
-    preparedQuestionId,
-    normalizedVotingCandidateSource,
+    normalizedConfig,
     segmentTarget
   );
 

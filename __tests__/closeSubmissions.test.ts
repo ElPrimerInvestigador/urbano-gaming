@@ -19,12 +19,10 @@ async function setupActiveSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
   const participant = await joinSession(repo, session.roomCode, "Alex");
   await lockLobby(repo, session.sessionId, session.hostToken);
-  const interaction = await startSession(
-    repo,
-    session.sessionId,
-    session.hostToken,
-    "Prompt text"
-  );
+  const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+    engineType: "OPEN_RESPONSE",
+    promptText: "Prompt text",
+  });
   return { session, participant, interaction };
 }
 
@@ -132,7 +130,10 @@ describe("CLOSE_SUBMISSIONS", () => {
       const { session, interaction: firstInteraction } = await setupActiveSession(repo);
       await closeSubmissions(repo, session.sessionId, session.hostToken);
       await revealResults(repo, session.sessionId, session.hostToken);
-      await startSession(repo, session.sessionId, session.hostToken, "Second prompt");
+      await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Second prompt",
+      });
 
       await closeSubmissions(repo, session.sessionId, session.hostToken);
 

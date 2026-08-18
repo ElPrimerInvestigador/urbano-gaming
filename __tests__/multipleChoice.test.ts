@@ -219,13 +219,10 @@ describe("START_SESSION with an explicit preparedQuestionId", () => {
     const repo = new InMemorySessionRepository();
     const { session, prepared } = await setupPreparedSession(repo);
 
-    const started = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    const started = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
 
     expect(started.engineType).toBe("MULTIPLE_CHOICE");
 
@@ -244,24 +241,18 @@ describe("START_SESSION with an explicit preparedQuestionId", () => {
     const repo = new InMemorySessionRepository();
     const { session, prepared } = await setupPreparedSession(repo);
 
-    await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "",
-        prepared.questions[0].preparedQuestionId
-      )
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "MULTIPLE_CHOICE",
+        preparedQuestionId: prepared.questions[0].preparedQuestionId,
+      })
     ).rejects.toBeInstanceOf(PreparedQuestionAlreadyConsumedError);
   });
 
@@ -269,12 +260,10 @@ describe("START_SESSION with an explicit preparedQuestionId", () => {
     const repo = new InMemorySessionRepository();
     const { session } = await setupPreparedSession(repo);
 
-    const started = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "Ad-hoc open response prompt"
-    );
+    const started = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Ad-hoc open response prompt",
+    });
 
     expect(started.engineType).toBe("OPEN_RESPONSE");
     const details = await repo.getMultipleChoiceDetailsForInteraction(
@@ -289,13 +278,10 @@ describe("START_SESSION with an explicit preparedQuestionId", () => {
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(
-      startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "",
-        "11111111-1111-1111-1111-111111111111"
-      )
+      startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "MULTIPLE_CHOICE",
+        preparedQuestionId: "11111111-1111-1111-1111-111111111111",
+      })
     ).rejects.toBeInstanceOf(PreparedQuestionNotFoundError);
   });
 
@@ -306,13 +292,10 @@ describe("START_SESSION with an explicit preparedQuestionId", () => {
     await lockLobby(repo, otherSession.sessionId, otherSession.hostToken);
 
     await expect(
-      startSession(
-        repo,
-        otherSession.sessionId,
-        otherSession.hostToken,
-        "",
-        prepared.questions[0].preparedQuestionId
-      )
+      startSession(repo, otherSession.sessionId, otherSession.hostToken, {
+        engineType: "MULTIPLE_CHOICE",
+        preparedQuestionId: prepared.questions[0].preparedQuestionId,
+      })
     ).rejects.toBeInstanceOf(PreparedQuestionNotFoundError);
   });
 
@@ -320,22 +303,17 @@ describe("START_SESSION with an explicit preparedQuestionId", () => {
     const repo = new InMemorySessionRepository();
     const { session, prepared } = await setupPreparedSession(repo);
 
-    const first = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    const first = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
 
-    const second = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "An ad-hoc open response question"
-    );
+    const second = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "An ad-hoc open response question",
+    });
 
     expect(first.engineType).toBe("MULTIPLE_CHOICE");
     expect(second.engineType).toBe("OPEN_RESPONSE");
@@ -349,13 +327,10 @@ describe("START_SESSION with an explicit preparedQuestionId", () => {
 describe("SUBMIT_RESPONSE against a Multiple Choice interaction", () => {
   async function setupActiveMultipleChoice(repo: InMemorySessionRepository) {
     const { session, alex, jordan, prepared } = await setupPreparedSession(repo);
-    const interaction = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
     return { session, alex, jordan, interaction };
   }
 
@@ -402,13 +377,10 @@ describe("Automatic evaluation and scoring on REVEAL_RESULTS", () => {
   it("awards points automatically to participants who selected the correct option", async () => {
     const repo = new InMemorySessionRepository();
     const { session, alex, jordan, prepared } = await setupPreparedSession(repo);
-    await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
     await submitResponse(repo, session.sessionId, alex.participantToken, "0"); // correct
     await submitResponse(repo, session.sessionId, jordan.participantToken, "1"); // wrong
     await closeSubmissions(repo, session.sessionId, session.hostToken);
@@ -428,13 +400,10 @@ describe("Automatic evaluation and scoring on REVEAL_RESULTS", () => {
   it("awards no points for a question no one answered correctly", async () => {
     const repo = new InMemorySessionRepository();
     const { session, alex, jordan, prepared } = await setupPreparedSession(repo);
-    await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
     await submitResponse(repo, session.sessionId, alex.participantToken, "1");
     await submitResponse(repo, session.sessionId, jordan.participantToken, "2");
     await closeSubmissions(repo, session.sessionId, session.hostToken);
@@ -448,13 +417,10 @@ describe("Automatic evaluation and scoring on REVEAL_RESULTS", () => {
   it("does not double-award if the evaluation step were somehow re-run for the same interaction", async () => {
     const repo = new InMemorySessionRepository();
     const { session, alex, prepared } = await setupPreparedSession(repo);
-    const interaction = await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    const interaction = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
     await submitResponse(repo, session.sessionId, alex.participantToken, "0");
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
@@ -474,7 +440,10 @@ describe("Automatic evaluation and scoring on REVEAL_RESULTS", () => {
     const session = await createSession(repo);
     const alex = await joinSession(repo, session.roomCode, "Alex");
     await lockLobby(repo, session.sessionId, session.hostToken);
-    await startSession(repo, session.sessionId, session.hostToken, "Open response prompt");
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Open response prompt",
+    });
     await submitResponse(repo, session.sessionId, alex.participantToken, "Free text answer");
     await closeSubmissions(repo, session.sessionId, session.hostToken);
 
@@ -487,13 +456,10 @@ describe("Automatic evaluation and scoring on REVEAL_RESULTS", () => {
     it("withholds correctOptionIndex until RESULT_REVEAL, from host and participant alike", async () => {
       const repo = new InMemorySessionRepository();
       const { session, alex, prepared } = await setupPreparedSession(repo);
-      await startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "",
-        prepared.questions[0].preparedQuestionId
-      );
+      await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "MULTIPLE_CHOICE",
+        preparedQuestionId: prepared.questions[0].preparedQuestionId,
+      });
 
       const hostView = await getSession(repo, session.sessionId, session.hostToken);
       const participantView = await getSession(repo, session.sessionId, alex.participantToken);
@@ -506,13 +472,10 @@ describe("Automatic evaluation and scoring on REVEAL_RESULTS", () => {
     it("reveals correctOptionIndex and per-participant correctness once RESULT_REVEAL", async () => {
       const repo = new InMemorySessionRepository();
       const { session, alex, jordan, prepared } = await setupPreparedSession(repo);
-      await startSession(
-        repo,
-        session.sessionId,
-        session.hostToken,
-        "",
-        prepared.questions[0].preparedQuestionId
-      );
+      await startSession(repo, session.sessionId, session.hostToken, {
+        engineType: "MULTIPLE_CHOICE",
+        preparedQuestionId: prepared.questions[0].preparedQuestionId,
+      });
       await submitResponse(repo, session.sessionId, alex.participantToken, "0");
       await submitResponse(repo, session.sessionId, jordan.participantToken, "1");
       await closeSubmissions(repo, session.sessionId, session.hostToken);
@@ -539,26 +502,20 @@ describe("Automatic evaluation and scoring on REVEAL_RESULTS", () => {
     const { session, alex, jordan, prepared } = await setupPreparedSession(repo);
 
     // Question 1: pizza (correct = 0, 20 points)
-    await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[0].preparedQuestionId
-    );
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[0].preparedQuestionId,
+    });
     await submitResponse(repo, session.sessionId, alex.participantToken, "0");
     await submitResponse(repo, session.sessionId, jordan.participantToken, "0");
     await closeSubmissions(repo, session.sessionId, session.hostToken);
     await revealResults(repo, session.sessionId, session.hostToken);
 
     // Question 2: cats or dogs (correct = 1, default 10 points)
-    await startSession(
-      repo,
-      session.sessionId,
-      session.hostToken,
-      "",
-      prepared.questions[1].preparedQuestionId
-    );
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "MULTIPLE_CHOICE",
+      preparedQuestionId: prepared.questions[1].preparedQuestionId,
+    });
     await submitResponse(repo, session.sessionId, alex.participantToken, "1");
     await submitResponse(repo, session.sessionId, jordan.participantToken, "0");
     await closeSubmissions(repo, session.sessionId, session.hostToken);

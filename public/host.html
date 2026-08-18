@@ -296,11 +296,32 @@
     border-top: 1px solid var(--line); margin-top: 10px;
   }
   #btn-primary-action { width: 100%; font-size: 16px; padding: 14px 16px; }
-  .secondary-start-toggle {
-    text-align: center; margin-top: 8px;
+
+  /* Slice 009 (Engine Selection + PARTICIPANTS Voting). One explicit
+     "Choose Turn Type" selector replaces the previous default-plus-
+     toggle pair and the separately always-on Voting toggle — see
+     resolvePrimaryAction() and selectTurnType(). */
+  .turn-type-selector { margin-bottom: 10px; }
+  .turn-type-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .turn-type-options { display: flex; gap: 8px; }
+  .btn-turn-type {
+    flex: 1; font-size: 13px; padding: 8px 10px; border-radius: 6px;
+    background: transparent; color: var(--ink); border: 1px solid var(--line);
   }
-  .secondary-start-toggle button { font-size: 12px; padding: 6px 10px; }
+  .btn-turn-type.active { background: var(--primary-fill); color: var(--primary-ink); border-color: var(--primary-fill); }
+  .btn-turn-type:disabled { color: var(--muted); border-color: var(--line); opacity: 0.6; }
+  .voting-source-selector { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; font-size: 13px; }
+  .voting-source-selector label:has(input:disabled) { color: var(--muted); }
   #openResponseStartForm.collapsed { display: none; }
+  #triviaStartForm.collapsed { display: none; }
+  /* Slice 009 defect fix: this rule never existed for votingStartForm,
+     even before this slice — its own "collapsed" class toggling
+     (present since Slice 007) had no matching CSS, so the Voting form
+     was visible unconditionally whenever primaryActionBar was shown,
+     including at LOBBY_OPEN/PROMPT_ACTIVE/SUBMISSIONS_CLOSED. Caught by
+     this slice's browser operational simulation, fixed here since it's
+     the same form this slice already restructures. */
+  #votingStartForm.collapsed { display: none; }
 
   .secondary-actions { margin-top: 16px; }
   .secondary-actions button { font-size: 12px; padding: 7px 12px; }
@@ -420,26 +441,54 @@
            (see resolvePrimaryAction) — this is not a fixed Lock/Start/
            Close/Reveal sequence assumed by the UI. -->
       <div class="primary-action-bar" id="primaryActionBar" style="display:none;">
+        <!-- Slice 009 (Engine Selection + PARTICIPANTS Voting): a single,
+             explicit "Choose Turn Type" selector — shown only at the
+             "time to start the next Turn" decision point — replaces the
+             previous default-plus-toggle Open-Response/Trivia pair and
+             the separately always-on Voting toggle. Exactly one Turn
+             Type is selected at a time; Voting's own candidate source is
+             chosen alongside it in the same form. See
+             resolvePrimaryAction() and selectTurnType(). -->
+        <div class="turn-type-selector" id="turnTypeSelector" style="display:none;">
+          <div class="turn-type-label">Choose Turn Type</div>
+          <div class="turn-type-options">
+            <button class="btn-turn-type" id="btn-turn-type-open-response" onclick="selectTurnType('OPEN_RESPONSE')">Open Response</button>
+            <button class="btn-turn-type" id="btn-turn-type-trivia" onclick="selectTurnType('MULTIPLE_CHOICE')">Trivia</button>
+            <button class="btn-turn-type" id="btn-turn-type-voting" onclick="selectTurnType('VOTING')">Voting</button>
+          </div>
+        </div>
+
         <div id="openResponseStartForm" class="collapsed">
           <textarea id="promptTextInput" rows="2" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="Ask an ad-hoc open-response question…"></textarea>
         </div>
-        <!-- Slice 007 (Voting Engine). Independent of the prepared-
-             question / open-response toggle above — a third, always-
-             available alternative at "time to start the next Turn,"
-             not woven into that pair's own state, so its existing
-             behavior stays unchanged. See resolvePrimaryAction(). -->
+
+        <div id="triviaStartForm" class="collapsed">
+          <div class="room-code-hint" id="triviaNextQuestionHint" style="margin-bottom:8px;"></div>
+        </div>
+
+        <!-- Slice 007 (Voting Engine); Slice 009 adds an explicit
+             candidate-source selector (HOST_AUTHORED / SUBMISSION /
+             PARTICIPANTS) in place of the two previously separate entry
+             points (the toggled manual-candidates form and the
+             standalone "Continue this Turn with Voting" button).
+             SUBMISSION and PARTICIPANTS are orthogonal to segmentTarget
+             (see StartTurnConfig / VotingCandidateSource in
+             lib/session/types.ts) — SUBMISSION here still forces
+             CURRENT_SEGMENT in startTurn() only because that is the one
+             UI flow this app offers for it (the Best Joke proving case),
+             not because the domain requires that coupling. -->
         <div id="votingStartForm" class="collapsed">
           <textarea id="votingPromptTextInput" rows="1" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="Vote prompt, e.g. &quot;Vote for the funniest!&quot;"></textarea>
+          <div class="voting-source-selector" id="votingSourceSelector">
+            <label id="votingSourceHostAuthoredLabel"><input type="radio" name="votingSource" value="HOST_AUTHORED" onchange="selectVotingSource('HOST_AUTHORED')" checked /> Enter options manually</label>
+            <label id="votingSourceSubmissionLabel"><input type="radio" name="votingSource" value="SUBMISSION" onchange="selectVotingSource('SUBMISSION')" /> Responses from the previous interaction</label>
+            <label id="votingSourceParticipantsLabel"><input type="radio" name="votingSource" value="PARTICIPANTS" onchange="selectVotingSource('PARTICIPANTS')" /> People in this session</label>
+          </div>
           <textarea id="votingCandidatesInput" rows="3" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" placeholder="One candidate per line (at least two)"></textarea>
-          <button class="btn-secondary" id="btn-start-voting-from-submissions" style="display:none; margin-bottom:8px;" onclick="startVotingFromSubmissions()">Continue this Turn with Voting on those responses</button>
+          <div class="room-code-hint" id="votingSourceHint" style="margin-bottom:8px;"></div>
         </div>
+
         <button class="btn-primary" id="btn-primary-action"></button>
-        <div class="secondary-start-toggle" id="secondaryStartToggle" style="display:none;">
-          <button class="btn-ghost" onclick="toggleOpenResponseStartForm()" id="btn-toggle-open-response">Ask an ad-hoc question instead</button>
-        </div>
-        <div class="secondary-start-toggle" id="votingStartToggle" style="display:none;">
-          <button class="btn-ghost" onclick="toggleVotingStartForm()" id="btn-toggle-voting">Start a Vote instead</button>
-        </div>
       </div>
 
       <div class="secondary-actions">
@@ -656,6 +705,12 @@ let lastKnownStandings = [];
 // current interaction — gates whether manual award controls should
 // show at all (Multiple Choice scores itself automatically at reveal).
 let currentEngineType = null;
+// Slice 009 (Engine Selection + PARTICIPANTS Voting). Tracked the same
+// way lastKnownStandings already is — renderParticipants receives the
+// list from GET_SESSION on every refresh; the PARTICIPANTS voting
+// source's own ≥2 floor needs the current count outside that render
+// call, at the moment the host is choosing a Turn Type.
+let lastKnownParticipants = [];
 // Host-only field from GET_SESSION: the session's full prepared
 // Multiple Choice question queue, including correct answers not yet
 // asked — never sent to a participant.
@@ -694,20 +749,18 @@ let awardInFlight = {};
 // who manually re-expands it to add more content mid-game is never
 // fought by a re-render collapsing it again.
 let manageContentAutoCollapsed = false;
-// Whether the ad-hoc Open Response start form is currently shown as
-// the *secondary* path (Multiple Choice questions remain queued, so
-// the primary action is "Start Turn N" via the prepared queue). Stays
-// false until the host explicitly asks for it via
-// toggleOpenResponseStartForm(); irrelevant once no prepared questions
-// remain, since Open Response then becomes the only path and is shown
-// unconditionally.
-let openResponseFormExpanded = false;
-// Slice 007 (Voting Engine). Whether the Voting start form is
-// currently shown as the primary path — independent of
-// openResponseFormExpanded, since Voting is a third, always-available
-// alternative at "time to start the next Turn," not a member of that
-// existing pair's own toggle state. See resolvePrimaryAction().
-let votingFormExpanded = false;
+// Slice 009 (Engine Selection + PARTICIPANTS Voting). Which Turn Type
+// the host has selected at the "time to start the next Turn" decision
+// point — replaces the previous openResponseFormExpanded/
+// votingFormExpanded pair of independent toggle flags with one
+// explicit choice among the three Engine Types. Reset to null (no
+// selection yet — resolvePrimaryAction() picks a sensible default)
+// each time a Turn actually starts or the decision point is left.
+let selectedTurnType = null;
+// Slice 009. Which Voting candidate source is selected within the
+// Voting form. Defaults to HOST_AUTHORED, matching the only source the
+// pre-Slice-009 form ever offered.
+let selectedVotingSource = "HOST_AUTHORED";
 
 function saveHostState() {
   sessionStorage.setItem(HOST_STORAGE_KEY, JSON.stringify(hostState));
@@ -1364,23 +1417,6 @@ function lowestUnconsumedPreparedQuestion() {
   return unconsumed.reduce((a, b) => (a.ordinal < b.ordinal ? a : b));
 }
 
-async function startNextQuestion() {
-  const next = lowestUnconsumedPreparedQuestion();
-  if (!next) return;
-  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, {
-    hostToken: hostState.hostToken,
-    preparedQuestionId: next.preparedQuestionId,
-  });
-  show("START_SESSION (Multiple Choice) (" + r.status + ")", r.json);
-  if (r.status === 200) {
-    renderNotice(null);
-    openResponseFormExpanded = false;
-    await hostRefresh();
-  } else {
-    renderNotice(classifyError(r));
-  }
-}
-
 // Slice 001: the stepper's 6 visual steps still read left-to-right as
 // one linear sequence, but the middle three (PROMPT_ACTIVE /
 // SUBMISSIONS_CLOSED / RESULT_REVEAL) now belong to whichever
@@ -1508,121 +1544,147 @@ function toggleManageContent() {
 // continue in one click): how long a reveal stays visible before the
 // game moves on is a felt-experience/pacing question, which belongs to
 // the Experience Layer, not this structural pass.
+//
+// Slice 009 (Engine Selection + PARTICIPANTS Voting): at the "time to
+// start the next Turn" decision point, this now resolves a single
+// explicit Turn Type selection (selectedTurnType) plus, for Voting, a
+// single explicit candidate-source selection (selectedVotingSource) —
+// see selectTurnType()/selectVotingSource() and startTurn().
 function resolvePrimaryAction() {
   const bar = document.getElementById("primaryActionBar");
   const btn = document.getElementById("btn-primary-action");
-  const secondaryToggle = document.getElementById("secondaryStartToggle");
+  const turnTypeSelector = document.getElementById("turnTypeSelector");
   const openResponseForm = document.getElementById("openResponseStartForm");
+  const triviaForm = document.getElementById("triviaStartForm");
   const votingForm = document.getElementById("votingStartForm");
-  const votingToggle = document.getElementById("votingStartToggle");
-  const votingSourceBtn = document.getElementById("btn-start-voting-from-submissions");
 
-  function hideVotingUI() {
+  function hideTurnTypeUI() {
+    turnTypeSelector.style.display = "none";
+    openResponseForm.classList.add("collapsed");
+    triviaForm.classList.add("collapsed");
     votingForm.classList.add("collapsed");
-    votingToggle.style.display = "none";
   }
 
   if (!sessionLifecycleState || sessionLifecycleState === "SESSION_COMPLETE") {
     bar.style.display = "none";
-    hideVotingUI();
+    hideTurnTypeUI();
     return;
   }
   bar.style.display = "block";
 
   if (sessionLifecycleState === "LOBBY_OPEN") {
-    openResponseForm.classList.add("collapsed");
-    secondaryToggle.style.display = "none";
-    hideVotingUI();
+    hideTurnTypeUI();
     btn.textContent = "Lock Lobby";
     btn.onclick = lockLobby;
     return;
   }
 
   if (interactionLifecycleState === "PROMPT_ACTIVE") {
-    openResponseForm.classList.add("collapsed");
-    secondaryToggle.style.display = "none";
-    hideVotingUI();
+    hideTurnTypeUI();
     btn.textContent = "Close Submissions";
     btn.onclick = closeSubmissions;
     return;
   }
 
   if (interactionLifecycleState === "SUBMISSIONS_CLOSED") {
-    openResponseForm.classList.add("collapsed");
-    secondaryToggle.style.display = "none";
-    hideVotingUI();
+    hideTurnTypeUI();
     btn.textContent = "Reveal Results";
     btn.onclick = revealResults;
     return;
   }
 
   // interactionLifecycleState is null or RESULT_REVEAL: time to start
-  // the next Turn. Multiple Choice's own answer to "what's next" is
-  // "the next prepared question," when one exists; Open Response's is
-  // always "ask for text." Both stay reachable — only which one is the
-  // *primary* action changes, and the host can flip between them.
-  // Slice 008: every action reachable from here (startSession,
-  // startNextQuestion, startVoting) sends the default NEW_SEGMENT
-  // target, so the Turn number they are about to create is always
-  // segmentNumber + 1. "Continue this Turn with Voting" is a distinct
-  // control (btn-start-voting-from-submissions, below) whose label is
-  // static and does not use turnNumber at all.
+  // the next Turn. Every path reachable from here (OPEN_RESPONSE,
+  // MULTIPLE_CHOICE, VOTING via any candidate source except SUBMISSION)
+  // sends the default NEW_SEGMENT target, so the Turn number about to
+  // be created is always segmentNumber + 1. SUBMISSION is the one
+  // exception — see startTurn().
   const turnNumber = (segmentNumber || 0) + 1;
+  turnTypeSelector.style.display = "block";
 
-  // Slice 007 (Voting Engine). Voting is a third, always-available
-  // alternative at this exact decision point — shown via its own toggle,
-  // independent of the prepared-question/open-response pair below.
-  // "Start Voting on the previous Turn's responses" is offered only when
-  // the interaction that just finished was itself Open Response and
-  // revealed — the same moment currentEngineType/interactionLifecycleState
-  // already describe it.
-  votingToggle.style.display = "block";
+  const hasNextQuestion = !!lowestUnconsumedPreparedQuestion();
   const votingSourceEligible =
     currentEngineType === "OPEN_RESPONSE" && interactionLifecycleState === "RESULT_REVEAL";
-  votingSourceBtn.style.display = votingSourceEligible ? "inline-block" : "none";
+  const votingParticipantsEligible = lastKnownParticipants.length >= 2;
 
-  if (votingFormExpanded) {
-    openResponseForm.classList.add("collapsed");
-    votingForm.classList.remove("collapsed");
-    secondaryToggle.style.display = "none";
-    document.getElementById("btn-toggle-voting").textContent = "Cancel — choose a different Turn type";
-    btn.textContent = `Start Turn ${turnNumber}`;
-    btn.onclick = startVoting;
-    return;
+  // Default selection, only when the host hasn't chosen yet this Turn:
+  // Trivia when a prepared question is queued (preserves the pre-
+  // Slice-009 default), Open Response otherwise. Also falls back off
+  // Trivia/SUBMISSION if the option that was selected stops being
+  // available (e.g. the prepared queue emptied, or the previous
+  // interaction was no longer eligible) rather than leaving a disabled
+  // option silently selected.
+  if (selectedTurnType === null) {
+    selectedTurnType = hasNextQuestion ? "MULTIPLE_CHOICE" : "OPEN_RESPONSE";
   }
-  votingForm.classList.add("collapsed");
-  document.getElementById("btn-toggle-voting").textContent = "Start a Vote instead";
-
-  const next = lowestUnconsumedPreparedQuestion();
-
-  if (next && !openResponseFormExpanded) {
-    openResponseForm.classList.add("collapsed");
-    secondaryToggle.style.display = "block";
-    document.getElementById("btn-toggle-open-response").textContent = "Ask an ad-hoc question instead";
-    btn.textContent = `Start Turn ${turnNumber}`;
-    btn.onclick = startNextQuestion;
-    return;
+  if (selectedTurnType === "MULTIPLE_CHOICE" && !hasNextQuestion) {
+    selectedTurnType = "OPEN_RESPONSE";
+  }
+  if (selectedVotingSource === "SUBMISSION" && !votingSourceEligible) {
+    selectedVotingSource = "HOST_AUTHORED";
   }
 
-  openResponseForm.classList.remove("collapsed");
-  secondaryToggle.style.display = next ? "block" : "none";
-  document.getElementById("btn-toggle-open-response").textContent = "Use the next prepared question instead";
+  const trivBtn = document.getElementById("btn-turn-type-trivia");
+  trivBtn.disabled = !hasNextQuestion;
+  trivBtn.title = hasNextQuestion ? "" : "No prepared questions remain in the queue.";
+  document.getElementById("btn-turn-type-open-response").classList.toggle("active", selectedTurnType === "OPEN_RESPONSE");
+  trivBtn.classList.toggle("active", selectedTurnType === "MULTIPLE_CHOICE");
+  document.getElementById("btn-turn-type-voting").classList.toggle("active", selectedTurnType === "VOTING");
+
+  openResponseForm.classList.toggle("collapsed", selectedTurnType !== "OPEN_RESPONSE");
+  triviaForm.classList.toggle("collapsed", selectedTurnType !== "MULTIPLE_CHOICE");
+  votingForm.classList.toggle("collapsed", selectedTurnType !== "VOTING");
+
+  if (selectedTurnType === "MULTIPLE_CHOICE") {
+    const next = lowestUnconsumedPreparedQuestion();
+    document.getElementById("triviaNextQuestionHint").textContent = next
+      ? `Next question: “${next.promptText}”`
+      : "";
+  }
+
+  if (selectedTurnType === "VOTING") {
+    const submissionInput = document.querySelector('#votingSourceSubmissionLabel input');
+    submissionInput.disabled = !votingSourceEligible;
+    document.getElementById("votingSourceSubmissionLabel").title =
+      votingSourceEligible ? "" : "Only available right after an Open Response Turn's results are revealed.";
+
+    const participantsInput = document.querySelector('#votingSourceParticipantsLabel input');
+    participantsInput.disabled = !votingParticipantsEligible;
+    document.getElementById("votingSourceParticipantsLabel").title =
+      votingParticipantsEligible ? "" : "Needs at least two participants in the session.";
+
+    document.querySelector(`#votingSourceSelector input[value="${selectedVotingSource}"]`).checked = true;
+    document.getElementById("votingCandidatesInput").style.display =
+      selectedVotingSource === "HOST_AUTHORED" ? "block" : "none";
+
+    const hint = document.getElementById("votingSourceHint");
+    if (selectedVotingSource === "SUBMISSION") {
+      hint.textContent = "Candidates are each participant's response from the previous interaction. This continues the current Turn rather than starting a new one.";
+    } else if (selectedVotingSource === "PARTICIPANTS") {
+      hint.textContent = "Every participant currently in the session becomes a Candidate.";
+    } else {
+      hint.textContent = "";
+    }
+  }
+
   btn.textContent = `Start Turn ${turnNumber}`;
-  btn.onclick = startSession;
+  btn.onclick = startTurn;
 }
 
-function toggleOpenResponseStartForm() {
-  openResponseFormExpanded = !openResponseFormExpanded;
+// Slice 009 (Engine Selection + PARTICIPANTS Voting).
+function selectTurnType(turnType) {
+  selectedTurnType = turnType;
   resolvePrimaryAction();
 }
 
-// Slice 007 (Voting Engine).
-function toggleVotingStartForm() {
-  votingFormExpanded = !votingFormExpanded;
+// Slice 009 (Engine Selection + PARTICIPANTS Voting).
+function selectVotingSource(source) {
+  selectedVotingSource = source;
   resolvePrimaryAction();
 }
 
 function renderParticipants(participants) {
+  lastKnownParticipants = participants || [];
   document.getElementById("participantCount").textContent = participants.length;
   document.getElementById("participantList").innerHTML = participants
     .map((p) => `<li>${p.displayName}</li>`)
@@ -1785,10 +1847,15 @@ function renderStandings(standings) {
   // automatically as part of REVEAL_RESULTS — manual award controls
   // only make sense for Open Response, where the host is still the
   // scoring-rule authority (see 03_Slice_Design.md's ownership table).
+  // Slice 009: made explicit inclusion rather than exclusion — Voting
+  // produces placement, not points (an already-accepted decision this
+  // exclusion-based condition failed to encode, since it only ever
+  // excluded MULTIPLE_CHOICE), so the manual Award button no longer
+  // appears after a Voting reveal.
   const canAward =
     sessionLifecycleState === "LOBBY_LOCKED" &&
     interactionLifecycleState === "RESULT_REVEAL" &&
-    currentEngineType !== "MULTIPLE_CHOICE";
+    currentEngineType === "OPEN_RESPONSE";
 
   const sorted = [...lastKnownStandings].sort((a, b) => b.score - a.score);
 
@@ -1956,8 +2023,9 @@ function switchToNewSession(json) {
   successorRoomCode = null;
   awardInFlight = {};
   manageContentAutoCollapsed = false;
-  openResponseFormExpanded = false;
-  votingFormExpanded = false;
+  selectedTurnType = null;
+  selectedVotingSource = "HOST_AUTHORED";
+  lastKnownParticipants = [];
   expLastInteractionState = null;
   expCelebrationPlayed = false;
   document.getElementById("authoringWorkspaceBody").classList.remove("collapsed");
@@ -2008,12 +2076,64 @@ async function lockLobby() {
   else renderNotice(classifyError(r));
 }
 
-async function startSession() {
-  const promptText = document.getElementById("promptTextInput").value;
-  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, {
-    hostToken: hostState.hostToken,
-    promptText,
-  });
+// Slice 009 (Engine Selection + PARTICIPANTS Voting). Single START_SESSION
+// call site replacing the previous three (startSession, startVoting,
+// startVotingFromSubmissions) — one for each Engine Type this UI
+// offers at the "start the next Turn" decision point, dispatched on
+// selectedTurnType (and, for Voting, selectedVotingSource) instead of
+// on which of several forms happened to be expanded. Sends the
+// preferred Slice 009 request shape (turnConfig, matching StartTurnConfig
+// exactly) rather than the legacy flat fields the route's compatibility
+// shim still also accepts.
+//
+// SUBMISSION is the one candidate source that forces segmentTarget
+// CURRENT_SEGMENT — preserving the pre-Slice-009 "Continue this Turn
+// with Voting on those responses" behavior (the Best Joke proving
+// case), sourcing Candidates from the Turn that just finished
+// (currentInteractionInstanceId, valid only while votingSourceEligible
+// is true — see resolvePrimaryAction). HOST_AUTHORED and PARTICIPANTS
+// both start a new Turn (segmentTarget omitted, so the server default
+// NEW_SEGMENT applies), exactly like Open Response and Trivia.
+async function startTurn() {
+  let turnConfig;
+  let segmentTargetOverride;
+
+  if (selectedTurnType === "OPEN_RESPONSE") {
+    turnConfig = {
+      engineType: "OPEN_RESPONSE",
+      promptText: document.getElementById("promptTextInput").value,
+    };
+  } else if (selectedTurnType === "MULTIPLE_CHOICE") {
+    const next = lowestUnconsumedPreparedQuestion();
+    if (!next) return;
+    turnConfig = { engineType: "MULTIPLE_CHOICE", preparedQuestionId: next.preparedQuestionId };
+  } else {
+    const promptText =
+      document.getElementById("votingPromptTextInput").value || "Vote for your favorite!";
+    let candidateSource;
+    if (selectedVotingSource === "SUBMISSION") {
+      candidateSource = {
+        type: "SUBMISSION",
+        sourceInteractionInstanceId: currentInteractionInstanceId,
+      };
+      segmentTargetOverride = "CURRENT_SEGMENT";
+    } else if (selectedVotingSource === "PARTICIPANTS") {
+      candidateSource = { type: "PARTICIPANTS" };
+    } else {
+      const candidatesRaw = document.getElementById("votingCandidatesInput").value;
+      const candidates = candidatesRaw
+        .split("\n")
+        .map((c) => c.trim())
+        .filter((c) => c.length > 0);
+      candidateSource = { type: "HOST_AUTHORED", candidates };
+    }
+    turnConfig = { engineType: "VOTING", promptText, candidateSource };
+  }
+
+  const body = { hostToken: hostState.hostToken, turnConfig };
+  if (segmentTargetOverride) body.segmentTarget = segmentTargetOverride;
+
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, body);
   show("START_SESSION (" + r.status + ")", r.json);
   // START_SESSION's own response describes only the newly created
   // interaction instance (interactionInstanceId, promptId, state) — it
@@ -2023,68 +2143,10 @@ async function startSession() {
   if (r.status === 200) {
     renderNotice(null);
     document.getElementById("promptTextInput").value = "";
-    openResponseFormExpanded = false;
-    await hostRefresh();
-  } else {
-    renderNotice(classifyError(r));
-  }
-}
-
-// Slice 007 (Voting Engine). Host-authored Candidate path — mirrors
-// startSession() structurally, sending a votingCandidateSource instead
-// of promptText alone.
-async function startVoting() {
-  const promptText = document.getElementById("votingPromptTextInput").value;
-  const candidatesRaw = document.getElementById("votingCandidatesInput").value;
-  const candidates = candidatesRaw
-    .split("\n")
-    .map((c) => c.trim())
-    .filter((c) => c.length > 0);
-  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, {
-    hostToken: hostState.hostToken,
-    promptText,
-    votingCandidateSource: { type: "HOST_AUTHORED", candidates },
-  });
-  show("START_SESSION (Voting) (" + r.status + ")", r.json);
-  if (r.status === 200) {
-    renderNotice(null);
     document.getElementById("votingPromptTextInput").value = "";
     document.getElementById("votingCandidatesInput").value = "";
-    votingFormExpanded = false;
-    await hostRefresh();
-  } else {
-    renderNotice(classifyError(r));
-  }
-}
-
-// Slice 007. Open Response -> Voting composition — sources Candidates
-// from the Turn that just finished (currentInteractionInstanceId, at
-// the moment this button is even shown — see resolvePrimaryAction's
-// votingSourceEligible check) rather than an arbitrary past Turn.
-// Slice 008 (Segment / Turn grouping): segmentTarget CURRENT_SEGMENT is
-// what keeps this Voting phase on the *same* Turn as the Open Response
-// phase it sources from, rather than starting a new one — the Best
-// Joke proving case. This is the only start-family call site in this
-// file that ever sends CURRENT_SEGMENT; every other one (startSession,
-// startNextQuestion, startVoting) intentionally omits segmentTarget so
-// the server default (NEW_SEGMENT) applies.
-async function startVotingFromSubmissions() {
-  const promptText =
-    document.getElementById("votingPromptTextInput").value || "Vote for your favorite!";
-  const r = await postJson(`/api/sessions/${hostState.sessionId}/start`, {
-    hostToken: hostState.hostToken,
-    promptText,
-    votingCandidateSource: {
-      type: "SUBMISSION",
-      sourceInteractionInstanceId: currentInteractionInstanceId,
-    },
-    segmentTarget: "CURRENT_SEGMENT",
-  });
-  show("START_SESSION (Voting from submissions) (" + r.status + ")", r.json);
-  if (r.status === 200) {
-    renderNotice(null);
-    document.getElementById("votingPromptTextInput").value = "";
-    votingFormExpanded = false;
+    selectedTurnType = null;
+    selectedVotingSource = "HOST_AUTHORED";
     await hostRefresh();
   } else {
     renderNotice(classifyError(r));

@@ -35,18 +35,55 @@ export type PauseReason = "MANUAL" | "HOST_DISCONNECTED" | null;
 export type EngineType = "OPEN_RESPONSE" | "MULTIPLE_CHOICE" | "VOTING";
 
 /**
- * Slice 007 (Voting Engine). The two Candidate Resolution sources
+ * Slice 007 (Voting Engine). The Candidate Resolution sources
  * START_SESSION accepts for a Voting interaction, kept as one
- * structured, mutually-exclusive-by-construction input rather than two
- * flat optional parameters — this is the "structured domain input"
+ * structured, mutually-exclusive-by-construction input rather than flat
+ * optional parameters — this is the "structured domain input"
  * referenced throughout this slice's design; SupabaseSessionRepository
  * decomposes it into flat RPC parameters at the boundary to
  * start_session_atomically (see that method's comment for why the
  * decomposition happens there and not here).
+ *
+ * Slice 009 (Engine Selection + PARTICIPANTS Voting): adds
+ * "PARTICIPANTS" — snapshots the session's current participant roster
+ * into immutable Candidates, one per participant, at Voting start.
+ * Needs no extra input beyond the type discriminator itself; the
+ * session's own membership (already known from sessionId) is the
+ * entire source. This is deliberately independent of `SegmentTarget`
+ * (see StartTurnConfig) — "where candidates come from" and "does this
+ * Interaction continue the current Turn" are orthogonal questions, and
+ * a caller may combine any candidate source with either Segment target.
  */
 export type VotingCandidateSource =
   | { type: "HOST_AUTHORED"; candidates: string[] }
-  | { type: "SUBMISSION"; sourceInteractionInstanceId: string };
+  | { type: "SUBMISSION"; sourceInteractionInstanceId: string }
+  | { type: "PARTICIPANTS" };
+
+/**
+ * Slice 009 (Engine Selection + PARTICIPANTS Voting). The discriminated
+ * start configuration START_SESSION accepts, replacing the previous
+ * shape of independent optional fields (promptText / preparedQuestionId /
+ * votingCandidateSource) — two of which were mutually exclusive with
+ * each other, and the third was an implicit fallback rather than an
+ * explicit choice. One required, self-describing, mutually-exclusive-
+ * by-construction value replaces that: AmbiguousStartSessionTargetError
+ * becomes structurally impossible rather than runtime-checked, since
+ * TypeScript itself rejects supplying both a preparedQuestionId and a
+ * candidateSource.
+ *
+ * `segmentTarget` (see SegmentTarget) remains a separate, orthogonal
+ * parameter on startSession itself, not part of this type — "what
+ * engine, with what configuration" and "does this begin a new Turn or
+ * continue the current one" are independent questions.
+ */
+export type StartTurnConfig =
+  | { engineType: "OPEN_RESPONSE"; promptText: string }
+  | { engineType: "MULTIPLE_CHOICE"; preparedQuestionId: string }
+  | {
+      engineType: "VOTING";
+      promptText: string;
+      candidateSource: VotingCandidateSource;
+    };
 
 /**
  * Slice 008 (Segment / Turn grouping). Which Segment a new Interaction
@@ -903,6 +940,28 @@ export class InvalidCandidateSelectionError extends Error {
   constructor() {
     super("Selected candidate is not valid for this Voting interaction.");
     this.name = "InvalidCandidateSelectionError";
+  }
+}
+
+/**
+ * Slice 009 (Engine Selection + PARTICIPANTS Voting). Raised by
+ * CAST_VOTE when the selected Candidate's structured participant
+ * attribution (see VotingCandidateRecord.participantId) identifies it
+ * as belonging to the voting participant themselves. Founder-directed:
+ * self-vote is prohibited by default whenever attribution exists —
+ * PARTICIPANTS Candidates always have it; SUBMISSION Candidates now
+ * have it too (the participant who authored that submission);
+ * HOST_AUTHORED Candidates never have it, so this can never fire for
+ * them — there is no participant identity to compare against. Not
+ * configurable in this slice. The error message deliberately does not
+ * name the candidate or reveal anything about it beyond "you cannot
+ * vote for this one" — no additional Candidate ownership information
+ * is leaked.
+ */
+export class SelfVoteNotAllowedError extends Error {
+  constructor() {
+    super("A participant cannot vote for their own Candidate.");
+    this.name = "SelfVoteNotAllowedError";
   }
 }
 
