@@ -1,6 +1,6 @@
 # Slice 009 — Engine Selection + PARTICIPANTS Voting: Implementation and Validation Record
 
-**Status: implemented, locally validated, including mobile verification, and accepted as a strong local implementation candidate. Not yet staged, not yet committed, not yet founder-accepted.** This record documents the local implementation candidate only. No production migration, no deployment, no push, no commit, no staging has occurred. Two final-gate items (mobile host-selector verification; `.claude/launch.json` scope reconciliation) have both been closed — see "Mobile verification" below and the `.claude/launch.json` note in "Local Validation" item 4. `.claude/launch.json` carries no diff in the current working tree.
+**Status: Designed. Implemented. Integrated. Locally Validated. Database Validated. Desktop Validated. Mobile Validated. Production Migrated. Production Deployed. Operationally Validated. Founder Accepted. Closed.** Commit `75ccbe9f3e933224ccdf36191f4efff1f1b061a3`, pushed to `origin/main` as a verified clean fast-forward from `f825f9d` (Slice 008 documentation closure) → `e3b885e` (Slice 008 implementation checkpoint). See "Production Validation" below for the full deployment and operational evidence, including the staged migration sequencing this slice required.
 
 ## Objective (as accepted through two founder-directed design-review rounds)
 
@@ -97,8 +97,90 @@ None. `StartTurnConfig`'s shape, the `PARTICIPANTS` source, the attribution colu
 
 ## Deferred Items
 
-Voting scoring (Slice 010); Prediction/Golazo; Virtual Table / Private Hand; canonical URBANO auth; geolocation; persistent Leaderboards/Rewards backends; Level 33; Shared Game State; Teams; generic orchestration; new Engines. Production migration, deployment, and operational validation — this record covers local validation only.
+Voting scoring (Slice 010); Prediction/Golazo; Virtual Table / Private Hand; canonical URBANO auth; geolocation; persistent Leaderboards/Rewards backends; Level 33; Shared Game State; Teams; generic orchestration; new Engines.
 
-## Final Local Status
+## Local Implementation Checkpoint (historical — superseded by Production Validation below)
 
-**Database: local `urbano-gaming` Postgres only, migrated through 0040. Source: uncommitted working-tree changes on `integrate/join-session`, HEAD unchanged. Application: not deployed. Not staged, not committed, not pushed, no production migration applied.** Final-gate re-verification (after `.claude/launch.json` reconciliation and mobile verification, no functional code changes required by either): `npx tsc --noEmit` clean; `npm test` 242/242; `npm run test:contract` (local Postgres only) 47/47; `npm run build` clean. Full local browser operational simulation passed at both desktop and mobile (375×812) viewports, including one pre-existing defect (`#votingStartForm` CSS, live since Slice 007) found and fixed in the same pass. `.claude/launch.json` carries no diff. Awaiting founder review before any staging, commit, migration, or deployment action.
+**Database: local `urbano-gaming` Postgres only, migrated through 0040. Source: committed at `75ccbe9`, HEAD of `integrate/join-session` at the time.** Final local-gate re-verification (after `.claude/launch.json` reconciliation and mobile verification, no functional code changes required by either): `npx tsc --noEmit` clean; `npm test` 242/242; `npm run test:contract` (local Postgres only) 47/47; `npm run build` clean. Full local browser operational simulation passed at both desktop and mobile (375×812) viewports, including one pre-existing defect (`#votingStartForm` CSS, live since Slice 007) found and fixed in the same pass. This checkpoint was founder-accepted as a strong local implementation candidate, then committed and — per the sequencing below — carried into production.
+
+---
+
+# Production Validation
+
+## Production migration sequencing — a deployment compatibility boundary, not an architecture change
+
+During the production-readiness checkpoint, direct code inspection (not assumption) surfaced a real, narrow compatibility gap: once `0040` (self-vote rejection) is live, any `SUBMISSION`-sourced Candidate created *after* `0039` but *before* the Slice 009 application is deployed — including one created by the **still-deployed pre-Slice-009 application**, since `0039`'s attribution population is unconditional — would carry real `participant_id` attribution. A participant attempting to vote for their own such Candidate would trigger `SELF_VOTE_NOT_ALLOWED`, an error the old, still-deployed `SupabaseSessionRepository.castVote` does not recognize (verified directly against `e3b885e`'s source: its error-mapping chain has no case for it and falls through to a bare `throw error;`, which the old route's catch-all turns into a generic `500 "Failed to cast vote."` instead of the old, silent-success behavior).
+
+This is a **deployment sequencing boundary discovered during production preflight, not a defect in Slice 009's architecture or migration contents** — nothing about the migrations themselves changed to accommodate it. Resolved by staging the rollout:
+
+```
+0038 + 0039 (additive, backward-compatible) → old app compatibility verified live →
+Slice 009 source pushed → Vercel deployment verified →
+0040 (introduces the new authoritative error contract) → self-vote enforcement verified live
+```
+
+`0040` was deliberately withheld until the application capable of translating `SELF_VOTE_NOT_ALLOWED` into a correct client response was already the one being served — so the new authoritative database rule and the client code that understands it became live together, never one without the other.
+
+## 1. Production preflight (read-only, before any mutation)
+
+Verified directly via `supabase db query --linked` against the production Supabase project (`uyxckhbmcbctsbewnqkb`) before touching anything: migration history ended exactly at `0037`; no partial `0038`/`0039`/`0040` objects existed; `voting_candidates.participant_id` did not yet exist; `start_session_atomically` had exactly one overload, the expected post-Slice-008 8-arg signature; `cast_vote_atomically` had exactly one overload, the expected pre-Slice-009 4-arg signature with no self-vote branch; no schema drift in `voting_candidates`/`participants`/`votes`/`interaction_instances`/`segments` against expectation. Row volumes at the time: 19 `voting_candidates`, 93 `participants`, 102 `sessions`, 12 `votes` — all real historical data, left untouched throughout.
+
+## 2. `0038` + `0039` applied to production
+
+Applied via `supabase migration up --linked`, with `0040` temporarily moved out of `supabase/migrations/` (restored immediately after, working tree confirmed byte-identical to the committed state via empty `git status --porcelain`/`git diff`). Verified after: migration history ends exactly at `0039`; `participant_id` nullable, indexed, `ON DELETE SET NULL` (`confdeltype = 'n'`); all 19 historical `voting_candidates` rows intact with `participant_id` still `NULL` (0/19 non-null); `start_session_atomically` exactly one overload, unchanged 8-arg signature; `cast_vote_atomically` exactly one overload, unchanged 4-arg signature, confirmed **not** yet containing `SELF_VOTE_NOT_ALLOWED` in its body.
+
+## 3. Old-app/schema-0039 compatibility — live production evidence
+
+With the pre-Slice-009 application still serving `urbano-gaming-playtest.vercel.app`, exercised real disposable production sessions against the newly-migrated schema, deliberately **not** self-voting (that behavior isn't supposed to be enforced yet): Open Response (start/submit/close/reveal) — correct. Multiple Choice (prepared question, start/submit/close/reveal) — correct automatic scoring (10/0 split). `HOST_AUTHORED` Voting (start/vote/close/reveal) — correct tally, no attribution (`participant_id` never applicable). `SUBMISSION` Voting (start from a real prior Open Response interaction/vote/close/reveal) — correct tally; directly confirmed via `supabase db query --linked` that the two newly-created Candidate rows **did** receive real `participant_id` attribution from the old app's own call, entirely invisible to that old app's own response (`currentVotingCandidates` returned only `candidateId`/`ordinal`/`label`, exactly as before) — this is the precise mechanism the sequencing risk above was about, empirically confirmed rather than assumed. No regression found anywhere; no self-vote was attempted at this stage.
+
+## 4. Push and Vercel automatic deployment
+
+`git push origin HEAD:main` — clean fast-forward, `e3b885e..75ccbe9`, no force, no amend. `origin/main` confirmed to equal exactly `75ccbe9f3e933224ccdf36191f4efff1f1b061a3` after fetch. No direct Vercel dashboard/API access was available from this session's authenticated scope (same situation as Slice 008's own deployment) — verification instead used two independent, stronger-than-metadata methods: **(a) byte-for-byte content hash** — `sha256` of the live `https://urbano-gaming-playtest.vercel.app/host.html` matched the committed `HEAD:public/host.html` source exactly; **(b) live behavioral proof** — a real production API call using the new `turnConfig` shape (`{engineType:"VOTING", candidateSource:{type:"PARTICIPANTS"}}`) against a 0-participant session correctly returned the new `InvalidVotingCandidatesError` message, a code path that does not exist in the pre-Slice-009 route at all. Retired `level33-mvp-playtest.vercel.app` confirmed still `404`. This satisfies, more rigorously than a status dashboard would, the standing Slice 008 lesson: deployment existence is not canonical production-domain activation — both were independently confirmed here.
+
+## 5. Transitional sanity (Slice 009 app live, schema still at `0039`)
+
+Lightweight check only, per the accepted sequencing: unified Turn Type selector confirmed live (via the content-hash match above); a real 2-participant production session started a `PARTICIPANTS` Voting turn successfully, with exactly one Candidate created per participant; no client/server compatibility error of any kind. Immediately followed by `0040`.
+
+## 6. `0040` applied to production
+
+Applied via `supabase migration up --linked`. Verified after: migration history through `0040`; exactly one `cast_vote_atomically` overload, unchanged 4-arg signature; body now contains the `SELF_VOTE_NOT_ALLOWED` branch; RLS remained enabled (`relrowsecurity = true`) on `voting_candidates`/`votes`/`participants`, unchanged; no unrelated object touched.
+
+## 7. Authoritative self-vote proving case — PARTICIPANTS source, live production
+
+Real 3-participant session (Alex/Jordan/Sam). `PARTICIPANTS` Voting started — exactly one Candidate per participant, attribution confirmed internal-only (client projection: `candidateId`/`ordinal`/`label` only). Alex attempted to vote for their own Candidate: **`400 {"error":"A participant cannot vote for their own Candidate."}`** — the intended, correctly-translated error, not a generic 500. Legal round-robin votes (Alex→Jordan, Jordan→Sam, Sam→Alex) all succeeded. Reveal: a genuine three-way tie, each Candidate correctly at rank `#1` with 1 vote; standings remained `0`/`0`/`0` (no Voting scoring, confirming Slice 010 remains untouched); live production host UI screenshot confirmed **no "Award" text anywhere** on the page.
+
+## 8. Authoritative self-vote proving case — SUBMISSION source, live production
+
+Same session, next Turn: Open Response ("Best pizza topping?") → 3 submissions → reveal → Voting via `SUBMISSION` + `CURRENT_SEGMENT`. Confirmed `segmentNumber` stayed at `2` across both the Open Response and Voting Interaction Instances (Slice 008 Best Joke Segment behavior fully intact in production). Alex attempted to vote for their own submitted "Pepperoni": **`400`, same correct error, no 500.** Alex then voted for Jordan's "Mushroom" — succeeded. Final tally: Mushroom 2 (rank 1), Pineapple 1 (rank 2), Pepperoni 0 (rank 3 — correctly last, since its author was the one participant who could never legally vote for it). No attribution leaked to any client response at any point.
+
+## 9. Remaining regressions, live production
+
+- **`HOST_AUTHORED` Voting**: standalone "Cats"/"Dogs" round; `participant_id` never applicable to these Candidates; no self-vote restriction; vote **revision** confirmed working (Alex's vote changed from Cats to Dogs, same `voteId` returned, proving the upsert); correct final tally (Dogs 2, Cats 1).
+- **Open Response Award regression**: manual `AWARD_POINTS` confirmed still available and functional for Open Response (`+15` to Alex) — confirming the `canAward` fix narrowed the control correctly without removing legitimate host adjudication. (One self-inflicted testing artifact along the way, not a defect: `award_points_atomically`'s `idempotencyKey` parameter is a real Postgres `uuid`, not an arbitrary string — an initial test call using a non-UUID string correctly failed; retried with a real UUID and succeeded cleanly. This function was not modified by Slice 009 at all.)
+- **Trivia / Multiple Choice regression**: prepared question, correct automatic scoring (Alex answered correctly: `15 + 10 = 25`; Jordan/Sam unaffected), no manual Award control appeared.
+- **Segment/Turn regression**: see item 8 above — `segmentNumber` semantics fully unchanged.
+- **Session completion / rematch isolation**: session completed cleanly; a real successor session created fresh (zero participants, zero inherited Segments); its own first Turn correctly began at `segmentNumber: 1`, fully isolated from the predecessor's five Segments.
+
+## 10. Mobile production verification
+
+Real 375×812 viewport against the live canonical URL (not local, not CSS inspection) with a fresh 2-participant production session: Turn Type selector rendered cleanly; Voting form's candidate-source selector (all three options) rendered cleanly; `PARTICIPANTS` Voting started with one Candidate button per participant, each a full-width tappable row; a real self-vote attempt on the mobile participant screen returned the same clean `400`, confirmed via `read_network_requests`; after a legal-vote reveal, the mobile host screen showed no "Award" text anywhere. No defects found; no fixes required.
+
+## 11. Application Shell regression
+
+`/`, `/soccer-predictions.html`, `/trivia-playtest.html`, `/leaderboards.html`, `/rewards.html`, `/host.html`, `/participant.html` — all returned `200` against the live canonical URL. No Application Shell redesign occurred or was needed.
+
+## 12. Final automated verification (post-production-validation)
+
+`npx tsc --noEmit` clean; `npm test` **242/242**; `npm run test:contract` (local Postgres only — never pointed at production) **47/47**; `npm run build` clean.
+
+## 13. Defects and findings
+
+- The migration-sequencing compatibility gap in §"Production migration sequencing" above — found during preflight reasoning before any mutation, resolved by sequencing, not by changing migration contents.
+- One self-inflicted, non-defect testing artifact during the Award regression (invalid idempotency-key format in a manual test call) — see item 9.
+- No defects found in Slice 009 code, migrations, or the deployed application at any stage of production validation.
+
+## Final Production Status
+
+**Database: production Supabase, migrated through `0040`, applied in the sequence documented above. Source: `75ccbe9` on `origin/main`. Application: deployed and confirmed live at the canonical URL via both content-hash and behavioral proof. Operationally validated end to end against real production traffic — PARTICIPANTS and SUBMISSION self-vote proving cases, HOST_AUTHORED/Open-Response-Award/Trivia/Segment regressions, session completion, rematch isolation, mobile verification, and Application Shell regression all passed. Slice 009 is closed.**
+
+`level33-mvp-playtest.vercel.app` remains retired (`404`). Canonical deployment procedure remains: accepted commit → push to `origin/main` → Vercel automatic deployment — confirmed working exactly as designed for this slice, no manual fallback needed or used.
