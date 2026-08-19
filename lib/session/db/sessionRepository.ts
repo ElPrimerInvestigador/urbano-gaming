@@ -22,6 +22,14 @@ export interface ParticipantRecord {
   normalizedDisplayName: string;
   participantToken: string;
   joinedAt: string;
+  /**
+   * URBANO Gaming Identity Foundation. Null for a Guest participant
+   * (unchanged from every pre-Identity-Foundation row and code path).
+   * Set to the joining Gaming Member's id for an authenticated join —
+   * see 0046's migration comment for the FK/on-delete-set-null/
+   * one-per-Session enforcement this links into.
+   */
+  gamingMemberId: string | null;
 }
 
 export interface ParticipantJoinedEventRecord extends SessionEventRecord {

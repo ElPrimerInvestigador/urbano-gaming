@@ -41,6 +41,7 @@ import {
   QuizAccessDeniedError,
   QuizExpiryNotReachedError,
   InvalidOptionSelectionError,
+  GamingMemberAlreadyInSessionError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -276,6 +277,22 @@ export class InMemorySessionRepository implements SessionRepository {
 
     if (nameCollision) {
       throw new DisplayNameTakenError();
+    }
+
+    // Mirrors participants_session_gaming_member_unique (0046): a
+    // Gaming Member may have at most one Participant per Session. Guest
+    // participants (gamingMemberId null) never collide with each other
+    // or with anyone else here.
+    if (record.gamingMemberId) {
+      const gamingMemberCollision = [...this.participants.values()].some(
+        (participant) =>
+          participant.sessionId === record.sessionId &&
+          participant.gamingMemberId === record.gamingMemberId
+      );
+
+      if (gamingMemberCollision) {
+        throw new GamingMemberAlreadyInSessionError();
+      }
     }
 
     if (this.participants.has(record.participantId)) {

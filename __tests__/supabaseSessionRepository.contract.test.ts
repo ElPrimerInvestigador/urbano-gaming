@@ -88,6 +88,7 @@ function buildParticipantRecord(
     normalizedDisplayName: displayName.toLowerCase(),
     participantToken: `contract-participant-token-${randomUUID()}`,
     joinedAt: new Date().toISOString(),
+    gamingMemberId: null,
     ...overrides,
   };
 }

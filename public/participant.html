@@ -380,6 +380,7 @@
   <pre id="output">(nothing yet)</pre>
 </details>
 
+<script src="/urbanoAuth.js"></script>
 <script src="/sessionSync.js"></script>
 <script>
 // Developer-harness-only credential persistence, via sessionStorage:
@@ -394,6 +395,30 @@
 // It is acceptable only here: an isolated, unbundled, dev-only harness
 // with no other users. Neither should ever be carried into a real
 // interface.
+
+// URBANO Gaming Identity Foundation: an authenticated Gaming Member's
+// access token, resolved once on load via UrbanoAuth (localStorage-
+// backed — deliberately separate from this page's own sessionStorage
+// participant-token persistence above). null for a Guest — every join
+// call below falls back to the exact pre-Identity-Foundation flat
+// Guest request when this stays null.
+let gamingAccessToken = null;
+
+async function initGamingAuthPrefill() {
+  if (typeof UrbanoAuth === "undefined") return;
+  try {
+    const state = await UrbanoAuth.getState();
+    if (state.status === "authenticated") {
+      gamingAccessToken = await UrbanoAuth.getAccessToken();
+      const nameInput = document.getElementById("p-displayName");
+      if (nameInput && !nameInput.value) {
+        nameInput.value = state.displayName;
+      }
+    }
+  } catch (e) {
+    console.warn("UrbanoAuth: failed to resolve initial state:", e);
+  }
+}
 
 const PARTICIPANT_STORAGE_KEY = "urbano_gaming_dev_harness_participant";
 const LEGACY_PARTICIPANT_STORAGE_KEY = "level33_dev_harness_participant";
@@ -1562,7 +1587,7 @@ function switchToJoinedSession(json) {
 async function joinSession() {
   const roomCode = document.getElementById("p-roomCode").value.trim();
   const displayName = document.getElementById("p-displayName").value.trim();
-  const r = await postJson(`/api/sessions/${roomCode}/join`, { displayName });
+  const r = await postJson(`/api/sessions/${roomCode}/join`, { displayName }, gamingAccessToken);
   show("JOIN_SESSION (" + r.status + ")", r.json);
   if (r.status === 201) {
     renderNotice(null);
@@ -1583,7 +1608,7 @@ async function joinSession() {
 async function joinNextSession() {
   if (!successorRoomCode) return;
   const displayName = document.getElementById("jn-displayName").value.trim();
-  const r = await postJson(`/api/sessions/${successorRoomCode}/join`, { displayName });
+  const r = await postJson(`/api/sessions/${successorRoomCode}/join`, { displayName }, gamingAccessToken);
   show("JOIN_SESSION (next session) (" + r.status + ")", r.json);
   if (r.status === 201) {
     renderNotice(null);
@@ -1601,7 +1626,7 @@ async function joinNextSession() {
 async function joinAnotherSession() {
   const roomCode = document.getElementById("ja-roomCode").value.trim();
   const displayName = document.getElementById("ja-displayName").value.trim();
-  const r = await postJson(`/api/sessions/${roomCode}/join`, { displayName });
+  const r = await postJson(`/api/sessions/${roomCode}/join`, { displayName }, gamingAccessToken);
   show("JOIN_SESSION (another session) (" + r.status + ")", r.json);
   if (r.status === 201) {
     renderNotice(null);
@@ -1661,6 +1686,7 @@ if (new URLSearchParams(location.search).has("debug")) {
 }
 
 restoreState();
+initGamingAuthPrefill();
 renderSyncDebug();
 if (participantState.sessionId) {
   sessionSync.start();

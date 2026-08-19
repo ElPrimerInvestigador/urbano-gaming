@@ -75,10 +75,22 @@ function normalizeRoomCode(roomCode: string): string {
   return roomCode.trim().toUpperCase();
 }
 
+/**
+ * URBANO Gaming Identity Foundation: gamingMemberId is an optional,
+ * additive 4th parameter. Every pre-Identity-Foundation caller (and
+ * every existing test) omits it, defaulting to null — the exact
+ * existing Guest path, byte-identical. A caller supplies a non-null
+ * value only after independently verifying the Gaming Member's
+ * identity and profile completeness (see lib/gaming and the join
+ * route) — this function trusts its caller completely and performs no
+ * verification of its own, mirroring how it has never verified
+ * participantToken's provenance either.
+ */
 export async function joinSession(
   repo: SessionRepository,
   roomCode: string,
-  displayName: string
+  displayName: string,
+  gamingMemberId: string | null = null
 ): Promise<JoinSessionResult> {
   const trimmedDisplayName = validateAndTrimDisplayName(displayName);
   const normalizedRoomCode = normalizeRoomCode(roomCode);
@@ -100,6 +112,7 @@ export async function joinSession(
     normalizedDisplayName: normalizeDisplayName(trimmedDisplayName),
     participantToken: generateParticipantToken(),
     joinedAt: now,
+    gamingMemberId,
   };
 
   const joinedEvent: ParticipantJoinedEventRecord = {
@@ -124,5 +137,6 @@ export async function joinSession(
     sessionId: session.sessionId,
     sessionState: session.state,
     displayName: record.displayName,
+    gamingMemberId: record.gamingMemberId,
   };
 }

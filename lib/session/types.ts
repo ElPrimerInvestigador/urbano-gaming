@@ -648,6 +648,11 @@ export class RoomCodeCollisionError extends Error {
 
 /**
  * Result of a successful JOIN_SESSION.
+ *
+ * URBANO Gaming Identity Foundation: gamingMemberId is null for a Guest
+ * join (the existing, unchanged path) and set for an authenticated join
+ * — see joinSession.ts's own comment on the additive Authorization
+ * header handling.
  */
 export interface JoinSessionResult {
   participantId: string;
@@ -655,6 +660,7 @@ export interface JoinSessionResult {
   sessionId: string;
   sessionState: SessionState;
   displayName: string;
+  gamingMemberId: string | null;
 }
 
 /**
@@ -867,6 +873,21 @@ export class DisplayNameTakenError extends Error {
   constructor() {
     super("This display name is already in use in this session.");
     this.name = "DisplayNameTakenError";
+  }
+}
+
+/**
+ * URBANO Gaming Identity Foundation. Raised when an authenticated
+ * JOIN_SESSION call's Gaming Member already has a Participant in this
+ * Session — the domain-layer/repository translation of
+ * participants_session_gaming_member_unique (0046). A Gaming Member may
+ * still join a different Session freely; this is scoped to one Session
+ * only.
+ */
+export class GamingMemberAlreadyInSessionError extends Error {
+  constructor() {
+    super("This Gaming Member already has a participant in this session.");
+    this.name = "GamingMemberAlreadyInSessionError";
   }
 }
 

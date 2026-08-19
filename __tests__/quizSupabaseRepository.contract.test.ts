@@ -84,6 +84,7 @@ function buildParticipantRecord(
     normalizedDisplayName: displayName.toLowerCase(),
     participantToken: `quiz-contract-participant-token-${randomUUID()}`,
     joinedAt: new Date().toISOString(),
+    gamingMemberId: null,
     ...overrides,
   };
 }

@@ -44,6 +44,7 @@ import {
   QuizAccessDeniedError,
   QuizExpiryNotReachedError,
   InvalidOptionSelectionError,
+  GamingMemberAlreadyInSessionError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -164,6 +165,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       p_joined_at: record.joinedAt,
       p_event_type: joinedEvent.eventType,
       p_event_payload: joinedEvent.payload,
+      p_gaming_member_id: record.gamingMemberId,
     });
 
     if (error) {
@@ -190,6 +192,13 @@ export class SupabaseSessionRepository implements SessionRepository {
         )
       ) {
         throw new DisplayNameTakenError();
+      }
+
+      if (
+        error.code === "23505" &&
+        error.message.includes("participants_session_gaming_member_unique")
+      ) {
+        throw new GamingMemberAlreadyInSessionError();
       }
 
       throw error;
@@ -349,6 +358,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       normalizedDisplayName: row.normalized_display_name,
       participantToken: row.participant_token,
       joinedAt: row.joined_at,
+      gamingMemberId: row.gaming_member_id,
     }));
   }
 

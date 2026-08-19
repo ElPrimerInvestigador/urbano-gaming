@@ -228,6 +228,7 @@ describe("JOIN_SESSION", () => {
         normalizedDisplayName: "race",
         participantToken: "test-token",
         joinedAt: new Date().toISOString(),
+        gamingMemberId: null,
       };
       const event = {
         sessionId: session.sessionId,
@@ -251,6 +252,7 @@ describe("JOIN_SESSION", () => {
         normalizedDisplayName: "ghost",
         participantToken: "test-token-2",
         joinedAt: new Date().toISOString(),
+        gamingMemberId: null,
       };
       const event = {
         sessionId: "33333333-3333-3333-3333-333333333333",

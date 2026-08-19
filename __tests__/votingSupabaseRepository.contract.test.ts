@@ -90,6 +90,7 @@ function buildParticipantRecord(
     normalizedDisplayName: displayName.toLowerCase(),
     participantToken: `voting-contract-participant-token-${randomUUID()}`,
     joinedAt: new Date().toISOString(),
+    gamingMemberId: null,
     ...overrides,
   };
 }
