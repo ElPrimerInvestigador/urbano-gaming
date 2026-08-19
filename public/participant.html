@@ -285,6 +285,25 @@
     <div id="quizWaitingMessage" style="display:none; color:var(--muted); margin-top:10px;">You've answered all questions. Waiting for the Quiz to close…</div>
   </div>
 
+  <!-- Founder iPhone playtest correction: once a Quiz closes, the
+       participant must leave the active-question presentation entirely
+       — showing "Question N of N" with the last question's gameplay
+       card after close reads as an incomplete/stuck screen (Quiz ended,
+       Session did not — see renderQuizCompleteCard()). A dedicated card,
+       not a repurposed quizCard, so quizCard can simply hide outright. -->
+  <div class="card" id="quizCompleteCard" style="display:none;">
+    <h2>Quiz Complete</h2>
+    <div id="quizCompleteScore" style="font-size:16px; font-weight:600; margin-bottom:6px;"></div>
+    <div id="quizCompletePoints" style="margin-bottom:6px; color:var(--muted);"></div>
+    <div id="quizCompletePlacement" style="margin-bottom:10px; color:var(--muted);"></div>
+    <div id="quizCompleteWinner" class="winner-banner" style="display:none;"></div>
+    <div style="margin-top:14px;">
+      <div style="font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">Standings</div>
+      <div id="quizCompleteStandingsList"></div>
+    </div>
+    <div id="quizCompleteWaiting" style="color:var(--muted); margin-top:14px;"></div>
+  </div>
+
   <div class="card" id="submitCard" style="display:none;">
     <div class="submitted-note" id="submittedNote" style="display:none;">Response submitted — you can revise it until submissions close.</div>
     <label>Your response</label>
@@ -506,6 +525,12 @@ let currentQuiz = null;
 let quizLocalQuestionIndex = 0;
 let quizKnownSegmentId = null;
 let quizTimerInterval = null;
+// Founder iPhone playtest correction: the completed-Quiz card needs the
+// same standings GET_SESSION already returns on every snapshot —
+// stashed here (mirrors currentQuiz's own module-level pattern) so
+// renderQuizCompleteCard() has it without threading it through every
+// call site (quizAdvance() re-renders with no fresh data of its own).
+let lastKnownQuizStandings = [];
 // Guards the one-time display-name pre-fill in renderContinuation()
 // so a later poll tick (sync now keeps running through
 // SESSION_COMPLETE — see participantRefresh) never overwrites text
@@ -900,7 +925,16 @@ function renderQuizCard() {
     quizTimerInterval = null;
   }
 
-  if (!currentQuiz) {
+  // Founder iPhone playtest correction: once the Quiz closes, the
+  // participant leaves the active-question presentation entirely — a
+  // dedicated card (see renderQuizCompleteCard, which self-guards on
+  // currentQuiz/closed) owns the screen from there, never a repurposed
+  // "last question" view. Quiz ending does not mean the Session ended
+  // (see that function's own comment) — quizCard simply hides itself
+  // for both "no Quiz" and "Quiz closed," identically.
+  renderQuizCompleteCard();
+
+  if (!currentQuiz || currentQuiz.closed) {
     card.style.display = "none";
     return;
   }
@@ -909,10 +943,6 @@ function renderQuizCard() {
 
   function renderRemaining() {
     const remainingMs = new Date(currentQuiz.closesAt).getTime() - Date.now();
-    if (currentQuiz.closed) {
-      document.getElementById("quizTimeRemaining").textContent = "Quiz closed";
-      return;
-    }
     const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
     const minutes = Math.floor(remainingSeconds / 60);
     const seconds = remainingSeconds % 60;
@@ -923,33 +953,10 @@ function renderQuizCard() {
     }
   }
   renderRemaining();
-  if (!currentQuiz.closed) {
-    quizTimerInterval = setInterval(renderRemaining, 1000);
-  }
+  quizTimerInterval = setInterval(renderRemaining, 1000);
 
   const questions = currentQuiz.questions || [];
   if (questions.length === 0) {
-    return;
-  }
-
-  if (currentQuiz.closed) {
-    const index = Math.min(quizLocalQuestionIndex, questions.length - 1);
-    const question = questions[index];
-    document.getElementById("quizQuestionLabel").textContent =
-      `Question ${index + 1} of ${questions.length} — Final Results`;
-    document.getElementById("quizPromptText").textContent = question.promptText;
-    renderQuizOptionButtons(question, false);
-    document.getElementById("quizNextButton").style.display = "none";
-    document.getElementById("quizWaitingMessage").style.display = "none";
-
-    const banner = document.getElementById("ownQuizCorrectnessBanner");
-    if (!question.answered) {
-      banner.innerHTML = `<div class="correctness-banner wrong">No answer was submitted for this question.</div>`;
-    } else {
-      banner.innerHTML = question.isCorrect
-        ? `<div class="correctness-banner correct">✓ Correct!</div>`
-        : `<div class="correctness-banner wrong">✗ Not quite — the correct answer is highlighted below.</div>`;
-    }
     return;
   }
 
@@ -984,6 +991,111 @@ function renderQuizCard() {
   }
 }
 
+// 1st/2nd/3rd/... — standard competition ranking (ties share a place;
+// the next distinct score skips ranks accordingly, e.g. 1,1,3), applied
+// to whatever standings list is passed in. No existing placement
+// helper exists elsewhere in this file to mirror (Voting's own
+// `placement` is a different, vote-tally concept) — this is the
+// smallest honest implementation, not a new scoring rule.
+function ordinalSuffix(n) {
+  const rem100 = n % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1: return `${n}st`;
+    case 2: return `${n}nd`;
+    case 3: return `${n}rd`;
+    default: return `${n}th`;
+  }
+}
+
+function computePlacement(sortedStandings, participantId) {
+  let rank = 1;
+  for (let i = 0; i < sortedStandings.length; i++) {
+    if (i > 0 && sortedStandings[i].score < sortedStandings[i - 1].score) {
+      rank = i + 1;
+    }
+    if (sortedStandings[i].participantId === participantId) return rank;
+  }
+  return null;
+}
+
+// Founder iPhone playtest correction. Canonical Product decision this
+// implements: Quiz Complete does NOT mean Session Complete — a Session
+// may run several activities (Quiz, then Open Response, then Voting,
+// ...) before the host explicitly ends it. This card is therefore the
+// Quiz's own completion/result presentation, entirely distinct from
+// the Session-level winnerBanner/continuationCard, which stay gated on
+// the real SESSION_COMPLETE state exactly as before — untouched here.
+// Self-guards on currentQuiz so every caller can invoke it
+// unconditionally; hides whenever no Quiz has ever run, or the current
+// one is still open (renderQuizCard owns that state instead).
+function renderQuizCompleteCard() {
+  const card = document.getElementById("quizCompleteCard");
+  // Hides once the Session itself has genuinely ended, not merely once
+  // the Quiz has — at that point the pre-existing dedicated
+  // SESSION_COMPLETE screen (stateCard/winnerBanner/standingsCard/
+  // continuationCard, all untouched by this change) is the terminal
+  // experience, per the explicit "Quiz Complete does not mean Session
+  // Complete, but End Session does" distinction this correction exists
+  // to enforce — showing both at once would be redundant, not merely
+  // extra.
+  if (!currentQuiz || !currentQuiz.closed || currentSessionState === "SESSION_COMPLETE") {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+
+  const questions = currentQuiz.questions || [];
+  const correctCount = questions.filter((q) => q.isCorrect === true).length;
+  const pointsEarned = questions.reduce(
+    (sum, q) => sum + (q.isCorrect ? q.pointsForCorrect : 0),
+    0
+  );
+  document.getElementById("quizCompleteScore").textContent =
+    `Your result: ${correctCount} / ${questions.length} correct`;
+  document.getElementById("quizCompletePoints").textContent =
+    `Gaming points earned: ${pointsEarned}`;
+
+  const sorted = [...lastKnownQuizStandings].sort((a, b) => b.score - a.score);
+  const myPlacement = computePlacement(sorted, participantState.participantId);
+  document.getElementById("quizCompletePlacement").textContent =
+    myPlacement ? `Placement: ${ordinalSuffix(myPlacement)}` : "";
+
+  const winnerEl = document.getElementById("quizCompleteWinner");
+  const maxScore = sorted.length > 0 ? sorted[0].score : 0;
+  if (maxScore === 0) {
+    winnerEl.style.display = "block";
+    winnerEl.textContent = "No winner determined — no points were awarded.";
+  } else {
+    const winners = sorted.filter((s) => s.score === maxScore);
+    const iAmWinner = winners.some((w) => w.participantId === participantState.participantId);
+    const names = winners.map((w) => w.displayName).join(" & ");
+    winnerEl.style.display = "block";
+    winnerEl.textContent = iAmWinner
+      ? (winners.length > 1 ? `You're a joint winner! (${maxScore} pts)` : `You won! (${maxScore} pts)`)
+      : winners.length > 1
+        ? `Joint winners: ${names} (${maxScore} pts)`
+        : `Winner: ${names} (${maxScore} pts)`;
+  }
+
+  document.getElementById("quizCompleteStandingsList").innerHTML = sorted
+    .map((s) => {
+      const isOwn = s.participantId === participantState.participantId;
+      return `<div class="standing-row ${isOwn ? "own" : ""}">
+        <div class="standing-name">${s.displayName}${isOwn ? ' <span class="you">(you)</span>' : ""}</div>
+        <div class="standing-score">${s.score}</div>
+      </div>`;
+    })
+    .join("");
+
+  // This card only ever renders while currentSessionState is not yet
+  // SESSION_COMPLETE (see the guard above), so the message is always
+  // the "Quiz over, Session continues" one — never the terminal one,
+  // which is the pre-existing dedicated SESSION_COMPLETE screen's job.
+  document.getElementById("quizCompleteWaiting").textContent =
+    "Waiting for the host to start the next activity…";
+}
+
 // Reuses the .option-btn / .option-btn-list CSS Multiple Choice
 // already built, mirroring renderOptionButtons' shape — only the
 // click handler (selectQuizOption vs selectOption) and backing data
@@ -1015,6 +1127,19 @@ function renderQuizOptionButtons(question, clickable) {
     .join("");
 }
 
+// Founder iPhone playtest correction: the previous version awaited a
+// full second GET_SESSION round trip after every successful submission
+// before Next/Finish ever became available — a real, measured, doubled
+// latency for no correctness reason, since the 200 response itself
+// already proves the server accepted exactly this answer. The
+// correctness boundary is unchanged: nothing here treats a submission
+// as successful before the server confirms it (still gated on
+// `r.status === 200`), and this never predicts or guesses at a pending
+// result — it mirrors, locally, precisely what the server has already
+// authoritatively done. participantRefresh() still runs immediately
+// after, for full reconciliation (other participants' progress,
+// anything else that changed) — it simply no longer blocks this tab's
+// own responsiveness to its own action.
 async function selectQuizOption(interactionInstanceId, index) {
   const r = await postJson(
     `/api/sessions/${participantState.sessionId}/submit-quiz`,
@@ -1024,6 +1149,16 @@ async function selectQuizOption(interactionInstanceId, index) {
   show("SUBMIT_QUIZ_RESPONSE (" + r.status + ")", r.json);
   if (r.status === 200) {
     renderNotice(null);
+    if (currentQuiz && currentQuiz.questions) {
+      const question = currentQuiz.questions.find(
+        (q) => q.interactionInstanceId === interactionInstanceId
+      );
+      if (question) {
+        question.answered = true;
+        question.selectedOptionIndex = index;
+      }
+      renderQuizCard();
+    }
   } else {
     renderNotice(classifyError(r));
   }
@@ -1289,6 +1424,7 @@ function applySessionSnapshot(data) {
     }
     currentQuiz = incomingQuiz;
   }
+  if ("standings" in data) lastKnownQuizStandings = data.standings || [];
 
   const effectiveState = computeEffectiveState(data.state, data.interactionState);
   renderStepper(effectiveState);

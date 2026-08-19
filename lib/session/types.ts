@@ -400,6 +400,17 @@ export interface QuizQuestionSummary {
   selectedOptionIndex: number | null;
   correctOptionIndex: number | null;
   isCorrect: boolean | null;
+  /**
+   * The question's configured point value — already known,
+   * authoring-time data (mirrors preparedQuestions' own
+   * pointsForCorrect), not a new scoring concept. Exposed so a
+   * participant-side "Quiz complete" summary can show points earned
+   * from this Quiz specifically without inventing a second ledger:
+   * sum(pointsForCorrect where isCorrect) equals exactly what
+   * close_quiz_atomically already wrote to point_awards for this
+   * participant's Quiz questions.
+   */
+  pointsForCorrect: number;
 }
 
 /**

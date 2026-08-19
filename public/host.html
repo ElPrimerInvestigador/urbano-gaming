@@ -211,11 +211,17 @@
   .standing-row:last-child { border-bottom: none; }
   .standing-name { flex: 1; font-size: 14px; }
   .standing-score { font-weight: 700; font-size: 16px; min-width: 40px; text-align: right; color: var(--gold); }
-  .award-input {
-    width: 64px; font-family: inherit; font-size: 13px; padding: 6px 8px;
-    border-radius: 6px; border: 1px solid var(--line);
-  }
-  .award-btn { padding: 6px 10px; font-size: 13px; margin: 0; }
+  /* Founder iPhone playtest correction: the previous numeric
+     spinner (type="number") was awkward to operate on a phone —
+     dragging/typing a value then hitting a separate "Award" button in
+     the time available felt fiddly. Replaced with a single fixed
+     quick-tap action; sized as its own comfortable touch target
+     (mirrors the Quiz-only button correction elsewhere in this file)
+     rather than the small inline size the old text-plus-button pair
+     used. min-height raised 40px -> 44px per final mobile re-measurement
+     — scoped to this one control only, not the shared button/.btn-secondary
+     rules every other control in this file still uses. */
+  .award-btn { padding: 8px 14px; font-size: 13px; margin: 0; min-height: 44px; }
   .winner-banner {
     margin-top: 12px; padding: 12px 14px; border-radius: 8px; font-weight: 700;
     text-align: center; background: var(--gold-bg); color: var(--gold); border: 1px solid var(--gold);
@@ -508,11 +514,16 @@
         <!-- Quiz Experience: the only configuration this proving case
              needs is a duration — question content reuses the existing
              prepared-question queue exactly as Trivia does (see
-             startQuizTurn()). Bound (30-3600s) mirrors
-             start_quiz_atomically's own authoritative check. -->
+             startQuizTurn()). Member-facing input is minutes (founder
+             iPhone playtest correction — "Duration (seconds)" asked the
+             host to do 300/60 math in their head); converted to seconds
+             at the API boundary only. Bound (0.5-60 min = 30-3600s)
+             mirrors start_quiz_atomically's own authoritative check
+             exactly — the authoritative deadline model itself is
+             unchanged, only this input's display unit. -->
         <div id="quizStartForm" class="collapsed">
-          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Duration (seconds)</label>
-          <input type="number" id="quizDurationInput" value="120" min="30" max="3600" step="1" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" />
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Duration (minutes)</label>
+          <input type="number" id="quizDurationInput" value="2" min="0.5" max="60" step="0.5" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" />
           <div class="room-code-hint" id="quizQuestionCountHint" style="margin-bottom:8px;"></div>
         </div>
 
@@ -824,6 +835,11 @@ let itemFilterText = "";
 // to disable a specific participant's control while its own request is
 // pending, not to deduplicate distinct actions.
 let awardInFlight = {};
+// Founder iPhone playtest correction: the manual Award control's
+// numeric spinner input was replaced with one fixed quick-tap amount.
+// No other preset value carries founder/Product authority, so only one
+// is exposed — see the standings-row markup and awardPoints() below.
+const AWARD_POINTS_QUICK_ACTION_POINTS = 10;
 // Structural Tier 2 (UI Convergence). Whether the Authoring Workspace's
 // "Manage Content" auto-collapse has already fired for this session —
 // fires exactly once, on the transition into LOBBY_LOCKED, so a host
@@ -2094,9 +2110,17 @@ function renderStandings(standings) {
   document.getElementById("standingsList").innerHTML = sorted
     .map((s) => {
       const pending = Boolean(awardInFlight[s.participantId]);
+      // Founder iPhone playtest correction: a single fixed quick-tap
+      // action (+10) replaces the numeric-spinner-plus-Award-button
+      // pair. No second preset value is included — no other amount has
+      // founder/Product authority, so none was invented (see
+      // AWARD_POINTS_QUICK_ACTION_POINTS below). Favors speed per
+      // explicit instruction: immediate on tap, no confirmation step —
+      // the existing awardInFlight in-flight guard (unchanged, see
+      // awardPoints()) is what actually prevents a double-tap from
+      // creating two awards, not a confirmation dialog.
       const controls = canAward
-        ? `<input type="number" min="1" max="10000" step="1" class="award-input" id="awardInput-${s.participantId}" placeholder="pts" ${pending ? "disabled" : ""} />
-           <button class="btn-secondary award-btn" ${pending ? "disabled" : ""} onclick="awardPoints('${s.participantId}')">${pending ? "Awarding…" : "Award"}</button>`
+        ? `<button class="btn-secondary award-btn" ${pending ? "disabled" : ""} onclick="awardPoints('${s.participantId}', ${AWARD_POINTS_QUICK_ACTION_POINTS})">${pending ? "Awarding…" : `+${AWARD_POINTS_QUICK_ACTION_POINTS}`}</button>`
         : "";
       return `<div class="standing-row">
         <div class="standing-name">${s.displayName}</div>
@@ -2396,7 +2420,13 @@ async function startTurn() {
 // input instead. See startQuiz.ts's own comment for why this is a
 // dedicated command rather than a generalization of START_SESSION.
 async function startQuizTurn() {
-  const durationSeconds = Number(document.getElementById("quizDurationInput").value);
+  // Member-facing input is minutes (see quizDurationInput's own
+  // comment) — converted to whole seconds only here, at the API
+  // boundary. start_quiz_atomically's own authoritative bound and
+  // database-time deadline computation are unchanged; this is a
+  // display-unit conversion, not a change to deadline authority.
+  const durationMinutes = Number(document.getElementById("quizDurationInput").value);
+  const durationSeconds = Math.round(durationMinutes * 60);
   const r = await postJson(`/api/sessions/${hostState.sessionId}/start-quiz`, {
     hostToken: hostState.hostToken,
     durationSeconds,
@@ -2591,15 +2621,21 @@ async function triviaNextQuestion() {
 // here, or in the database, treats two genuinely distinct clicks as an
 // error, because the ledger permits multiple independent awards for
 // the same participant and interaction.
-async function awardPoints(participantId) {
+// Founder iPhone playtest correction: `points` is now always the one
+// fixed quick-action amount (AWARD_POINTS_QUICK_ACTION_POINTS), passed
+// directly by the button's onclick — no input field to read or
+// validate client-side. The award write boundary itself is completely
+// unchanged: same atomic AWARD_POINTS command, same per-action
+// idempotencyKey (fresh per tap, exactly as before — see awardInFlight's
+// own doc comment for why that is correct, not a regression), same
+// awardInFlight in-flight guard preventing a double-tap on one intended
+// action from firing two requests. A rapid double-tap is blocked by
+// that guard (this function returns immediately on the second call
+// while the first is still pending) — not by a confirmation dialog,
+// per the explicit "favor speed" instruction.
+async function awardPoints(participantId, points) {
   if (awardInFlight[participantId]) return;
-
-  const input = document.getElementById(`awardInput-${participantId}`);
-  const points = input ? parseInt(input.value, 10) : NaN;
-  if (!Number.isInteger(points) || points <= 0) {
-    renderNotice({ category: "validation", message: "Enter a whole number of points from 1 to 10000 before awarding." });
-    return;
-  }
+  if (!Number.isInteger(points) || points <= 0) return;
 
   const idempotencyKey = crypto.randomUUID();
   awardInFlight[participantId] = idempotencyKey;

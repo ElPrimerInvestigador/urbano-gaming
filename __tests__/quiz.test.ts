@@ -11,6 +11,7 @@ import { submitQuizResponse } from "../lib/session/submitQuizResponse";
 import { closeQuiz } from "../lib/session/closeQuiz";
 import { getSession } from "../lib/session/getSession";
 import { startSession } from "../lib/session/startSession";
+import { completeSession } from "../lib/session/completeSession";
 import { InMemorySessionRepository } from "../lib/session/db/inMemorySessionRepository";
 import {
   InvalidQuizDurationError,
@@ -723,5 +724,163 @@ describe("Reconnect", () => {
     );
     expect(q1?.answered).toBe(true);
     expect(q3?.answered).toBe(false);
+  });
+});
+
+describe("Quiz completion vs Session completion (founder iPhone playtest correction)", () => {
+  // Load-bearing regression test for the canonical Product decision:
+  // QUIZ COMPLETE does not mean SESSION COMPLETE. Only an explicit
+  // COMPLETE_SESSION call may create the terminal state — Close Quiz
+  // must never do so implicitly, and a Session must remain able to run
+  // another activity (here, Open Response) after a Quiz closes, right
+  // up until the host actually ends the Session.
+  it("Quiz closing leaves the Session active-capable; a subsequent Open Response works; only explicit End Session reaches SESSION_COMPLETE", async () => {
+    const repo = new InMemorySessionRepository();
+    const { session, alex } = await setupPreparedQuiz(repo);
+    const quizResult = await startQuiz(repo, session.sessionId, session.hostToken, 120);
+    await submitQuizResponse(
+      repo, session.sessionId, alex.participantToken,
+      repo._allInteractionInstances()[0].interactionInstanceId, 0
+    );
+
+    await closeQuiz(repo, session.sessionId, quizResult.segmentId, session.hostToken);
+
+    // Quiz Complete must not have completed the Session.
+    const afterQuizClose = await getSession(repo, session.sessionId, session.hostToken);
+    expect(afterQuizClose.state).toBe("LOBBY_LOCKED");
+    expect(afterQuizClose.currentQuiz?.closed).toBe(true);
+
+    // The host can start an entirely different activity in the same
+    // Session — Open Response, per the accepted mixed-Session model.
+    const openResponse = await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "What's your favorite color?",
+    });
+
+    const duringOpenResponse = await getSession(repo, session.sessionId, alex.participantToken);
+    // The participant's read model has moved on from the Quiz-complete
+    // state entirely — currentQuiz resolves null once the current
+    // Interaction Instance belongs to a non-Quiz Segment (see the
+    // existing Segment-isolation regression above for the Trivia
+    // equivalent of this same invariant).
+    expect(duringOpenResponse.currentQuiz).toBeNull();
+    expect(duringOpenResponse.currentInteractionInstanceId).toBe(openResponse.interactionInstanceId);
+    expect(duringOpenResponse.currentPrompt?.text).toBe("What's your favorite color?");
+    expect(duringOpenResponse.state).toBe("LOBBY_LOCKED");
+
+    // Only now, on an explicit End Session, does the Session actually
+    // reach its terminal state.
+    await completeSession(repo, session.sessionId, session.hostToken);
+    const afterEndSession = await getSession(repo, session.sessionId, session.hostToken);
+    expect(afterEndSession.state).toBe("SESSION_COMPLETE");
+  });
+
+  it("does not leak another participant's raw Quiz answer through the mixed-session transition", async () => {
+    const repo = new InMemorySessionRepository();
+    const { session, alex, jordan } = await setupPreparedQuiz(repo);
+    const quizResult = await startQuiz(repo, session.sessionId, session.hostToken, 120);
+    const instances = repo._allInteractionInstances();
+    await submitQuizResponse(repo, session.sessionId, alex.participantToken, instances[0].interactionInstanceId, 0);
+    await submitQuizResponse(repo, session.sessionId, jordan.participantToken, instances[0].interactionInstanceId, 1);
+    await closeQuiz(repo, session.sessionId, quizResult.segmentId, session.hostToken);
+
+    await startSession(repo, session.sessionId, session.hostToken, {
+      engineType: "OPEN_RESPONSE",
+      promptText: "Ad-hoc question",
+    });
+
+    // Still true after the Session has moved on to a new activity —
+    // the closed Quiz's per-participant answers remain unreachable to
+    // any other participant, exactly as before the transition.
+    const alexView = await getSession(repo, session.sessionId, alex.participantToken);
+    const jordanView = await getSession(repo, session.sessionId, jordan.participantToken);
+    expect(alexView.submissions).toBeNull();
+    expect(jordanView.submissions).toBeNull();
+    expect(alexView.currentQuiz).toBeNull();
+    expect(jordanView.currentQuiz).toBeNull();
+  });
+});
+
+describe("Quiz question pointsForCorrect (completion-screen scoring)", () => {
+  it("exposes each question's configured point value, unconditionally (not privacy-sensitive), so a participant can total their own Quiz points", async () => {
+    const repo = new InMemorySessionRepository();
+    const { session, alex } = await setupPreparedQuiz(repo);
+    await startQuiz(repo, session.sessionId, session.hostToken, 120);
+    const instances = repo
+      ._allInteractionInstances()
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+    // Q1 and Q3 (10 pts each) correct, Q2 (10 pts) wrong.
+    await submitQuizResponse(repo, session.sessionId, alex.participantToken, instances[0].interactionInstanceId, 0);
+    await submitQuizResponse(repo, session.sessionId, alex.participantToken, instances[1].interactionInstanceId, 0);
+    await submitQuizResponse(repo, session.sessionId, alex.participantToken, instances[2].interactionInstanceId, 2);
+    const window = repo._allQuizWindows()[0];
+    await closeQuiz(repo, session.sessionId, window.segmentId, session.hostToken);
+
+    const alexView = await getSession(repo, session.sessionId, alex.participantToken);
+    const questions = alexView.currentQuiz!.questions!;
+    expect(questions.every((q) => typeof q.pointsForCorrect === "number")).toBe(true);
+    const earnedFromQuiz = questions.reduce(
+      (sum, q) => sum + (q.isCorrect ? q.pointsForCorrect : 0),
+      0
+    );
+    // Q1 (10, correct) + Q3 (15, correct) = 25; matches the point_awards
+    // total already asserted elsewhere for this exact scoring pattern.
+    expect(earnedFromQuiz).toBe(25);
+    const standing = alexView.standings.find((s) => s.participantId === alex.participantId);
+    expect(standing?.score).toBe(earnedFromQuiz);
+  });
+});
+
+describe("host.html / participant.html UI-signature regressions (founder iPhone playtest correction)", () => {
+  // No DOM/render test harness exists in this repository (no jsdom or
+  // @testing-library dependency — see the earlier CSS-collapse-rule
+  // regression test above for the identical precedent and reasoning).
+  // These are the same kind of focused static-source assertions,
+  // extended to this pass's UI corrections.
+  const hostHtml = readFileSync(join(__dirname, "..", "public", "host.html"), "utf8");
+  const participantHtml = readFileSync(join(__dirname, "..", "public", "participant.html"), "utf8");
+
+  it("host.html asks for Quiz duration in minutes, not seconds, and converts to seconds only at the API boundary", () => {
+    expect(hostHtml).toMatch(/>Duration \(minutes\)</);
+    // The old label text may still appear inside an explanatory code
+    // comment (documenting what changed and why) — only the rendered
+    // label markup itself must no longer say seconds.
+    expect(hostHtml).not.toMatch(/>Duration \(seconds\)</);
+    expect(hostHtml).toMatch(/durationMinutes\s*\*\s*60/);
+  });
+
+  it("host.html's manual Award control is a fixed quick-tap action, not a numeric spinner input", () => {
+    expect(hostHtml).not.toMatch(/class="award-input"/);
+    expect(hostHtml).not.toMatch(/awardInput-/);
+    expect(hostHtml).toMatch(/AWARD_POINTS_QUICK_ACTION_POINTS\s*=\s*10/);
+    expect(hostHtml).toMatch(/if\s*\(awardInFlight\[participantId\]\)\s*return;/);
+  });
+
+  it("participant.html defines a dedicated Quiz-complete rendering state, distinct from the active-question card", () => {
+    expect(participantHtml).toMatch(/id="quizCompleteCard"/);
+    expect(participantHtml).toMatch(/Quiz Complete/);
+    expect(participantHtml).toMatch(/function renderQuizCompleteCard/);
+    // The old "Question N of N — Final Results" repurposed-active-card
+    // rendering must be gone, not merely supplemented.
+    expect(participantHtml).not.toMatch(/— Final Results`/);
+  });
+
+  it("participant.html's Quiz-complete card is guarded off once the Session itself completes, deferring to the existing terminal screen", () => {
+    expect(participantHtml).toMatch(/currentSessionState === "SESSION_COMPLETE"/);
+  });
+
+  it("participant.html updates the answered question locally right after a successful submit-quiz response, before the follow-up refresh", () => {
+    const fnMatch = participantHtml.match(
+      /async function selectQuizOption[\s\S]*?\n}/
+    );
+    expect(fnMatch).not.toBeNull();
+    const fnBody = fnMatch![0];
+    const statusCheckIndex = fnBody.indexOf('r.status === 200');
+    const localUpdateIndex = fnBody.indexOf('question.answered = true');
+    const refreshIndex = fnBody.lastIndexOf('await participantRefresh()');
+    expect(statusCheckIndex).toBeGreaterThan(-1);
+    expect(localUpdateIndex).toBeGreaterThan(statusCheckIndex);
+    expect(refreshIndex).toBeGreaterThan(localUpdateIndex);
   });
 });

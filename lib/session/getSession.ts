@@ -344,6 +344,7 @@ export async function getSession(
       correctOptionIndex: number;
       selectedOptionIndex: number | null;
       answeredByCaller: boolean;
+      pointsForCorrect: number;
     };
     const questionRows: QuizQuestionRow[] = [];
 
@@ -380,6 +381,7 @@ export async function getSession(
         correctOptionIndex: details?.correctOptionIndex ?? -1,
         selectedOptionIndex: callerSubmission ? Number(callerSubmission.text) : null,
         answeredByCaller: callerSubmission !== undefined,
+        pointsForCorrect: details?.pointsForCorrect ?? 0,
       });
     }
 
@@ -402,6 +404,7 @@ export async function getSession(
               ? row.selectedOptionIndex !== null &&
                 row.selectedOptionIndex === row.correctOptionIndex
               : null,
+            pointsForCorrect: row.pointsForCorrect,
           }))
         : null;
 
