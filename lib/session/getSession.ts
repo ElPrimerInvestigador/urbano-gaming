@@ -1,5 +1,9 @@
 import type { SessionRepository } from "./db/sessionRepository";
-import type { GetSessionResult } from "./types";
+import type {
+  GetSessionResult,
+  QuizQuestionSummary,
+  QuizParticipantProgressSummary,
+} from "./types";
 import { SessionNotFoundError, SessionAccessDeniedError } from "./types";
 
 /**
@@ -307,6 +311,146 @@ export async function getSession(
         }
       : null;
 
+  // Quiz Experience (self-paced, independent participant progression —
+  // distinct from Trivia). Entirely additive: every field above
+  // (currentInteraction, currentPrompt, interactionState,
+  // segmentNumber, interactionNumber) keeps its unchanged, pre-existing
+  // Trivia/Open Response/Voting-only meaning even while a Quiz is
+  // active — they simply resolve to the last-created Quiz question
+  // Interaction Instance, which Quiz's own UI never reads. See this
+  // platform's implementation-readiness design for why Quiz's read
+  // model is a parallel branch rather than a modification of the
+  // existing single-current-instance resolution above.
+  const currentSegmentId = currentInteraction?.segmentId ?? null;
+  const quizWindow = currentSegmentId
+    ? await repo.getQuizWindowForSegment(currentSegmentId)
+    : null;
+
+  let currentQuiz: GetSessionResult["currentQuiz"] = null;
+  if (quizWindow && currentSegmentId) {
+    const quizSegment = segments.find((s) => s.segmentId === currentSegmentId);
+    const quizInstances = interactionInstances
+      .filter(
+        (i) => i.segmentId === currentSegmentId && i.engineType === "MULTIPLE_CHOICE"
+      )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
+    const closed = quizWindow.closedAt !== null;
+
+    type QuizQuestionRow = {
+      instanceId: string;
+      promptText: string;
+      options: string[];
+      correctOptionIndex: number;
+      selectedOptionIndex: number | null;
+      answeredByCaller: boolean;
+    };
+    const questionRows: QuizQuestionRow[] = [];
+
+    // Host-facing aggregate only — a count per participant, never
+    // answer content. See QuizParticipantProgressSummary's doc comment
+    // for why this is the deliberate privacy boundary.
+    const answeredCountByParticipantId = new Map<string, number>();
+
+    for (const instance of quizInstances) {
+      const [promptRecord, details, submissionsForInstance] = await Promise.all([
+        repo.getPromptById(instance.promptId),
+        repo.getMultipleChoiceDetailsForInteraction(instance.interactionInstanceId),
+        repo.getSubmissionsForInteractionInstance(instance.interactionInstanceId),
+      ]);
+
+      for (const submission of submissionsForInstance) {
+        answeredCountByParticipantId.set(
+          submission.participantId,
+          (answeredCountByParticipantId.get(submission.participantId) ?? 0) + 1
+        );
+      }
+
+      const callerSubmission =
+        !isHost && callingParticipant
+          ? submissionsForInstance.find(
+              (s) => s.participantId === callingParticipant.participantId
+            )
+          : undefined;
+
+      questionRows.push({
+        instanceId: instance.interactionInstanceId,
+        promptText: promptRecord?.text ?? "",
+        options: details?.options ?? [],
+        correctOptionIndex: details?.correctOptionIndex ?? -1,
+        selectedOptionIndex: callerSubmission ? Number(callerSubmission.text) : null,
+        answeredByCaller: callerSubmission !== undefined,
+      });
+    }
+
+    // CRITICAL Quiz privacy rule: correctOptionIndex/isCorrect stay
+    // null while the Quiz is open, regardless of whether this
+    // participant has already answered — another participant may not
+    // have reached this question yet, and revealing correctness early
+    // to anyone would leak it. See QuizQuestionSummary's doc comment.
+    const questions: QuizQuestionSummary[] | null =
+      !isHost && callingParticipant
+        ? questionRows.map((row, index) => ({
+            interactionInstanceId: row.instanceId,
+            ordinal: index + 1,
+            promptText: row.promptText,
+            options: row.options,
+            answered: row.answeredByCaller,
+            selectedOptionIndex: row.selectedOptionIndex,
+            correctOptionIndex: closed ? row.correctOptionIndex : null,
+            isCorrect: closed
+              ? row.selectedOptionIndex !== null &&
+                row.selectedOptionIndex === row.correctOptionIndex
+              : null,
+          }))
+        : null;
+
+    const myProgress =
+      !isHost && callingParticipant
+        ? {
+            answered: questionRows.filter((row) => row.answeredByCaller).length,
+            total: questionRows.length,
+          }
+        : null;
+
+    const participantProgress: QuizParticipantProgressSummary[] | null = isHost
+      ? participants.map((p) => ({
+          participantId: p.participantId,
+          displayName: p.displayName,
+          answered: answeredCountByParticipantId.get(p.participantId) ?? 0,
+          total: questionRows.length,
+        }))
+      : null;
+
+    currentQuiz = {
+      segmentId: currentSegmentId,
+      segmentNumber: quizSegment?.segmentOrdinal ?? 0,
+      closesAt: quizWindow.closesAt,
+      closed,
+      totalQuestions: questionRows.length,
+      questions,
+      myProgress,
+      participantProgress,
+    };
+
+    // CRITICAL Quiz privacy rule (server-side, network-level — not a
+    // client-rendering concern): the legacy `submissions` field above
+    // is scoped only to currentInteraction (the Quiz's *last-created*
+    // question), populated for every caller once that instance reaches
+    // RESULT_REVEAL — which Close Quiz sets on every Quiz Interaction
+    // Instance at once. Left unguarded, this would transmit every
+    // participant's raw selected answer to the Quiz's final question,
+    // to every other participant and the host, over the actual
+    // GET_SESSION response — independent of, and in addition to, any
+    // client-side rendering. Quiz has its own dedicated, correctly
+    // privacy-scoped equivalent (currentQuiz.questions /
+    // currentQuiz.participantProgress above), so the legacy field is
+    // unconditionally suppressed whenever the current interaction
+    // belongs to a Quiz Segment, exactly as if no interaction were
+    // active for this field's purposes.
+    submissions = null;
+  }
+
   // Session Continuity slice: a successor can only exist once this
   // session is SESSION_COMPLETE (CREATE_SUCCESSOR_SESSION requires it),
   // so the lookup is skipped for every other state rather than adding
@@ -348,5 +492,6 @@ export async function getSession(
     myVoteCandidateId,
     votingResults,
     questionProgress,
+    currentQuiz,
   };
 }

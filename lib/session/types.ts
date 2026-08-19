@@ -379,6 +379,111 @@ export interface QuestionProgress {
   total: number;
 }
 
+/**
+ * Quiz Experience (self-paced, independent participant progression —
+ * distinct from Trivia). One question within an active Quiz, from the
+ * requesting participant's own point of view. `selectedOptionIndex` is
+ * that participant's own answer (safe — it is their own data).
+ * `correctOptionIndex` and `isCorrect` are null while the Quiz remains
+ * open — the whole point of Quiz's privacy boundary is that no
+ * participant may learn correctness (their own or anyone else's)
+ * before the Quiz closes, since another participant may not have
+ * reached this question yet. Populated only once the owning Quiz's
+ * `closed` becomes true.
+ */
+export interface QuizQuestionSummary {
+  interactionInstanceId: string;
+  ordinal: number;
+  promptText: string;
+  options: string[];
+  answered: boolean;
+  selectedOptionIndex: number | null;
+  correctOptionIndex: number | null;
+  isCorrect: boolean | null;
+}
+
+/**
+ * Host-only, per-participant Quiz facilitation view. Deliberately
+ * carries only a count, never answer content — "Alex 10/10," not what
+ * Alex actually selected. See GET_SESSION's Quiz privacy rule.
+ */
+export interface QuizParticipantProgressSummary {
+  participantId: string;
+  displayName: string;
+  answered: number;
+  total: number;
+}
+
+/**
+ * Quiz Experience read model. Populated whenever the session's most
+ * recently created Segment is a Quiz (has a quiz_windows row) —
+ * entirely additive alongside the existing currentInteraction /
+ * currentPrompt fields, which keep their unchanged, Trivia/Open
+ * Response/Voting-only meaning and are not repurposed for Quiz. `null`
+ * for every session that has never started a Quiz.
+ *
+ * `questions` and `myProgress` are populated for a participant caller
+ * (their own answers only). `participantProgress` is populated for
+ * the host only (aggregate counts, never answer content — see
+ * QuizParticipantProgressSummary). Exactly one of the two is non-null
+ * for any given caller, mirroring `preparedQuestions`' existing
+ * host-vs-participant role split.
+ *
+ * `closesAt` is the server-authoritative deadline; the client renders
+ * a countdown from it but is never the authority on whether time has
+ * run out — see submitQuizResponse/closeQuiz. `closed` is true once
+ * `closedAt` is set (by host manual close or by any client detecting
+ * expiry and triggering CLOSE_QUIZ) — before that point, correctness
+ * and final scoring remain hidden even if the displayed countdown has
+ * reached zero, since the authoritative close transaction may not
+ * have run yet. Final standings are not duplicated here — once
+ * `closed` is true, the existing session-wide `standings` field already
+ * reflects the Quiz's point_awards.
+ */
+export interface QuizSummary {
+  segmentId: string;
+  segmentNumber: number;
+  closesAt: string;
+  closed: boolean;
+  totalQuestions: number;
+  questions: QuizQuestionSummary[] | null;
+  myProgress: { answered: number; total: number } | null;
+  participantProgress: QuizParticipantProgressSummary[] | null;
+}
+
+/** Result of a successful START_QUIZ. */
+export interface StartQuizResult {
+  sessionId: string;
+  segmentId: string;
+  segmentNumber: number;
+  closesAt: string;
+  totalQuestions: number;
+}
+
+/** Result of a successful SUBMIT_QUIZ_RESPONSE. */
+export interface SubmitQuizResponseResult {
+  submissionId: string;
+  sessionId: string;
+  interactionInstanceId: string;
+  participantId: string;
+  selectedOptionIndex: number;
+  updatedAt: string;
+}
+
+/**
+ * Result of a successful CLOSE_QUIZ. `alreadyClosed` distinguishes a
+ * genuine finalization from an idempotent replay (a second host click,
+ * or a benign host-close/expiry-close race) — both return the same
+ * closedAt, but only the former performed evaluation/reveal work in
+ * this call.
+ */
+export interface CloseQuizResult {
+  sessionId: string;
+  segmentId: string;
+  closedAt: string;
+  alreadyClosed: boolean;
+}
+
 /** One question as supplied to PREPARE_QUESTIONS, before validation. */
 export interface PrepareQuestionsInput {
   promptText: string;
@@ -514,6 +619,12 @@ export interface GetSessionResult {
    * and does not carry.
    */
   questionProgress: QuestionProgress | null;
+  /**
+   * Quiz Experience. See QuizSummary's own doc comment for exactly
+   * what this does and does not carry, and for its role split between
+   * host and participant callers.
+   */
+  currentQuiz: QuizSummary | null;
 }
 
 /** Raised when a generated room code collides with an active session. */
@@ -1005,5 +1116,108 @@ export class PredecessorAlreadyHasSuccessorError extends Error {
   constructor() {
     super("This session already has a successor session.");
     this.name = "PredecessorAlreadyHasSuccessorError";
+  }
+}
+
+/**
+ * Quiz Experience. Raised when START_QUIZ is given a duration outside
+ * the accepted bound. A pure input-validation failure, checked
+ * domain-side before the atomic operation runs — mirrors
+ * EmptyPromptTextError's division of responsibility, not a
+ * concurrency-dependent check.
+ */
+export class InvalidQuizDurationError extends Error {
+  constructor() {
+    super("Quiz duration must be between 30 and 3600 seconds.");
+    this.name = "InvalidQuizDurationError";
+  }
+}
+
+/**
+ * Quiz Experience. Raised when START_QUIZ is invoked but no prepared
+ * question remains unconsumed for this session — a Quiz cannot start
+ * with zero questions.
+ */
+export class EmptyQuizQuestionSetError extends Error {
+  constructor() {
+    super("No unconsumed prepared questions exist to start a Quiz.");
+    this.name = "EmptyQuizQuestionSetError";
+  }
+}
+
+/**
+ * Quiz Experience. Raised when SUBMIT_QUIZ_RESPONSE targets an
+ * interactionInstanceId that does not identify a Multiple Choice
+ * Interaction Instance belonging to an active Quiz Segment of this
+ * session — cross-session targeting, cross-Segment targeting, a
+ * non-Quiz (Trivia/Open Response/Voting) instance, and a
+ * never-existed id are all rejected identically, deliberately not
+ * distinguished from each other in the error message (mirrors
+ * SessionAccessDeniedError's own refusal to reveal which part of a
+ * combined check failed).
+ */
+export class QuizInstanceNotFoundError extends Error {
+  constructor() {
+    super(
+      "The target question does not belong to an active Quiz in this session."
+    );
+    this.name = "QuizInstanceNotFoundError";
+  }
+}
+
+/**
+ * Quiz Experience. Raised when SUBMIT_QUIZ_RESPONSE is invoked after
+ * the Quiz's authoritative window has already closed — either
+ * `closed_at` is already set, or the database's own clock has reached
+ * `closes_at`, checked inside the same atomic operation as the
+ * submission itself (never trusting client time). This is the
+ * authoritative late-submission rejection.
+ */
+export class QuizClosedError extends Error {
+  constructor() {
+    super("This Quiz is closed and no longer accepting submissions.");
+    this.name = "QuizClosedError";
+  }
+}
+
+/**
+ * Quiz Experience. Raised when CLOSE_QUIZ targets a Segment with no
+ * quiz_windows row — either segmentId does not belong to this session,
+ * or it names a Segment that was never a Quiz (Trivia/Best-Joke-style
+ * Segments have no window at all).
+ */
+export class QuizNotFoundError extends Error {
+  constructor() {
+    super("No active Quiz exists for this Segment.");
+    this.name = "QuizNotFoundError";
+  }
+}
+
+/**
+ * Quiz Experience. Raised when CLOSE_QUIZ's caller token matches
+ * neither the session's host token nor any participant token of this
+ * session.
+ */
+export class QuizAccessDeniedError extends Error {
+  constructor() {
+    super("Token does not authorize closing this Quiz.");
+    this.name = "QuizAccessDeniedError";
+  }
+}
+
+/**
+ * Quiz Experience. Raised when a participant (not the host) attempts
+ * CLOSE_QUIZ before the authoritative deadline has actually passed —
+ * a participant may only trigger the automatic-expiry path once
+ * `database_now >= closes_at`; only the host may force an early
+ * close. Prevents a participant from unilaterally locking out others
+ * who have not finished.
+ */
+export class QuizExpiryNotReachedError extends Error {
+  constructor() {
+    super(
+      "The Quiz deadline has not passed yet — only the host may close it early."
+    );
+    this.name = "QuizExpiryNotReachedError";
   }
 }

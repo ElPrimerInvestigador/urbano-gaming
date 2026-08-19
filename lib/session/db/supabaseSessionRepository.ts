@@ -36,6 +36,14 @@ import {
   InvalidCandidateSelectionError,
   AmbiguousStartSessionTargetError,
   SelfVoteNotAllowedError,
+  InvalidQuizDurationError,
+  EmptyQuizQuestionSetError,
+  QuizInstanceNotFoundError,
+  QuizClosedError,
+  QuizNotFoundError,
+  QuizAccessDeniedError,
+  QuizExpiryNotReachedError,
+  InvalidOptionSelectionError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -55,6 +63,7 @@ import type {
   VotingCandidateRecord,
   VoteRecord,
   SessionRepository,
+  QuizWindowRecord,
 } from "./sessionRepository";
 import { computeVotingResults } from "./sessionRepository";
 
@@ -1124,6 +1133,260 @@ export class SupabaseSessionRepository implements SessionRepository {
       interactionInstanceId: row.interaction_instance_id,
       candidateId: row.candidate_id,
       updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Quiz Experience. Dedicated, not a generalization of startSession —
+   * see this platform's implementation-readiness design. The SQL
+   * function returns one row per created question; segment_id /
+   * segment_ordinal / closes_at are identical across every row, so
+   * only the first row's copy is used for those, while
+   * interaction_instance_id is collected from every row.
+   */
+  async startQuiz(
+    sessionId: string,
+    hostToken: string,
+    durationSeconds: number
+  ): Promise<{
+    segmentId: string;
+    segmentOrdinal: number;
+    closesAt: string;
+    interactionInstanceIds: string[];
+  }> {
+    const { data, error } = await this.client.rpc("start_quiz_atomically", {
+      p_session_id: sessionId,
+      p_host_token: hostToken,
+      p_duration_seconds: durationSeconds,
+    });
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("INVALID_QUIZ_DURATION")
+      ) {
+        throw new InvalidQuizDurationError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("HOST_TOKEN_MISMATCH")
+      ) {
+        throw new HostTokenMismatchError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("LOBBY_NOT_LOCKED")
+      ) {
+        throw new LobbyNotLockedError(extractStateFromGuardMessage(error.message));
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("PREVIOUS_INTERACTION_NOT_REVEALED")
+      ) {
+        throw new PreviousInteractionNotRevealedError(
+          extractStateFromGuardMessage(error.message) as InteractionState | undefined
+        );
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("EMPTY_QUIZ_QUESTION_SET")
+      ) {
+        throw new EmptyQuizQuestionSetError();
+      }
+
+      throw error;
+    }
+
+    const rows = Array.isArray(data) ? data : [data];
+    const first = rows[0];
+
+    return {
+      segmentId: first.segment_id,
+      segmentOrdinal: first.segment_ordinal,
+      closesAt: first.closes_at,
+      interactionInstanceIds: rows.map((row) => row.interaction_instance_id),
+    };
+  }
+
+  /**
+   * Quiz Experience. Dedicated, not a generalization of submitResponse
+   * — see startQuiz's own comment.
+   */
+  async submitQuizResponse(
+    sessionId: string,
+    participantId: string,
+    participantToken: string,
+    interactionInstanceId: string,
+    selectedOptionIndex: number
+  ): Promise<{
+    submissionId: string;
+    interactionInstanceId: string;
+    updatedAt: string;
+  }> {
+    const { data, error } = await this.client.rpc(
+      "submit_quiz_response_atomically",
+      {
+        p_session_id: sessionId,
+        p_participant_id: participantId,
+        p_participant_token: participantToken,
+        p_interaction_instance_id: interactionInstanceId,
+        p_selected_option_index: selectedOptionIndex,
+      }
+    );
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_ACCESS_DENIED")
+      ) {
+        throw new SessionAccessDeniedError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("QUIZ_INSTANCE_NOT_FOUND")
+      ) {
+        throw new QuizInstanceNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("QUIZ_CLOSED")
+      ) {
+        throw new QuizClosedError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("INVALID_OPTION_SELECTION")
+      ) {
+        throw new InvalidOptionSelectionError();
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      submissionId: row.submission_id,
+      interactionInstanceId: row.interaction_instance_id,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  /**
+   * Quiz Experience. Dedicated, not a generalization of revealResults
+   * — see startQuiz's own comment.
+   */
+  async closeQuiz(
+    sessionId: string,
+    segmentId: string,
+    callerToken: string
+  ): Promise<{
+    segmentId: string;
+    closedAt: string;
+    alreadyClosed: boolean;
+  }> {
+    const { data, error } = await this.client.rpc("close_quiz_atomically", {
+      p_session_id: sessionId,
+      p_segment_id: segmentId,
+      p_caller_token: callerToken,
+    });
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("QUIZ_NOT_FOUND")
+      ) {
+        throw new QuizNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("QUIZ_ACCESS_DENIED")
+      ) {
+        throw new QuizAccessDeniedError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("QUIZ_EXPIRY_NOT_REACHED")
+      ) {
+        throw new QuizExpiryNotReachedError();
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      segmentId: row.segment_id,
+      closedAt: row.closed_at,
+      alreadyClosed: row.already_closed,
+    };
+  }
+
+  async getQuizWindowForSegment(segmentId: string): Promise<QuizWindowRecord | null> {
+    const { data, error } = await this.client
+      .from("quiz_windows")
+      .select("segment_id, closes_at, closed_at")
+      .eq("segment_id", segmentId)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    return {
+      segmentId: data.segment_id,
+      closesAt: data.closes_at,
+      closedAt: data.closed_at,
     };
   }
 }

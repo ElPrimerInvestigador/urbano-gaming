@@ -33,6 +33,14 @@ import {
   VotingSourceInteractionNotEligibleError,
   InvalidCandidateSelectionError,
   SelfVoteNotAllowedError,
+  InvalidQuizDurationError,
+  EmptyQuizQuestionSetError,
+  QuizInstanceNotFoundError,
+  QuizClosedError,
+  QuizNotFoundError,
+  QuizAccessDeniedError,
+  QuizExpiryNotReachedError,
+  InvalidOptionSelectionError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -52,6 +60,7 @@ import type {
   VotingCandidateRecord,
   VoteRecord,
   SessionRepository,
+  QuizWindowRecord,
 } from "./sessionRepository";
 import { computeVotingResults } from "./sessionRepository";
 
@@ -140,6 +149,14 @@ export class InMemorySessionRepository implements SessionRepository {
    * interaction instance, keyed by voteId.
    */
   private votes = new Map<string, VoteRecord>();
+
+  /**
+   * Quiz Experience. One row per Quiz Segment, keyed by segmentId
+   * (matching QuizWindowRecord's own identity — see its doc comment
+   * for why this is the minimum authoritative state that cannot be
+   * derived from anything else already in this repository).
+   */
+  private quizWindows = new Map<string, QuizWindowRecord>();
 
   /**
    * The current interaction instance for a session is "the most
@@ -1221,5 +1238,354 @@ export class InMemorySessionRepository implements SessionRepository {
   /** Test-only helper, not part of the repository interface. */
   _allVotes() {
     return [...this.votes.values()];
+  }
+
+  /**
+   * Quiz Experience. Dedicated, not a generalization of startSession —
+   * see this platform's implementation-readiness design. Mirrors
+   * startSession's own authoritative host-token/session-state re-check
+   * and NEW_SEGMENT allocation exactly, then consumes every currently-
+   * unconsumed prepared question for this session into its own new
+   * Multiple Choice Interaction Instance, all created PROMPT_ACTIVE
+   * together (never lazily — see the accepted design's Seam 3
+   * resolution for why).
+   */
+  async startQuiz(
+    sessionId: string,
+    hostToken: string,
+    durationSeconds: number
+  ): Promise<{
+    segmentId: string;
+    segmentOrdinal: number;
+    closesAt: string;
+    interactionInstanceIds: string[];
+  }> {
+    if (
+      !Number.isInteger(durationSeconds) ||
+      durationSeconds < 30 ||
+      durationSeconds > 3600
+    ) {
+      throw new InvalidQuizDurationError();
+    }
+
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+    if (session.hostToken !== hostToken) {
+      throw new HostTokenMismatchError();
+    }
+    if (session.state !== "LOBBY_LOCKED") {
+      throw new LobbyNotLockedError(session.state);
+    }
+
+    const previousInteraction = this.getCurrentInteractionInstance(sessionId);
+    if (previousInteraction && previousInteraction.state !== "RESULT_REVEAL") {
+      throw new PreviousInteractionNotRevealedError(previousInteraction.state);
+    }
+
+    // Fail fast, before creating any Segment/window, mirroring
+    // start_quiz_atomically's own SQL ordering.
+    const unconsumed = [...this.preparedQuestions.values()]
+      .filter((q) => q.sessionId === sessionId && q.consumedAt === null)
+      .sort((a, b) => a.ordinal - b.ordinal);
+
+    if (unconsumed.length === 0) {
+      throw new EmptyQuizQuestionSetError();
+    }
+
+    const currentSegment = this.getCurrentSegmentForSession(sessionId);
+    const segmentOrdinal = currentSegment ? currentSegment.segmentOrdinal + 1 : 1;
+    const now = new Date().toISOString();
+    const segment: SegmentRecord = {
+      segmentId: randomUUID(),
+      sessionId,
+      segmentOrdinal,
+      createdAt: now,
+    };
+    this.segments.set(segment.segmentId, segment);
+
+    const closesAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
+    this.quizWindows.set(segment.segmentId, {
+      segmentId: segment.segmentId,
+      closesAt,
+      closedAt: null,
+    });
+
+    const interactionInstanceIds: string[] = [];
+    for (const prepared of unconsumed) {
+      const promptId = randomUUID();
+      this.prompts.set(promptId, { promptId, text: prepared.promptText });
+
+      const interactionInstanceId = randomUUID();
+      this.interactionInstances.set(interactionInstanceId, {
+        interactionInstanceId,
+        sessionId,
+        segmentId: segment.segmentId,
+        promptId,
+        state: "PROMPT_ACTIVE",
+        engineType: "MULTIPLE_CHOICE",
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      this.multipleChoiceDetails.set(interactionInstanceId, {
+        interactionInstanceId,
+        options: prepared.options,
+        correctOptionIndex: prepared.correctOptionIndex,
+        pointsForCorrect: prepared.pointsForCorrect,
+      });
+
+      this.preparedQuestions.set(prepared.preparedQuestionId, {
+        ...prepared,
+        consumedAt: now,
+      });
+
+      interactionInstanceIds.push(interactionInstanceId);
+    }
+
+    this.events.push({
+      sessionId,
+      eventType: "QUIZ_STARTED",
+      payload: {
+        segmentId: segment.segmentId,
+        questionCount: interactionInstanceIds.length,
+        closesAt,
+      },
+    });
+
+    return {
+      segmentId: segment.segmentId,
+      segmentOrdinal,
+      closesAt,
+      interactionInstanceIds,
+    };
+  }
+
+  /**
+   * Quiz Experience. Dedicated, not a generalization of submitResponse
+   * — the target Interaction Instance is explicit, not resolved as
+   * "the current one." Authoritative validation mirrors
+   * submit_quiz_response_atomically's SQL exactly: participant
+   * ownership, that the target is a MULTIPLE_CHOICE instance belonging
+   * to a Quiz Segment of this session, that the window is open (never
+   * derived from the instance's own PROMPT_ACTIVE state alone — see
+   * QuizWindowRecord's doc comment), and that the option index is in
+   * bounds.
+   */
+  async submitQuizResponse(
+    sessionId: string,
+    participantId: string,
+    participantToken: string,
+    interactionInstanceId: string,
+    selectedOptionIndex: number
+  ): Promise<{
+    submissionId: string;
+    interactionInstanceId: string;
+    updatedAt: string;
+  }> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    const participant = this.participants.get(participantId);
+    if (!participant || participant.participantToken !== participantToken) {
+      throw new SessionAccessDeniedError();
+    }
+
+    const instance = this.interactionInstances.get(interactionInstanceId);
+    if (
+      !instance ||
+      instance.sessionId !== sessionId ||
+      instance.engineType !== "MULTIPLE_CHOICE"
+    ) {
+      throw new QuizInstanceNotFoundError();
+    }
+
+    const window = this.quizWindows.get(instance.segmentId);
+    if (!window) {
+      throw new QuizInstanceNotFoundError();
+    }
+
+    if (instance.state !== "PROMPT_ACTIVE") {
+      throw new QuizClosedError();
+    }
+
+    if (window.closedAt !== null || Date.now() >= new Date(window.closesAt).getTime()) {
+      throw new QuizClosedError();
+    }
+
+    const details = this.multipleChoiceDetails.get(interactionInstanceId);
+    const optionCount = details?.options.length ?? 0;
+    if (
+      !Number.isInteger(selectedOptionIndex) ||
+      selectedOptionIndex < 0 ||
+      selectedOptionIndex >= optionCount
+    ) {
+      throw new InvalidOptionSelectionError();
+    }
+
+    const now = new Date().toISOString();
+    const existing = [...this.submissions.values()].find(
+      (submission) =>
+        submission.interactionInstanceId === interactionInstanceId &&
+        submission.participantId === participantId
+    );
+
+    const submissionId = existing?.submissionId ?? randomUUID();
+    this.submissions.set(submissionId, {
+      submissionId,
+      sessionId,
+      interactionInstanceId,
+      participantId,
+      promptId: instance.promptId,
+      text: String(selectedOptionIndex),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    });
+
+    this.events.push({
+      sessionId,
+      eventType: "QUIZ_RESPONSE_SUBMITTED",
+      payload: { participantId, interactionInstanceId },
+    });
+
+    return { submissionId, interactionInstanceId, updatedAt: now };
+  }
+
+  /**
+   * Quiz Experience. Dedicated, not a generalization of revealResults
+   * — evaluates and reveals every question in the Quiz Segment
+   * together, in one call, rather than one Interaction Instance at a
+   * time. Idempotent: a second call after closedAt is already set
+   * returns the existing result with no further work. Mirrors
+   * close_quiz_atomically's SQL host-or-participant authority split
+   * exactly.
+   */
+  async closeQuiz(
+    sessionId: string,
+    segmentId: string,
+    callerToken: string
+  ): Promise<{
+    segmentId: string;
+    closedAt: string;
+    alreadyClosed: boolean;
+  }> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    const segment = this.segments.get(segmentId);
+    if (!segment || segment.sessionId !== sessionId) {
+      throw new QuizNotFoundError();
+    }
+
+    const window = this.quizWindows.get(segmentId);
+    if (!window) {
+      throw new QuizNotFoundError();
+    }
+
+    if (window.closedAt !== null) {
+      return { segmentId, closedAt: window.closedAt, alreadyClosed: true };
+    }
+
+    const isHost = callerToken === session.hostToken;
+    const isParticipant = [...this.participants.values()].some(
+      (p) => p.sessionId === sessionId && p.participantToken === callerToken
+    );
+
+    if (!isHost && !isParticipant) {
+      throw new QuizAccessDeniedError();
+    }
+
+    let closedBy: "HOST" | "TIMER";
+    if (isHost) {
+      closedBy = "HOST";
+    } else {
+      if (Date.now() < new Date(window.closesAt).getTime()) {
+        throw new QuizExpiryNotReachedError();
+      }
+      closedBy = "TIMER";
+    }
+
+    const closedAt = new Date().toISOString();
+    this.quizWindows.set(segmentId, { ...window, closedAt });
+
+    // Evaluate every question in this Segment together — mirrors
+    // revealResults' single-instance evaluation (see that method's own
+    // comment) at Segment scope instead.
+    const instancesInSegment = [...this.interactionInstances.values()].filter(
+      (i) => i.segmentId === segmentId
+    );
+
+    for (const instance of instancesInSegment) {
+      const details = this.multipleChoiceDetails.get(instance.interactionInstanceId);
+      if (!details) continue;
+
+      const submissions = await this.getSubmissionsForInteractionInstance(
+        instance.interactionInstanceId
+      );
+
+      for (const submission of submissions) {
+        if (submission.text !== String(details.correctOptionIndex)) {
+          continue;
+        }
+
+        const idempotencyKey = `quiz-auto:${instance.interactionInstanceId}:${submission.participantId}`;
+        const indexKey = `${sessionId}:${idempotencyKey}`;
+        if (this.pointAwardIdempotencyIndex.has(indexKey)) {
+          continue;
+        }
+
+        const pointAwardId = randomUUID();
+        this.pointAwards.set(pointAwardId, {
+          pointAwardId,
+          sessionId,
+          interactionInstanceId: instance.interactionInstanceId,
+          participantId: submission.participantId,
+          points: details.pointsForCorrect,
+          createdAt: new Date().toISOString(),
+        });
+        this.pointAwardIdempotencyIndex.set(indexKey, pointAwardId);
+
+        this.events.push({
+          sessionId,
+          eventType: "POINTS_AWARDED",
+          payload: {
+            pointAwardId,
+            interactionInstanceId: instance.interactionInstanceId,
+            participantId: submission.participantId,
+            points: details.pointsForCorrect,
+          },
+        });
+      }
+
+      if (instance.state !== "RESULT_REVEAL") {
+        this.interactionInstances.set(instance.interactionInstanceId, {
+          ...instance,
+          state: "RESULT_REVEAL",
+          updatedAt: closedAt,
+        });
+      }
+    }
+
+    this.events.push({
+      sessionId,
+      eventType: "QUIZ_CLOSED",
+      payload: { segmentId, closedBy },
+    });
+
+    return { segmentId, closedAt, alreadyClosed: false };
+  }
+
+  async getQuizWindowForSegment(segmentId: string): Promise<QuizWindowRecord | null> {
+    return this.quizWindows.get(segmentId) ?? null;
+  }
+
+  /** Test-only helper, not part of the repository interface. */
+  _allQuizWindows() {
+    return [...this.quizWindows.values()];
   }
 }

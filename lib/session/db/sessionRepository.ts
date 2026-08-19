@@ -331,6 +331,47 @@ export interface PointsAwardedEventRecord extends SessionEventRecord {
 }
 
 /**
+ * Quiz Experience (self-paced, independent participant progression).
+ * The minimum authoritative state that cannot be derived from anything
+ * else already in this schema — see 0041's migration comment for the
+ * full pressure test that trimmed this from a four-column proposal
+ * down to two. `opens_at` is deliberately absent: a Quiz opens exactly
+ * when its Segment is created, so `SegmentRecord.createdAt` already is
+ * that fact. One row per Quiz Segment; `segmentId` is both this
+ * record's identity and its foreign key.
+ */
+export interface QuizWindowRecord {
+  segmentId: string;
+  closesAt: string;
+  closedAt: string | null;
+}
+
+export interface QuizStartedEventRecord extends SessionEventRecord {
+  eventType: "QUIZ_STARTED";
+  payload: {
+    segmentId: string;
+    questionCount: number;
+    closesAt: string;
+  };
+}
+
+export interface QuizResponseSubmittedEventRecord extends SessionEventRecord {
+  eventType: "QUIZ_RESPONSE_SUBMITTED";
+  payload: {
+    participantId: string;
+    interactionInstanceId: string;
+  };
+}
+
+export interface QuizClosedEventRecord extends SessionEventRecord {
+  eventType: "QUIZ_CLOSED";
+  payload: {
+    segmentId: string;
+    closedBy: "HOST" | "TIMER";
+  };
+}
+
+/**
  * Repository interface for Session Engine persistence.
  *
  * The repository exposes conceptual persistence operations rather than
@@ -941,4 +982,145 @@ export interface SessionRepository {
     candidateId: string;
     updatedAt: string;
   }>;
+
+  /**
+   * Quiz Experience. START_QUIZ's repository operation — dedicated,
+   * not a generalization of startSession (see this platform's
+   * implementation-readiness design for why). Atomically: authenticate
+   * the host, verify the session is LOBBY_LOCKED with no un-revealed
+   * current interaction (the same precondition NEW_SEGMENT already
+   * enforces), allocate a new Segment, compute closesAt from
+   * database-authoritative time (never a client-supplied value),
+   * create the quiz window row, and consume every currently-unconsumed
+   * prepared question for this session into its own new Multiple
+   * Choice Interaction Instance + multiple_choice_details row, all
+   * belonging to the new Segment, all created PROMPT_ACTIVE together
+   * (never lazily) — closing the exact concurrent-creation race a
+   * lazy-creation alternative would reintroduce.
+   *
+   * Implementations must:
+   * - commit the Segment, quiz window, every Interaction Instance,
+   *   every multiple_choice_details row, every prepared-question
+   *   consumption, and the event, or none of them;
+   * - re-verify the host token and session state inside the atomic
+   *   operation itself;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw HostTokenMismatchError only on a host-token mismatch;
+   * - throw LobbyNotLockedError only when the session is not
+   *   LOBBY_LOCKED;
+   * - throw PreviousInteractionNotRevealedError only when a current
+   *   interaction instance exists and is not at RESULT_REVEAL;
+   * - throw EmptyQuizQuestionSetError only when no prepared question is
+   *   currently unconsumed for this session;
+   * - throw InvalidQuizDurationError only when durationSeconds is
+   *   outside the accepted bound;
+   * - return the new Segment's id and ordinal, the computed closesAt,
+   *   and the ordered list of created Interaction Instance ids.
+   */
+  startQuiz(
+    sessionId: string,
+    hostToken: string,
+    durationSeconds: number
+  ): Promise<{
+    segmentId: string;
+    segmentOrdinal: number;
+    closesAt: string;
+    interactionInstanceIds: string[];
+  }>;
+
+  /**
+   * Quiz Experience. SUBMIT_QUIZ_RESPONSE's repository operation —
+   * dedicated, not a generalization of submitResponse. Atomically
+   * re-verifies the participant token, that interactionInstanceId
+   * belongs to this session and is a MULTIPLE_CHOICE instance whose
+   * Segment has a quiz window, that the window is not closed and the
+   * database's own clock has not yet reached closesAt (the
+   * authoritative late-submission rejection — never derived from the
+   * instance's own PROMPT_ACTIVE state alone, since that state does
+   * not change until CLOSE_QUIZ actually runs), and that
+   * selectedOptionIndex is valid for that question — then upserts the
+   * participant's response using the existing submissions
+   * (interactionInstanceId, participantId) upsert semantics unchanged
+   * and persists a QUIZ_RESPONSE_SUBMITTED event.
+   *
+   * Implementations must:
+   * - commit the submission and its event, or neither;
+   * - re-verify every precondition above inside the atomic operation
+   *   itself;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw SessionAccessDeniedError only when the token does not match
+   *   the given participant of this session;
+   * - throw QuizInstanceNotFoundError only when interactionInstanceId
+   *   does not identify a MULTIPLE_CHOICE Interaction Instance
+   *   belonging to a Quiz Segment of this session;
+   * - throw QuizClosedError only when that Quiz's window is closed or
+   *   its deadline has passed;
+   * - throw InvalidOptionSelectionError only when selectedOptionIndex
+   *   is out of bounds for that question;
+   * - return the resulting submissionId, interactionInstanceId, and
+   *   updatedAt.
+   */
+  submitQuizResponse(
+    sessionId: string,
+    participantId: string,
+    participantToken: string,
+    interactionInstanceId: string,
+    selectedOptionIndex: number
+  ): Promise<{
+    submissionId: string;
+    interactionInstanceId: string;
+    updatedAt: string;
+  }>;
+
+  /**
+   * Quiz Experience. CLOSE_QUIZ's repository operation — dedicated,
+   * not a generalization of revealResults. Idempotent: if the named
+   * Quiz Segment's window is already closed, returns the existing
+   * closedAt immediately with no further work. Otherwise, atomically:
+   * authorizes the caller as either the session's host (always allowed
+   * to close early) or any participant of this session (allowed only
+   * once database time has reached the window's closesAt — a
+   * participant may trigger automatic expiry but never force an early
+   * close), sets closedAt, evaluates every submitted answer across
+   * every Multiple Choice Interaction Instance in the Segment
+   * (correct → that question's configured points via point_awards,
+   * deterministically idempotency-keyed; wrong or unanswered → no
+   * award), and transitions every Interaction Instance in the Segment
+   * to RESULT_REVEAL — all in the same transaction, all-or-nothing.
+   *
+   * Implementations must:
+   * - commit the closedAt write, every point_award, every Interaction
+   *   Instance transition, and the event, or none of them;
+   * - short-circuit safely (no error, no duplicate work) when already
+   *   closed;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw QuizNotFoundError only when segmentId does not identify a
+   *   Quiz Segment of this session;
+   * - throw QuizAccessDeniedError only when callerToken matches
+   *   neither the host token nor any participant token of this
+   *   session;
+   * - throw QuizExpiryNotReachedError only when a participant (not the
+   *   host) attempts to close before database time has reached
+   *   closesAt;
+   * - return the Segment id and the (new or pre-existing) closedAt.
+   */
+  closeQuiz(
+    sessionId: string,
+    segmentId: string,
+    callerToken: string
+  ): Promise<{
+    segmentId: string;
+    closedAt: string;
+    alreadyClosed: boolean;
+  }>;
+
+  /**
+   * Quiz Experience. Look up the Quiz window for one Segment. Returns
+   * null when that Segment is not a Quiz (Trivia/Best-Joke-style
+   * Segments have no window row at all) or does not exist. Used by
+   * GET_SESSION to determine whether the session's most recent Segment
+   * is a Quiz and, if so, to read its authoritative deadline/close
+   * state.
+   */
+  getQuizWindowForSegment(segmentId: string): Promise<QuizWindowRecord | null>;
 }

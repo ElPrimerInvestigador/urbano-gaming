@@ -178,6 +178,12 @@
   button:disabled { cursor: not-allowed; opacity: 0.4; }
   .btn-primary { background: var(--primary-fill); color: var(--primary-ink); width: 100%; }
   .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  /* Quiz Experience mobile validation: the shared `button` rule's 10px
+     vertical padding measured at 38px tall on a real device — under
+     the ~44pt touch-target guideline. Scoped to this one Quiz-only
+     control rather than widening the shared `button`/`.btn-primary`
+     rule, which would resize every button across every Experience. */
+  #quizNextButton { padding: 14px 16px; min-height: 44px; }
 
   details { margin-top: 20px; }
   summary { cursor: pointer; color: var(--muted); font-size: 13px; }
@@ -259,6 +265,24 @@
   <div class="card" id="promptCard" style="display:none;">
     <h2>Current Turn</h2>
     <div class="prompt-text" id="promptText"></div>
+  </div>
+
+  <!-- Quiz Experience (self-paced, independent participant progression
+       — distinct from Trivia). A distinct rendering branch, not forced
+       through the single-current-prompt renderer above: renderPrompt()
+       returns early whenever a Quiz is open (see its own guard), and
+       this card owns the entire screen instead — forward-only
+       Question X of N, then a waiting state, then Final Results once
+       the Quiz closes. No correct answers or other participants'
+       answers are ever shown before close (see renderQuizCard). -->
+  <div class="card" id="quizCard" style="display:none;">
+    <div class="room-code-hint" id="quizTimeRemaining" style="font-size:16px; font-weight:600; margin-bottom:10px;"></div>
+    <div id="quizQuestionLabel" style="font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;"></div>
+    <div class="prompt-text" id="quizPromptText"></div>
+    <div id="ownQuizCorrectnessBanner"></div>
+    <div class="option-btn-list" id="quizOptionsList" style="margin-top:12px;"></div>
+    <button class="btn-primary" id="quizNextButton" onclick="quizAdvance()" style="margin-top:12px; display:none;">Next</button>
+    <div id="quizWaitingMessage" style="display:none; color:var(--muted); margin-top:10px;">You've answered all questions. Waiting for the Quiz to close…</div>
   </div>
 
   <div class="card" id="submitCard" style="display:none;">
@@ -468,6 +492,20 @@ let myVoteCandidateId = null;
 // then, and null if the host never creates a rematch.
 let successorSessionId = null;
 let successorRoomCode = null;
+// Quiz Experience (self-paced, independent participant progression).
+// Mirrors GET_SESSION's own currentQuiz field exactly — null whenever
+// no Quiz has ever been started for this Segment. See QuizSummary in
+// lib/session/types.ts for the full shape and its privacy boundary.
+let currentQuiz = null;
+// Local-only presentation state: which of currentQuiz.questions this
+// tab is currently displaying. Forward-only by design (no backward
+// navigation/editing UI — see the accepted implementation-readiness
+// design). Recovered from server-authoritative data on reconnect —
+// see applySessionSnapshot's quizKnownSegmentId handling — never
+// trusted from localStorage alone.
+let quizLocalQuestionIndex = 0;
+let quizKnownSegmentId = null;
+let quizTimerInterval = null;
 // Guards the one-time display-name pre-fill in renderContinuation()
 // so a later poll tick (sync now keeps running through
 // SESSION_COMPLETE — see participantRefresh) never overwrites text
@@ -655,6 +693,22 @@ function renderPrompt(state, currentPrompt, votingCandidates, questionProgress) 
   const submitCard = document.getElementById("submitCard");
   const optionsCard = document.getElementById("optionsCard");
   const votingCard = document.getElementById("votingCard");
+
+  // Quiz Experience: while a Quiz is open (or just closed, still the
+  // current Segment), quizCard (see renderQuizCard) owns the entire
+  // screen instead — a Quiz's own Interaction Instances are also
+  // engineType MULTIPLE_CHOICE and would otherwise be misread as an
+  // active Trivia question by the branches below. Distinct rendering
+  // branch, not forced through this single-current-prompt renderer.
+  if (currentQuiz) {
+    promptCard.style.display = "none";
+    submitCard.style.display = "none";
+    optionsCard.style.display = "none";
+    votingCard.style.display = "none";
+    document.getElementById("questionProgressLabel").style.display = "none";
+    return;
+  }
+
   const isMultipleChoice = !!(currentPrompt && currentPrompt.options);
 
   // Trivia Game composition correction (post-Slice-009 founder playtest
@@ -829,12 +883,194 @@ async function selectOption(index) {
   await participantRefresh();
 }
 
+// Quiz Experience (self-paced, independent participant progression).
+// Renders the dedicated quizCard whenever a Quiz has ever started for
+// the session's current Segment — independent of renderPrompt's own
+// single-current-prompt logic, which returns early instead (see its
+// own guard). Owns the entire screen while a Quiz is open: no other
+// participant's answers, and no correctness for any question, are
+// ever shown until currentQuiz.closed is true (see QuizSummary's own
+// privacy-boundary comment in lib/session/types.ts) — that boundary is
+// enforced server-side (GET_SESSION withholds the data outright), not
+// merely hidden here.
+function renderQuizCard() {
+  const card = document.getElementById("quizCard");
+  if (quizTimerInterval) {
+    clearInterval(quizTimerInterval);
+    quizTimerInterval = null;
+  }
+
+  if (!currentQuiz) {
+    card.style.display = "none";
+    return;
+  }
+
+  card.style.display = "block";
+
+  function renderRemaining() {
+    const remainingMs = new Date(currentQuiz.closesAt).getTime() - Date.now();
+    if (currentQuiz.closed) {
+      document.getElementById("quizTimeRemaining").textContent = "Quiz closed";
+      return;
+    }
+    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = remainingSeconds % 60;
+    document.getElementById("quizTimeRemaining").textContent =
+      `Time remaining: ${minutes}:${String(seconds).padStart(2, "0")}`;
+    if (remainingMs <= 0) {
+      closeQuizIfDue();
+    }
+  }
+  renderRemaining();
+  if (!currentQuiz.closed) {
+    quizTimerInterval = setInterval(renderRemaining, 1000);
+  }
+
+  const questions = currentQuiz.questions || [];
+  if (questions.length === 0) {
+    return;
+  }
+
+  if (currentQuiz.closed) {
+    const index = Math.min(quizLocalQuestionIndex, questions.length - 1);
+    const question = questions[index];
+    document.getElementById("quizQuestionLabel").textContent =
+      `Question ${index + 1} of ${questions.length} — Final Results`;
+    document.getElementById("quizPromptText").textContent = question.promptText;
+    renderQuizOptionButtons(question, false);
+    document.getElementById("quizNextButton").style.display = "none";
+    document.getElementById("quizWaitingMessage").style.display = "none";
+
+    const banner = document.getElementById("ownQuizCorrectnessBanner");
+    if (!question.answered) {
+      banner.innerHTML = `<div class="correctness-banner wrong">No answer was submitted for this question.</div>`;
+    } else {
+      banner.innerHTML = question.isCorrect
+        ? `<div class="correctness-banner correct">✓ Correct!</div>`
+        : `<div class="correctness-banner wrong">✗ Not quite — the correct answer is highlighted below.</div>`;
+    }
+    return;
+  }
+
+  document.getElementById("ownQuizCorrectnessBanner").innerHTML = "";
+
+  if (quizLocalQuestionIndex >= questions.length) {
+    // Every question answered and advanced past — waiting for the
+    // authoritative close (manual or automatic expiry), never for
+    // another participant's own pace.
+    document.getElementById("quizQuestionLabel").textContent = "";
+    document.getElementById("quizPromptText").textContent = "";
+    document.getElementById("quizOptionsList").innerHTML = "";
+    document.getElementById("quizNextButton").style.display = "none";
+    document.getElementById("quizWaitingMessage").style.display = "block";
+    return;
+  }
+
+  document.getElementById("quizWaitingMessage").style.display = "none";
+  const question = questions[quizLocalQuestionIndex];
+  document.getElementById("quizQuestionLabel").textContent =
+    `Question ${quizLocalQuestionIndex + 1} of ${questions.length}`;
+  document.getElementById("quizPromptText").textContent = question.promptText;
+  renderQuizOptionButtons(question, true);
+
+  const nextBtn = document.getElementById("quizNextButton");
+  if (question.answered) {
+    nextBtn.style.display = "inline-block";
+    nextBtn.textContent =
+      quizLocalQuestionIndex === questions.length - 1 ? "Finish" : "Next";
+  } else {
+    nextBtn.style.display = "none";
+  }
+}
+
+// Reuses the .option-btn / .option-btn-list CSS Multiple Choice
+// already built, mirroring renderOptionButtons' shape — only the
+// click handler (selectQuizOption vs selectOption) and backing data
+// (this Quiz question's own options, not the session-wide
+// currentPrompt) differ. correctOptionIndex/isCorrect are null on
+// every question object until currentQuiz.closed (see
+// QuizQuestionSummary's own doc comment), so `clickable=false` is the
+// only state in which they are ever non-null here.
+function renderQuizOptionButtons(question, clickable) {
+  const list = document.getElementById("quizOptionsList");
+  list.innerHTML = question.options
+    .map((option, i) => {
+      let cls = "option-btn";
+      if (question.selectedOptionIndex === i) cls += " selected";
+      if (question.correctOptionIndex !== null && question.correctOptionIndex === i) {
+        cls += " is-correct";
+      }
+      if (
+        question.correctOptionIndex !== null &&
+        question.selectedOptionIndex === i &&
+        question.selectedOptionIndex !== question.correctOptionIndex
+      ) {
+        cls += " is-wrong-selected";
+      }
+      return `<button class="${cls}" ${clickable ? "" : "disabled"} onclick="selectQuizOption('${question.interactionInstanceId}', ${i})">
+        <span class="option-index-badge">${i + 1}</span><span>${option}</span>
+      </button>`;
+    })
+    .join("");
+}
+
+async function selectQuizOption(interactionInstanceId, index) {
+  const r = await postJson(
+    `/api/sessions/${participantState.sessionId}/submit-quiz`,
+    { interactionInstanceId, selectedOptionIndex: index },
+    participantState.participantToken
+  );
+  show("SUBMIT_QUIZ_RESPONSE (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    renderNotice(null);
+  } else {
+    renderNotice(classifyError(r));
+  }
+  await participantRefresh();
+}
+
+// Forward-only navigation: advances this tab's own local position by
+// one. If that moves past the last question, renderQuizCard's own
+// bounds check shows the waiting-for-close state instead — no separate
+// "finished" flag is tracked.
+function quizAdvance() {
+  quizLocalQuestionIndex += 1;
+  renderQuizCard();
+}
+
+// Quiz Experience. Mirrors host.html's identical function — any tab
+// (host or participant) may independently notice the deadline has
+// passed and trigger the same authoritative, idempotent CLOSE_QUIZ
+// path; the server-side idempotency guard, not "exactly one browser
+// stays alive," is what makes exactly one finalization actually
+// happen. Never an early/forced close from this path — the server
+// independently re-checks database time regardless of which
+// participant's token called it.
+async function closeQuizIfDue() {
+  if (!currentQuiz || currentQuiz.closed) return;
+  if (Date.now() < new Date(currentQuiz.closesAt).getTime()) return;
+  const r = await postJson(
+    `/api/sessions/${participantState.sessionId}/close-quiz`,
+    { segmentId: currentQuiz.segmentId, callerToken: participantState.participantToken }
+  );
+  show("CLOSE_QUIZ (" + r.status + ")", r.json);
+  await participantRefresh();
+}
+
 // Own-correctness moment, derived from GET_SESSION's authoritative
 // submissions (not from selectedOptionIndex, which is only ever this
 // client's local, possibly-unconfirmed intent) — shown only once the
 // interaction is actually revealed.
 function renderOwnCorrectnessBanner(submissions, state) {
   const el = document.getElementById("ownCorrectnessBanner");
+  // Quiz Experience: not a privacy leak (own data only), but redundant
+  // with ownQuizCorrectnessBanner inside quizCard, which already shows
+  // this participant's own correctness per-question once closed.
+  if (currentQuiz) {
+    el.innerHTML = "";
+    return;
+  }
   const revealed = state === "RESULT_REVEAL" || state === "SESSION_COMPLETE";
   const own = submissions ? submissions.find((s) => s.participantId === participantState.participantId) : null;
 
@@ -849,7 +1085,13 @@ function renderOwnCorrectnessBanner(submissions, state) {
 
 function renderProgress(submittedCount, eligibleParticipantCount) {
   const card = document.getElementById("progressCard");
-  if (submittedCount === null || submittedCount === undefined) {
+  // Quiz Experience: this bar reports how many participants submitted
+  // to the single most-recently-created Interaction Instance — a
+  // shared-room-progress concept that doesn't apply to a Quiz's
+  // independent per-participant pacing (and would misleadingly imply
+  // everyone must answer the same question together). quizCard owns
+  // Quiz's own progress display instead.
+  if (currentQuiz || submittedCount === null || submittedCount === undefined) {
     card.style.display = "none";
     return;
   }
@@ -861,6 +1103,17 @@ function renderProgress(submittedCount, eligibleParticipantCount) {
 
 function renderResults(submissions, sessionState) {
   const card = document.getElementById("resultsCard");
+  // Quiz Experience: this card shows every participant's own raw
+  // answer for the single most-recently-created Interaction Instance —
+  // exactly the cross-participant leak Quiz's privacy boundary exists
+  // to prevent (see QuizQuestionSummary's doc comment). quizCard's own
+  // Final Results view already shows this participant's own answer and
+  // correctness, safely, once closed — this card is never the right
+  // display for a Quiz's last question, open or closed.
+  if (currentQuiz) {
+    card.style.display = "none";
+    return;
+  }
   const effective = submissions ?? (sessionState === "SESSION_COMPLETE" ? lastKnownSubmissions : null);
   if (submissions) lastKnownSubmissions = submissions;
 
@@ -1014,10 +1267,34 @@ function applySessionSnapshot(data) {
   // below so both can read it synchronously.
   if ("myVoteCandidateId" in data) myVoteCandidateId = data.myVoteCandidateId;
 
+  // Quiz Experience. Set before renderPrompt/renderQuizCard below so
+  // both can read it synchronously — mirrors myVoteCandidateId's own
+  // "set first" discipline just above. quizLocalQuestionIndex (this
+  // tab's own forward-navigation position) is (re)initialized only
+  // when a *different* Quiz Segment appears than the one this tab last
+  // knew about — covers both "a new Quiz just started" and "this tab
+  // just reconnected mid-Quiz," recovering coherently from
+  // server-authoritative myProgress.answered (the count of already-
+  // answered questions, which — since navigation is forward-only —
+  // is exactly the index of the next unanswered one) rather than from
+  // localStorage. Once initialized, subsequent polls never yank this
+  // tab's own position backward/forward — only quizAdvance() does.
+  if ("currentQuiz" in data) {
+    const incomingQuiz = data.currentQuiz;
+    if (incomingQuiz && incomingQuiz.segmentId !== quizKnownSegmentId) {
+      quizKnownSegmentId = incomingQuiz.segmentId;
+      quizLocalQuestionIndex = incomingQuiz.myProgress ? incomingQuiz.myProgress.answered : 0;
+    } else if (!incomingQuiz) {
+      quizKnownSegmentId = null;
+    }
+    currentQuiz = incomingQuiz;
+  }
+
   const effectiveState = computeEffectiveState(data.state, data.interactionState);
   renderStepper(effectiveState);
   renderStateCard(effectiveState);
   renderPrompt(effectiveState, data.currentPrompt, data.currentVotingCandidates, data.questionProgress);
+  renderQuizCard();
   if ("submittedCount" in data) renderProgress(data.submittedCount, data.eligibleParticipantCount);
   if ("submissions" in data) {
     renderResults(data.submissions, data.state);

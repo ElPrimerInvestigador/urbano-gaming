@@ -329,6 +329,17 @@
      this slice's browser operational simulation, fixed here since it's
      the same form this slice already restructures. */
   #votingStartForm.collapsed { display: none; }
+  /* Quiz Experience: same rule, same reasoning as votingStartForm's own
+     fix directly above — caught before it could repeat that defect,
+     during this slice's own browser operational simulation. */
+  #quizStartForm.collapsed { display: none; }
+  /* Quiz Experience mobile validation: the shared `button` rule's
+     10px vertical padding measured at 38px tall on a real device —
+     under the ~44pt touch-target guideline. Scoped to this one
+     Quiz-only control rather than widening the shared `button`/
+     `.btn-primary` rule, which would resize every button across every
+     Experience. */
+  #btn-close-quiz { padding: 14px 16px; min-height: 44px; }
 
   .secondary-actions { margin-top: 16px; }
   .secondary-actions button { font-size: 12px; padding: 7px 12px; }
@@ -456,6 +467,10 @@
              Trivia Game's result; no new Game Outcome object. See
              resolvePrimaryAction()'s triviaJustFinished branch. -->
         <div class="trivia-final-results-banner" id="triviaFinalResultsBanner" style="display:none;">Final Results — Trivia complete. See Standings.</div>
+        <!-- Quiz Experience: mirrors triviaFinalResultsBanner's own
+             pattern — shown once CLOSE_QUIZ has finalized the Quiz,
+             alongside the still-available Choose Turn Type selector. -->
+        <div class="trivia-final-results-banner" id="quizFinalResultsBanner" style="display:none;">Final Results — Quiz complete. See Standings.</div>
         <!-- Slice 009 (Engine Selection + PARTICIPANTS Voting): a single,
              explicit "Choose Turn Type" selector — shown only at the
              "time to start the next Turn" decision point — replaces the
@@ -469,6 +484,15 @@
           <div class="turn-type-options">
             <button class="btn-turn-type" id="btn-turn-type-open-response" onclick="selectTurnType('OPEN_RESPONSE')">Open Response</button>
             <button class="btn-turn-type" id="btn-turn-type-trivia" onclick="selectTurnType('MULTIPLE_CHOICE')">Trivia</button>
+            <!-- Quiz Experience (self-paced, independent participant
+                 progression — distinct from Trivia). A separate
+                 Turn-Type choice, not a Trivia variant: Trivia stays
+                 host-paced with per-question reveal; Quiz is self-paced
+                 with reveal withheld until the whole Quiz closes. Both
+                 reuse the same MULTIPLE_CHOICE Engine and the same
+                 prepared-question queue — only the runtime orchestration
+                 differs. See QUIZ_EXPERIENCE_IMPLEMENTATION_RECORD.md. -->
+            <button class="btn-turn-type" id="btn-turn-type-quiz" onclick="selectTurnType('QUIZ')">Quiz</button>
             <button class="btn-turn-type" id="btn-turn-type-voting" onclick="selectTurnType('VOTING')">Voting</button>
           </div>
         </div>
@@ -479,6 +503,17 @@
 
         <div id="triviaStartForm" class="collapsed">
           <div class="room-code-hint" id="triviaNextQuestionHint" style="margin-bottom:8px;"></div>
+        </div>
+
+        <!-- Quiz Experience: the only configuration this proving case
+             needs is a duration — question content reuses the existing
+             prepared-question queue exactly as Trivia does (see
+             startQuizTurn()). Bound (30-3600s) mirrors
+             start_quiz_atomically's own authoritative check. -->
+        <div id="quizStartForm" class="collapsed">
+          <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Duration (seconds)</label>
+          <input type="number" id="quizDurationInput" value="120" min="30" max="3600" step="1" style="width:100%; font-family:inherit; font-size:14px; padding:8px; border-radius:6px; border:1px solid var(--line); margin-bottom:8px;" />
+          <div class="room-code-hint" id="quizQuestionCountHint" style="margin-bottom:8px;"></div>
         </div>
 
         <!-- Slice 007 (Voting Engine); Slice 009 adds an explicit
@@ -504,6 +539,20 @@
         </div>
 
         <button class="btn-primary" id="btn-primary-action"></button>
+      </div>
+
+      <!-- Quiz Experience: while a Quiz is open, this card owns the
+           entire host action surface in place of primaryActionBar (see
+           resolvePrimaryAction's early-return guard) — no per-question
+           pacing, since participants progress independently; the only
+           host action is Close Quiz (manual early close; automatic
+           expiry is also client-triggered, from any tab, once the
+           deadline passes — see closeQuizIfDue()). -->
+      <div class="card" id="quizCard" style="display:none;">
+        <h2>Quiz in progress</h2>
+        <div class="room-code-hint" id="quizTimeRemaining" style="font-size:16px; font-weight:600; margin-bottom:10px;"></div>
+        <div id="quizParticipantProgress"></div>
+        <button class="btn-primary" id="btn-close-quiz" onclick="closeQuiz()" style="margin-top:10px;">Close Quiz</button>
       </div>
 
       <div class="secondary-actions">
@@ -710,6 +759,16 @@ let segmentNumber = null;
 // for Trivia specifically; every other Experience's Segment label is
 // unchanged. See renderInteractionLabel().
 let questionProgress = null;
+// Quiz Experience (self-paced, independent participant progression).
+// Mirrors GET_SESSION's own currentQuiz field exactly — null whenever
+// no Quiz has ever been started for this Segment. See QuizSummary in
+// lib/session/types.ts for the full shape and its privacy boundary.
+let currentQuiz = null;
+// Local-only, purely presentational: re-renders the remaining-time
+// display every second from the last-known currentQuiz.closesAt —
+// never re-derives or extends the deadline itself, which stays
+// server-authoritative (see renderQuizCard/closeQuizIfDue).
+let quizTimerInterval = null;
 // Tracks the last interactionNumber this tab has seen, so a newly
 // started interaction can be detected and lastKnownSubmissions cleared
 // for it (see applySessionSnapshot) — otherwise a tab that never
@@ -1483,6 +1542,17 @@ function renderStepper() {
 // meaning are untouched — this is presentation only.
 function renderInteractionLabel() {
   const el = document.getElementById("interactionLabel");
+  // Quiz Experience: this label is Trivia's own "Question X of N" /
+  // "Turn N" vocabulary, derived from the session-wide prepared-
+  // question queue and the last-created Interaction Instance — both
+  // meaningless (and actively misleading, since Quiz consumes the
+  // whole queue at once) whenever a Quiz is the current Segment,
+  // open or just-closed. quizCard/quizFinalResultsBanner own Quiz's
+  // own progress and outcome display instead (see renderQuizCard).
+  if (currentQuiz) {
+    el.style.display = "none";
+    return;
+  }
   if (currentEngineType === "MULTIPLE_CHOICE" && questionProgress) {
     el.style.display = "block";
     el.textContent = `Question ${questionProgress.current} of ${questionProgress.total}`;
@@ -1591,13 +1661,16 @@ function resolvePrimaryAction() {
   const openResponseForm = document.getElementById("openResponseStartForm");
   const triviaForm = document.getElementById("triviaStartForm");
   const votingForm = document.getElementById("votingStartForm");
+  const quizForm = document.getElementById("quizStartForm");
 
   function hideTurnTypeUI() {
     turnTypeSelector.style.display = "none";
     openResponseForm.classList.add("collapsed");
     triviaForm.classList.add("collapsed");
     votingForm.classList.add("collapsed");
+    quizForm.classList.add("collapsed");
     document.getElementById("triviaFinalResultsBanner").style.display = "none";
+    document.getElementById("quizFinalResultsBanner").style.display = "none";
   }
 
   if (!sessionLifecycleState || sessionLifecycleState === "SESSION_COMPLETE") {
@@ -1605,6 +1678,21 @@ function resolvePrimaryAction() {
     hideTurnTypeUI();
     return;
   }
+
+  // Quiz Experience: while a Quiz is open, quizCard (see
+  // renderQuizCard) owns the entire host action surface — no per-
+  // question pacing exists for a self-paced Quiz, and there is no
+  // "Choose Turn Type" decision to make until it closes. This guard
+  // must run before any Multiple-Choice-branch logic below, since a
+  // Quiz's own Interaction Instances are also engineType
+  // MULTIPLE_CHOICE and would otherwise be misread as an active Trivia
+  // question.
+  if (currentQuiz && !currentQuiz.closed) {
+    hideTurnTypeUI();
+    bar.style.display = "none";
+    return;
+  }
+
   bar.style.display = "block";
 
   if (sessionLifecycleState === "LOBBY_OPEN") {
@@ -1652,16 +1740,29 @@ function resolvePrimaryAction() {
   const turnNumber = (segmentNumber || 0) + 1;
   const hasNextQuestion = !!lowestUnconsumedPreparedQuestion();
 
+  // Quiz Experience: a just-closed Quiz's last Interaction Instance is
+  // also RESULT_REVEAL / engineType MULTIPLE_CHOICE, so it would
+  // otherwise be misread by the Trivia auto-continue branch below as
+  // "one more Trivia question in this Segment" — reusing the Quiz's own
+  // Segment (which already has a quiz_windows row) for unrelated Trivia
+  // content the moment any prepared question exists in the queue. This
+  // must be computed before that branch, not just before the
+  // triviaJustFinished banner logic further down.
+  const quizJustClosed = !!(currentQuiz && currentQuiz.closed);
+
   // Trivia Game composition correction: a revealed Multiple Choice
   // question with another prepared question still queued stays in
   // "Trivia mode" — one more "Next Question" click continues the same
   // Segment (CURRENT_SEGMENT) instead of returning to Choose Turn Type.
   // This is what keeps an N-question Trivia Game to one Segment instead
-  // of one Segment per question, per the accepted composition.
+  // of one Segment per question, per the accepted composition. Excluded
+  // when a Quiz just closed (see quizJustClosed above) — Quiz's own
+  // Segment must never silently absorb a subsequent Trivia turn.
   if (
     currentEngineType === "MULTIPLE_CHOICE" &&
     interactionLifecycleState === "RESULT_REVEAL" &&
-    hasNextQuestion
+    hasNextQuestion &&
+    !quizJustClosed
   ) {
     hideTurnTypeUI();
     document.getElementById("triviaFinalResultsBanner").style.display = "none";
@@ -1680,12 +1781,21 @@ function resolvePrimaryAction() {
   // the still-available Choose Turn Type selector, since the host may
   // legitimately start a different Experience (or more Trivia, if more
   // questions are added) next in the same Session.
+  // Quiz Experience: a just-closed Quiz also lands here (its last
+  // question's own Interaction Instance is RESULT_REVEAL, engineType
+  // MULTIPLE_CHOICE) — excluded from triviaJustFinished (whether or not
+  // more prepared questions are queued) so its own banner shows instead
+  // of Trivia's, and so the host lands on Choose Turn Type rather than
+  // an auto-continued Trivia question.
   const triviaJustFinished =
     currentEngineType === "MULTIPLE_CHOICE" &&
     interactionLifecycleState === "RESULT_REVEAL" &&
-    !hasNextQuestion;
+    !hasNextQuestion &&
+    !quizJustClosed;
   document.getElementById("triviaFinalResultsBanner").style.display =
     triviaJustFinished ? "block" : "none";
+  document.getElementById("quizFinalResultsBanner").style.display =
+    quizJustClosed ? "block" : "none";
 
   const votingSourceEligible =
     currentEngineType === "OPEN_RESPONSE" && interactionLifecycleState === "RESULT_REVEAL";
@@ -1711,19 +1821,38 @@ function resolvePrimaryAction() {
   const trivBtn = document.getElementById("btn-turn-type-trivia");
   trivBtn.disabled = !hasNextQuestion;
   trivBtn.title = hasNextQuestion ? "" : "No prepared questions remain in the queue.";
+  // Quiz Experience: needs the same non-empty prepared-question queue
+  // Trivia does — Quiz consumes all of it at once rather than one
+  // question at a time, but the "is there anything to build a Quiz
+  // from" gate is identical.
+  const quizBtn = document.getElementById("btn-turn-type-quiz");
+  quizBtn.disabled = !hasNextQuestion;
+  quizBtn.title = hasNextQuestion ? "" : "No prepared questions remain in the queue.";
   document.getElementById("btn-turn-type-open-response").classList.toggle("active", selectedTurnType === "OPEN_RESPONSE");
   trivBtn.classList.toggle("active", selectedTurnType === "MULTIPLE_CHOICE");
+  quizBtn.classList.toggle("active", selectedTurnType === "QUIZ");
   document.getElementById("btn-turn-type-voting").classList.toggle("active", selectedTurnType === "VOTING");
+
+  if (selectedTurnType === "QUIZ" && !hasNextQuestion) {
+    selectedTurnType = "OPEN_RESPONSE";
+  }
 
   openResponseForm.classList.toggle("collapsed", selectedTurnType !== "OPEN_RESPONSE");
   triviaForm.classList.toggle("collapsed", selectedTurnType !== "MULTIPLE_CHOICE");
   votingForm.classList.toggle("collapsed", selectedTurnType !== "VOTING");
+  quizForm.classList.toggle("collapsed", selectedTurnType !== "QUIZ");
 
   if (selectedTurnType === "MULTIPLE_CHOICE") {
     const next = lowestUnconsumedPreparedQuestion();
     document.getElementById("triviaNextQuestionHint").textContent = next
       ? `Next question: “${next.promptText}”`
       : "";
+  }
+
+  if (selectedTurnType === "QUIZ") {
+    const remaining = (preparedQuestions || []).filter((q) => !q.consumedAt).length;
+    document.getElementById("quizQuestionCountHint").textContent =
+      `${remaining} question${remaining === 1 ? "" : "s"} ready.`;
   }
 
   if (selectedTurnType === "VOTING") {
@@ -1754,9 +1883,15 @@ function resolvePrimaryAction() {
   // Trivia Game composition correction: "Start Turn N" is Segment
   // vocabulary; Trivia's own public start action reads "Start Trivia,"
   // matching its Question-based progression rather than Turn-based.
-  // Open Response and Voting are unchanged.
-  btn.textContent = selectedTurnType === "MULTIPLE_CHOICE" ? "Start Trivia" : `Start Turn ${turnNumber}`;
-  btn.onclick = startTurn;
+  // Quiz mirrors this with its own "Start Quiz" label/handler. Open
+  // Response and Voting are unchanged.
+  if (selectedTurnType === "QUIZ") {
+    btn.textContent = "Start Quiz";
+    btn.onclick = startQuizTurn;
+  } else {
+    btn.textContent = selectedTurnType === "MULTIPLE_CHOICE" ? "Start Trivia" : `Start Turn ${turnNumber}`;
+    btn.onclick = startTurn;
+  }
 }
 
 // Slice 009 (Engine Selection + PARTICIPANTS Voting).
@@ -1789,7 +1924,11 @@ function renderPrompt(currentPrompt, engineType, votingCandidates) {
   const optionsList = document.getElementById("promptOptionsList");
   const engineTag = document.getElementById("engineTag");
 
-  if (!currentPrompt) {
+  // Quiz Experience: this "Current Turn" card reflects only the last-
+  // created Interaction Instance (one of N Quiz questions), redundant
+  // and confusing alongside quizCard's own per-question, per-
+  // participant view while a Quiz is active or just-closed.
+  if (!currentPrompt || currentQuiz) {
     card.style.display = "none";
     return;
   }
@@ -1831,7 +1970,12 @@ function renderPrompt(currentPrompt, engineType, votingCandidates) {
 
 function renderProgress(submittedCount, eligibleParticipantCount) {
   const card = document.getElementById("progressCard");
-  if (submittedCount === null || submittedCount === undefined) {
+  // Quiz Experience: same leak, same fix as participant.html's own
+  // renderProgress — this bar reports the last-created Interaction
+  // Instance's own submission count, meaningless during a Quiz's
+  // independent per-participant pacing. quizCard's own participant
+  // progress list is the Quiz-appropriate replacement.
+  if (currentQuiz || submittedCount === null || submittedCount === undefined) {
     card.style.display = "none";
     return;
   }
@@ -2071,6 +2215,8 @@ function applySessionSnapshot(data) {
   // declaration comment for why the two must not be conflated.
   if ("segmentNumber" in data) segmentNumber = data.segmentNumber;
   if ("questionProgress" in data) questionProgress = data.questionProgress;
+  if ("currentQuiz" in data) currentQuiz = data.currentQuiz;
+  renderQuizCard();
   renderStepper();
   renderInteractionLabel();
   updateActionAvailability();
@@ -2108,6 +2254,7 @@ function switchToNewSession(json) {
   lastKnownVotingResults = null;
   lastSeenInteractionNumber = null;
   currentEngineType = null;
+  currentQuiz = null;
   successorSessionId = null;
   successorRoomCode = null;
   awardInFlight = {};
@@ -2239,6 +2386,112 @@ async function startTurn() {
     await hostRefresh();
   } else {
     renderNotice(classifyError(r));
+  }
+}
+
+// Quiz Experience (self-paced, independent participant progression).
+// Dedicated START_QUIZ call, not a StartTurnConfig branch — Quiz needs
+// no engine/prompt selection (it consumes the entire remaining
+// prepared-question queue at once, server-side) and its own duration
+// input instead. See startQuiz.ts's own comment for why this is a
+// dedicated command rather than a generalization of START_SESSION.
+async function startQuizTurn() {
+  const durationSeconds = Number(document.getElementById("quizDurationInput").value);
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/start-quiz`, {
+    hostToken: hostState.hostToken,
+    durationSeconds,
+  });
+  show("START_QUIZ (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    renderNotice(null);
+    selectedTurnType = null;
+    await hostRefresh();
+  } else {
+    renderNotice(classifyError(r));
+  }
+}
+
+// Quiz Experience. Manual host close — always authorized regardless of
+// the deadline (see close_quiz_atomically's host-vs-participant
+// authority split). Idempotent: safe even if this races an automatic
+// expiry-close from any tab (this one's or a participant's) — see
+// closeQuizIfDue().
+async function closeQuiz() {
+  if (!currentQuiz) return;
+  const r = await postJson(`/api/sessions/${hostState.sessionId}/close-quiz`, {
+    segmentId: currentQuiz.segmentId,
+    callerToken: hostState.hostToken,
+  });
+  show("CLOSE_QUIZ (" + r.status + ")", r.json);
+  if (r.status === 200) {
+    renderNotice(null);
+    await hostRefresh();
+  } else {
+    renderNotice(classifyError(r));
+  }
+}
+
+// Quiz Experience. Client-side deadline detection, triggering the same
+// authoritative, idempotent CLOSE_QUIZ path automatic expiry uses —
+// deliberately not relied upon as the sole finalization trigger (any
+// participant tab, or this host tab, may independently notice the
+// deadline has passed and call this; the server-side idempotency
+// guard, not "exactly one browser stays alive," is what makes exactly
+// one finalization actually happen). Uses the host token, so this
+// counts as the same authority path a participant's own equivalent
+// call would use once past the deadline — never an early/forced close
+// from this path, since the server independently re-checks
+// database time regardless of which token called it.
+async function closeQuizIfDue() {
+  if (!currentQuiz || currentQuiz.closed) return;
+  if (Date.now() < new Date(currentQuiz.closesAt).getTime()) return;
+  await closeQuiz();
+}
+
+// Quiz Experience. Renders the dedicated quizCard (see host UI markup)
+// whenever a Quiz is open, independent of resolvePrimaryAction's own
+// primaryActionBar — Quiz has no single "what's next" primary action
+// the way every other Turn Type does, only Close Quiz plus a live
+// progress readout.
+function renderQuizCard() {
+  const card = document.getElementById("quizCard");
+  if (quizTimerInterval) {
+    clearInterval(quizTimerInterval);
+    quizTimerInterval = null;
+  }
+
+  if (!currentQuiz || currentQuiz.closed) {
+    card.style.display = "none";
+    return;
+  }
+
+  card.style.display = "block";
+
+  function renderRemaining() {
+    const remainingMs = new Date(currentQuiz.closesAt).getTime() - Date.now();
+    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = remainingSeconds % 60;
+    document.getElementById("quizTimeRemaining").textContent =
+      `Time remaining: ${minutes}:${String(seconds).padStart(2, "0")}`;
+    if (remainingMs <= 0) {
+      closeQuizIfDue();
+    }
+  }
+  renderRemaining();
+  quizTimerInterval = setInterval(renderRemaining, 1000);
+
+  const progress = currentQuiz.participantProgress || [];
+  const list = document.getElementById("quizParticipantProgress");
+  if (progress.length === 0) {
+    list.textContent = "";
+  } else {
+    list.innerHTML = progress
+      .map(
+        (p) =>
+          `<div class="standing-row"><div class="standing-name">${p.displayName}</div><div class="standing-score">${p.answered} / ${p.total}</div></div>`
+      )
+      .join("");
   }
 }
 
