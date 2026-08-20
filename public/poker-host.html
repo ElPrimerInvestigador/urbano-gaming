@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Poker Host — URBANO Gaming</title>
+<style>
+  /*
+   * Poker Foundation (Phase 1) — host surface. Smallest responsibility:
+   * create a table, show the room code, watch seats fill, deal the
+   * Hand. Deliberately does NOT show any seat's hole cards — see
+   * getTableState.ts's own comment for why host authority is not host
+   * omniscience in this phase.
+   */
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a0a; color: #f5f1e8; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+  button { font-size: 13px; font-weight: 600; padding: 10px 16px; border-radius: 6px; border: none; background: #f5f1e8; color: #0a0a0a; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .room-code { font-size: 40px; font-weight: 800; letter-spacing: 0.08em; margin: 12px 0; }
+  .msg { font-size: 13px; color: #9b9689; margin: 6px 0; }
+  .msg.error { color: #f87171; }
+  .msg.success { color: #4ade80; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; max-width: 480px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1c1c1c; }
+  .badge { font-size: 10.5px; font-weight: 700; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: rgba(212,175,55,0.12); color: #d4af37; margin-left: 6px; }
+</style>
+</head>
+<body>
+
+<h1>Poker Table — Host</h1>
+
+<div id="pre-create">
+  <button id="btn-create">Create Poker Table</button>
+</div>
+
+<div id="post-create" style="display:none;">
+  <div class="room-code" id="room-code-display"></div>
+  <p class="msg">Players join at <code>/poker-table.html</code> with this code.</p>
+  <div class="row">
+    <button id="btn-deal">Deal Hand</button>
+  </div>
+  <p class="msg" id="deal-msg"></p>
+  <table>
+    <thead><tr><th>Seat</th><th>Player</th><th></th></tr></thead>
+    <tbody id="seats-body"></tbody>
+  </table>
+</div>
+
+<script>
+const STORAGE_KEY = "urbano_poker_host";
+
+function saveHost(data) { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }
+function loadHost() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); } catch { return null; } }
+
+async function apiFetch(path, options) {
+  const res = await fetch(path, options);
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+async function refreshTable(table) {
+  const res = await apiFetch(`/api/gaming/poker/tables/${table.pokerTableId}`, {
+    headers: { authorization: "Bearer " + table.hostToken },
+  });
+  if (res.status !== 200) return;
+
+  const state = res.json;
+  const tbody = document.getElementById("seats-body");
+  tbody.innerHTML = "";
+  for (const seat of state.seats) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${seat.seatNumber}</td><td>${seat.displayName}</td><td>${seat.isDealer ? '<span class="badge">Dealer</span>' : ""}${state.currentHandId && seat.inCurrentHand ? '<span class="badge">Dealt</span>' : ""}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+document.getElementById("btn-create").addEventListener("click", async () => {
+  const res = await apiFetch("/api/gaming/poker/tables", { method: "POST" });
+  if (res.status === 201) {
+    saveHost(res.json);
+    document.getElementById("pre-create").style.display = "none";
+    document.getElementById("post-create").style.display = "block";
+    document.getElementById("room-code-display").textContent = res.json.roomCode;
+    await refreshTable(res.json);
+    setInterval(() => refreshTable(loadHost()), 2000);
+  }
+});
+
+document.getElementById("btn-deal").addEventListener("click", async () => {
+  const table = loadHost();
+  const msg = document.getElementById("deal-msg");
+  const btn = document.getElementById("btn-deal");
+  btn.disabled = true;
+  msg.className = "msg";
+  msg.textContent = "Dealing…";
+
+  const res = await apiFetch(`/api/gaming/poker/tables/${table.pokerTableId}/deal`, {
+    method: "POST",
+    headers: { authorization: "Bearer " + table.hostToken },
+  });
+
+  if (res.status === 200) {
+    msg.className = "msg success";
+    msg.textContent = res.json.alreadyDealt ? "Already dealt — showing the existing Hand." : "Hand dealt. Cards are private to each player's own device.";
+    await refreshTable(table);
+  } else {
+    msg.className = "msg error";
+    msg.textContent = (res.json && res.json.error) || "Failed to deal.";
+  }
+  btn.disabled = false;
+});
+
+(function init() {
+  const table = loadHost();
+  if (table) {
+    document.getElementById("pre-create").style.display = "none";
+    document.getElementById("post-create").style.display = "block";
+    document.getElementById("room-code-display").textContent = table.roomCode;
+    refreshTable(table);
+    setInterval(() => refreshTable(loadHost()), 2000);
+  }
+})();
+</script>
+
+</body>
+</html>

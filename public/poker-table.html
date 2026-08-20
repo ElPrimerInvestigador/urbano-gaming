@@ -1,0 +1,226 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Poker Table — URBANO Gaming</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /*
+   * Poker Foundation (Phase 1) — participant surface. Guest-only, no
+   * urbanoAuth.js dependency: joining a Poker Table needs no Gaming
+   * Member authentication, only a display name and a room code. The
+   * phone is the player's private hand/controller — this page shows
+   * exactly the caller's own hole cards, never anyone else's, and
+   * shows no betting controls (out of scope for this phase).
+   */
+  :root {
+    --bg-page: #0a0a0a; --bg-card: #161616; --surface-2: #1c1c1c;
+    --ink: #f5f1e8; --muted: #9b9689; --line: #2a2a2a;
+    --gold: #d4af37; --gold-bg: rgba(212, 175, 55, 0.12);
+    --primary-fill: #f5f1e8; --primary-ink: #0a0a0a;
+    --good: #4ade80; --bad: #f87171;
+    --card-white: #f5f1e8; --card-ink: #0a0a0a; --card-red: #d64545;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg-page); color: var(--ink); margin: 0; padding: 0 0 60px;
+  }
+  .content { max-width: 480px; margin: 0 auto; padding: 20px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+
+  .card { border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2); padding: 20px; margin: 0 0 16px; }
+
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+  .field input {
+    width: 100%; font-family: inherit; font-size: 15px; padding: 12px 14px;
+    border-radius: 10px; border: 1px solid var(--line); background: var(--bg-card); color: var(--ink);
+    min-height: 44px;
+  }
+  .btn-primary {
+    font-family: inherit; font-size: 14px; font-weight: 700; padding: 13px 18px;
+    border-radius: 10px; border: none; background: var(--primary-fill); color: var(--primary-ink);
+    cursor: pointer; width: 100%; min-height: 46px;
+  }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .msg { font-size: 13px; color: var(--muted); margin: 10px 0 0; line-height: 1.5; }
+  .msg.error { color: var(--bad); }
+  .msg.success { color: var(--good); }
+
+  .hole-cards { display: flex; gap: 10px; justify-content: center; margin: 18px 0; }
+  .playing-card {
+    width: 64px; height: 92px; border-radius: 8px; background: var(--card-white);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 800; color: var(--card-ink);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+  }
+  .playing-card.red { color: var(--card-red); }
+  .playing-card.face-down {
+    background: linear-gradient(135deg, #2a2a2a 25%, #1c1c1c 25%, #1c1c1c 50%, #2a2a2a 50%, #2a2a2a 75%, #1c1c1c 75%, #1c1c1c);
+    background-size: 12px 12px; color: transparent;
+  }
+
+  .seat-list { display: flex; flex-direction: column; gap: 8px; }
+  .seat-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-card);
+    font-size: 14px;
+  }
+  .seat-row.is-me { border-color: var(--gold); }
+  .seat-badge {
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 999px; background: var(--gold-bg); color: var(--gold);
+    margin-left: 8px;
+  }
+  .status-pill {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,0.04);
+    color: var(--muted); border: 1px solid var(--line); display: inline-block; margin-bottom: 14px;
+  }
+</style>
+</head>
+<body>
+
+<div class="content" id="content">
+  <h1>Poker Table</h1>
+  <p class="sub">URBANO Gaming — non-wagering, free chips only.</p>
+
+  <div class="card" id="join-card">
+    <div class="field">
+      <label>Room code</label>
+      <input id="join-room-code" placeholder="ABCDEF" maxlength="6" style="text-transform:uppercase" />
+    </div>
+    <div class="field">
+      <label>Your name</label>
+      <input id="join-display-name" placeholder="Your name" maxlength="40" />
+    </div>
+    <button class="btn-primary" id="btn-join">Join Table</button>
+    <p class="msg" id="join-msg"></p>
+  </div>
+
+  <div id="table-card" style="display:none;"></div>
+</div>
+
+<script>
+const STORAGE_KEY = "urbano_poker_seat";
+
+function el(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html.trim();
+  return div.firstElementChild;
+}
+
+function saveSeat(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+function loadSeat() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"); } catch { return null; }
+}
+
+async function apiFetch(path, options) {
+  const res = await fetch(path, options);
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+function renderCard(code) {
+  if (!code) return `<div class="playing-card face-down">?</div>`;
+  const rank = code[0];
+  const suit = code[1];
+  const suitSymbol = { C: "♣", D: "♦", H: "♥", S: "♠" }[suit] || suit;
+  const isRed = suit === "D" || suit === "H";
+  return `<div class="playing-card${isRed ? " red" : ""}">${rank}${suitSymbol}</div>`;
+}
+
+async function renderTable(seat) {
+  const container = document.getElementById("table-card");
+  const res = await apiFetch(`/api/gaming/poker/tables/${seat.pokerTableId}`, {
+    headers: { authorization: "Bearer " + seat.participantToken },
+  });
+
+  if (res.status !== 200) {
+    container.innerHTML = "";
+    container.appendChild(el(`<div class="card"><p class="msg error">${(res.json && res.json.error) || "Failed to load table."}</p></div>`));
+    return;
+  }
+
+  const state = res.json;
+  const mySeatNumber = seat.seatNumber;
+
+  const seatRows = state.seats.map((s) => `
+    <div class="seat-row${s.seatNumber === mySeatNumber ? " is-me" : ""}">
+      <span>${s.displayName}${s.seatNumber === mySeatNumber ? " (you)" : ""}</span>
+      <span>${s.isDealer ? '<span class="seat-badge">Dealer</span>' : ""}${state.currentHandId && !s.inCurrentHand ? '<span class="seat-badge">Waiting</span>' : ""}</span>
+    </div>
+  `).join("");
+
+  const holeCardsHtml = state.myHoleCards
+    ? `<div class="hole-cards">${state.myHoleCards.map(renderCard).join("")}</div>`
+    : state.currentHandId
+      ? `<p class="msg">You'll join the next Hand.</p>`
+      : `<p class="msg">Waiting for the host to deal.</p>`;
+
+  container.innerHTML = "";
+  container.appendChild(el(`
+    <div class="card">
+      <span class="status-pill">Room ${state.roomCode}</span>
+      ${holeCardsHtml}
+      <div class="seat-list">${seatRows}</div>
+    </div>
+  `));
+}
+
+document.getElementById("btn-join").addEventListener("click", async () => {
+  const roomCode = document.getElementById("join-room-code").value.trim();
+  const displayName = document.getElementById("join-display-name").value.trim();
+  const msg = document.getElementById("join-msg");
+  const btn = document.getElementById("btn-join");
+
+  if (!roomCode || !displayName) {
+    msg.className = "msg error";
+    msg.textContent = "Room code and name are required.";
+    return;
+  }
+
+  btn.disabled = true;
+  msg.className = "msg";
+  msg.textContent = "Joining…";
+
+  const res = await apiFetch(`/api/gaming/poker/tables/${roomCode.toUpperCase()}/join`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ displayName }),
+  });
+
+  if (res.status === 201) {
+    saveSeat(res.json);
+    document.getElementById("join-card").style.display = "none";
+    document.getElementById("table-card").style.display = "block";
+    await renderTable(res.json);
+    setInterval(() => renderTable(loadSeat()), 2000);
+  } else {
+    msg.className = "msg error";
+    msg.textContent = (res.json && res.json.error) || "Failed to join table.";
+    btn.disabled = false;
+  }
+});
+
+(function init() {
+  const seat = loadSeat();
+  if (seat) {
+    document.getElementById("join-card").style.display = "none";
+    document.getElementById("table-card").style.display = "block";
+    renderTable(seat);
+    setInterval(() => renderTable(loadSeat()), 2000);
+  }
+})();
+</script>
+
+</body>
+</html>
