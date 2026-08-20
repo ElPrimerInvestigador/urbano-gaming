@@ -20,14 +20,30 @@ import { PokerRoomCodeCollisionError } from "./types";
 const MAX_ROOM_CODE_RETRIES = 5;
 const DEFAULT_MAX_SEATS = 6;
 const MIN_MAX_SEATS = 2;
+const DEFAULT_STARTING_STACK = 1000;
+const DEFAULT_SMALL_BLIND = 5;
+const DEFAULT_BIG_BLIND = 10;
 
 export async function createTable(
   repo: PokerRepository,
-  input: { maxSeats?: number } = {}
+  input: { maxSeats?: number; startingStack?: number; smallBlind?: number; bigBlind?: number } = {}
 ): Promise<CreatePokerTableResult> {
   const maxSeats = input.maxSeats ?? DEFAULT_MAX_SEATS;
   if (!Number.isInteger(maxSeats) || maxSeats < MIN_MAX_SEATS || maxSeats > DEFAULT_MAX_SEATS) {
     throw new Error("Poker table max seats must be an integer between 2 and 6.");
+  }
+
+  const startingStack = input.startingStack ?? DEFAULT_STARTING_STACK;
+  const smallBlind = input.smallBlind ?? DEFAULT_SMALL_BLIND;
+  const bigBlind = input.bigBlind ?? DEFAULT_BIG_BLIND;
+  if (!Number.isInteger(startingStack) || startingStack <= 0) {
+    throw new Error("Poker table starting stack must be a positive integer.");
+  }
+  if (!Number.isInteger(smallBlind) || smallBlind <= 0) {
+    throw new Error("Poker table small blind must be a positive integer.");
+  }
+  if (!Number.isInteger(bigBlind) || bigBlind <= smallBlind) {
+    throw new Error("Poker table big blind must be a positive integer greater than the small blind.");
   }
 
   for (let attempt = 0; attempt < MAX_ROOM_CODE_RETRIES; attempt++) {
@@ -38,6 +54,9 @@ export async function createTable(
       maxSeats,
       closedAt: null,
       createdAt: new Date().toISOString(),
+      startingStack,
+      smallBlind,
+      bigBlind,
     };
 
     try {
@@ -47,6 +66,9 @@ export async function createTable(
         roomCode: record.roomCode,
         hostToken: record.hostToken,
         maxSeats: record.maxSeats,
+        startingStack: record.startingStack,
+        smallBlind: record.smallBlind,
+        bigBlind: record.bigBlind,
       };
     } catch (err) {
       if (err instanceof PokerRoomCodeCollisionError) {

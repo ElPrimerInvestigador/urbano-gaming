@@ -14,6 +14,9 @@ export interface PokerTableRecord {
   maxSeats: number;
   closedAt: string | null;
   createdAt: string;
+  startingStack: number;
+  smallBlind: number;
+  bigBlind: number;
 }
 
 export interface PokerSeatRecord {
@@ -24,6 +27,7 @@ export interface PokerSeatRecord {
   normalizedDisplayName: string;
   participantToken: string;
   joinedAt: string;
+  stack: number;
 }
 
 /**
@@ -38,6 +42,8 @@ export interface PokerSeatRecord {
  * real dealing order rather than dealing two consecutive cards to each
  * player.
  */
+export type PokerStreet = "PRE_FLOP" | "FLOP" | "TURN" | "RIVER" | "SHOWDOWN" | "COMPLETE";
+
 export interface PokerHandRecord {
   pokerHandId: string;
   pokerTableId: string;
@@ -46,6 +52,59 @@ export interface PokerHandRecord {
   dealtSeatNumbers: number[];
   deckOrder: string[];
   dealtAt: string;
+  street: PokerStreet;
+  smallBlindSeatNumber: number;
+  bigBlindSeatNumber: number;
+  currentBet: number;
+  minRaiseAmount: number;
+  lastRaiseWasFull: boolean;
+  currentActorSeatNumber: number | null;
+  completedAt: string | null;
+}
+
+/** Live, per-Hand betting state for one seat. Current in-hand chips = seat.stack - committedThisHand (derived). */
+export interface PokerHandPlayerRecord {
+  pokerHandId: string;
+  seatNumber: number;
+  committedThisHand: number;
+  committedThisStreet: number;
+  folded: boolean;
+  allIn: boolean;
+  actedThisStreet: boolean;
+}
+
+export type PokerActionType =
+  | "POST_SMALL_BLIND"
+  | "POST_BIG_BLIND"
+  | "FOLD"
+  | "CHECK"
+  | "CALL"
+  | "BET"
+  | "RAISE"
+  | "ALL_IN";
+
+export interface PokerHandActionRecord {
+  pokerHandActionId: string;
+  pokerHandId: string;
+  actionOrdinal: number;
+  street: PokerStreet;
+  seatNumber: number;
+  actionType: PokerActionType;
+  amount: number;
+  idempotencyKey: string;
+  createdAt: string;
+}
+
+export interface PokerHandResultRecord {
+  pokerHandId: string;
+  board: string[];
+  pots: Array<{
+    amount: number;
+    eligibleSeatNumbers: number[];
+    payouts: Array<{ seatNumber: number; amount: number }>;
+  }>;
+  showdownHands: Record<string, { cards: [string, string]; rankName: string }> | null;
+  completedAt: string;
 }
 
 export interface CreatePokerTableResult {
@@ -53,6 +112,9 @@ export interface CreatePokerTableResult {
   roomCode: string;
   hostToken: string;
   maxSeats: number;
+  startingStack: number;
+  smallBlind: number;
+  bigBlind: number;
 }
 
 export interface JoinPokerTableResult {
@@ -61,6 +123,7 @@ export interface JoinPokerTableResult {
   seatNumber: number;
   displayName: string;
   participantToken: string;
+  stack: number;
 }
 
 export interface DealPokerHandResult {
@@ -72,12 +135,50 @@ export interface DealPokerHandResult {
   alreadyDealt: boolean;
 }
 
+export interface StartPokerHandResult {
+  pokerHandId: string;
+  pokerTableId: string;
+  handOrdinal: number;
+  dealerSeatNumber: number;
+  dealtSeatNumbers: number[];
+  smallBlindSeatNumber: number;
+  bigBlindSeatNumber: number;
+  currentActorSeatNumber: number | null;
+  street: PokerStreet;
+  alreadyStarted: boolean;
+}
+
+export interface PlayerActionResult {
+  pokerHandId: string;
+  street: PokerStreet;
+  currentActorSeatNumber: number | null;
+  currentBet: number;
+  handOver: boolean;
+  showdownReached: boolean;
+  earlyWinWinnerSeatNumber: number | null;
+  alreadyApplied: boolean;
+}
+
 /** A seat as exposed by GET_TABLE_STATE — no participantToken. */
 export interface SeatSummary {
   seatNumber: number;
   displayName: string;
   isDealer: boolean;
   inCurrentHand: boolean;
+  stack: number;
+  committedThisHand: number;
+  committedThisStreet: number;
+  folded: boolean;
+  allIn: boolean;
+  isCurrentActor: boolean;
+  /**
+   * Populated ONLY once poker_hand_results.showdown_hands legitimately
+   * reveals this seat (the Hand reached a real Showdown and this seat
+   * did not fold) — never for a live/in-progress Hand, never for a
+   * folded seat at any point, never for an early-win (fold-to-one)
+   * Hand. See getTableState.ts's own comment for the exact rule.
+   */
+  revealedHoleCards: [string, string] | null;
 }
 
 /**
@@ -86,16 +187,30 @@ export interface SeatSummary {
  * and their seat was included in it — never for the host, never for
  * any other seat. See getTableState.ts's own comment for the full
  * privacy rule and why the host does not automatically see hole cards.
+ *
+ * showdownHands mirrors poker_hand_results.showdown_hands exactly:
+ * present only once a Hand has reached street = 'COMPLETE' via a real
+ * Showdown, containing only the seats that did not fold — an early
+ * win (fold-to-one) never populates this, per the chosen v1 reveal
+ * rule (see POKER_GAMEPLAY_IMPLEMENTATION_RECORD.md).
  */
 export interface GetTableStateResult {
   pokerTableId: string;
   roomCode: string;
   maxSeats: number;
   closedAt: string | null;
+  startingStack: number;
+  smallBlind: number;
+  bigBlind: number;
   seats: SeatSummary[];
   currentHandId: string | null;
   currentHandOrdinal: number | null;
+  street: PokerStreet | null;
+  board: string[];
+  pot: number;
   myHoleCards: [string, string] | null;
+  myLegalActions: import("./pokerRules").LegalActions | null;
+  handResult: PokerHandResultRecord | null;
 }
 
 // --- Errors -------------------------------------------------------------
@@ -167,5 +282,68 @@ export class InvalidDeckError extends Error {
   constructor() {
     super("The supplied deck is not a valid 52-card permutation.");
     this.name = "InvalidDeckError";
+  }
+}
+
+export class PokerHandNotFoundError extends Error {
+  constructor() {
+    super("No poker hand exists for this id.");
+    this.name = "PokerHandNotFoundError";
+  }
+}
+
+export class HandNotAcceptingActionsError extends Error {
+  constructor() {
+    super("This hand is no longer accepting actions.");
+    this.name = "HandNotAcceptingActionsError";
+  }
+}
+
+export class NotYourTurnError extends Error {
+  constructor() {
+    super("It is not this seat's turn to act.");
+    this.name = "NotYourTurnError";
+  }
+}
+
+export class SeatNotInHandError extends Error {
+  constructor() {
+    super("This seat is not part of this hand.");
+    this.name = "SeatNotInHandError";
+  }
+}
+
+export class SeatNotEligibleToActError extends Error {
+  constructor() {
+    super("This seat has already folded or is already all-in.");
+    this.name = "SeatNotEligibleToActError";
+  }
+}
+
+export class IllegalActionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IllegalActionError";
+  }
+}
+
+export class InvalidActionAmountError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidActionAmountError";
+  }
+}
+
+export class HandNotAtShowdownError extends Error {
+  constructor() {
+    super("This hand has not reached showdown.");
+    this.name = "HandNotAtShowdownError";
+  }
+}
+
+export class ChipConservationViolationError extends Error {
+  constructor() {
+    super("Total payouts do not match total committed chips.");
+    this.name = "ChipConservationViolationError";
   }
 }

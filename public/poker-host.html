@@ -6,24 +6,31 @@
 <title>Poker Host — URBANO Gaming</title>
 <style>
   /*
-   * Poker Foundation (Phase 1) — host surface. Smallest responsibility:
-   * create a table, show the room code, watch seats fill, deal the
-   * Hand. Deliberately does NOT show any seat's hole cards — see
-   * getTableState.ts's own comment for why host authority is not host
-   * omniscience in this phase.
+   * Poker Gameplay Phase — host surface. Smallest responsibility:
+   * configure the table, start the first Hand, start each next Hand,
+   * watch public state. Deliberately does NOT show any seat's
+   * unrevealed hole cards, does not approve individual actions, does
+   * not manually advance streets, and does not manually settle pots —
+   * the runtime self-progresses via PLAYER_ACTION alone.
    */
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a0a; color: #f5f1e8; margin: 0; padding: 24px; }
   h1 { font-size: 20px; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+  input { font-size: 13px; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2a2a; background: #161616; color: #f5f1e8; width: 130px; }
   button { font-size: 13px; font-weight: 600; padding: 10px 16px; border-radius: 6px; border: none; background: #f5f1e8; color: #0a0a0a; cursor: pointer; }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   .room-code { font-size: 40px; font-weight: 800; letter-spacing: 0.08em; margin: 12px 0; }
   .msg { font-size: 13px; color: #9b9689; margin: 6px 0; }
   .msg.error { color: #f87171; }
   .msg.success { color: #4ade80; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; max-width: 480px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; max-width: 560px; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1c1c1c; }
   .badge { font-size: 10.5px; font-weight: 700; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: rgba(212,175,55,0.12); color: #d4af37; margin-left: 6px; }
+  .badge.turn { background: rgba(74,222,128,0.14); color: #4ade80; }
+  .badge.allin { background: rgba(248,113,113,0.14); color: #f87171; }
+  .board { display: flex; gap: 6px; margin: 10px 0; }
+  .board .card-chip { background: #161616; border: 1px solid #2a2a2a; border-radius: 6px; padding: 6px 10px; font-weight: 700; font-size: 14px; }
+  .status-line { font-size: 13px; color: #d4af37; margin: 4px 0 12px; }
 </style>
 </head>
 <body>
@@ -31,6 +38,11 @@
 <h1>Poker Table — Host</h1>
 
 <div id="pre-create">
+  <div class="row">
+    <label>Starting stack <input id="cfg-stack" type="number" value="1000" /></label>
+    <label>Small blind <input id="cfg-sb" type="number" value="5" /></label>
+    <label>Big blind <input id="cfg-bb" type="number" value="10" /></label>
+  </div>
   <button id="btn-create">Create Poker Table</button>
 </div>
 
@@ -38,11 +50,13 @@
   <div class="room-code" id="room-code-display"></div>
   <p class="msg">Players join at <code>/poker-table.html</code> with this code.</p>
   <div class="row">
-    <button id="btn-deal">Deal Hand</button>
+    <button id="btn-start-hand">Start Hand</button>
   </div>
-  <p class="msg" id="deal-msg"></p>
+  <p class="msg" id="hand-msg"></p>
+  <p class="status-line" id="status-line"></p>
+  <div class="board" id="board"></div>
   <table>
-    <thead><tr><th>Seat</th><th>Player</th><th></th></tr></thead>
+    <thead><tr><th>Seat</th><th>Player</th><th>Stack</th><th>In hand</th><th></th></tr></thead>
     <tbody id="seats-body"></tbody>
   </table>
 </div>
@@ -59,6 +73,11 @@ async function apiFetch(path, options) {
   return { status: res.status, json };
 }
 
+function cardLabel(code) {
+  const suitSymbol = { C: "♣", D: "♦", H: "♥", S: "♠" }[code[1]] || code[1];
+  return code[0] + suitSymbol;
+}
+
 async function refreshTable(table) {
   const res = await apiFetch(`/api/gaming/poker/tables/${table.pokerTableId}`, {
     headers: { authorization: "Bearer " + table.hostToken },
@@ -66,17 +85,44 @@ async function refreshTable(table) {
   if (res.status !== 200) return;
 
   const state = res.json;
+
+  document.getElementById("status-line").textContent = state.currentHandId
+    ? `Hand #${state.currentHandOrdinal} — ${state.street} — Pot: ${state.pot} chips`
+    : "No hand in progress.";
+
+  document.getElementById("board").innerHTML = (state.board || [])
+    .map((c) => `<div class="card-chip">${cardLabel(c)}</div>`)
+    .join("");
+
+  const startBtn = document.getElementById("btn-start-hand");
+  const handOver = !state.currentHandId || state.street === "COMPLETE";
+  startBtn.textContent = state.currentHandId ? "Start Next Hand" : "Start Hand";
+  startBtn.disabled = !handOver;
+
   const tbody = document.getElementById("seats-body");
   tbody.innerHTML = "";
   for (const seat of state.seats) {
+    const badges = [
+      seat.isDealer ? '<span class="badge">Dealer</span>' : "",
+      seat.isCurrentActor ? '<span class="badge turn">Acting</span>' : "",
+      seat.allIn ? '<span class="badge allin">All-in</span>' : "",
+      seat.folded ? '<span class="badge">Folded</span>' : "",
+    ].join("");
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${seat.seatNumber}</td><td>${seat.displayName}</td><td>${seat.isDealer ? '<span class="badge">Dealer</span>' : ""}${state.currentHandId && seat.inCurrentHand ? '<span class="badge">Dealt</span>' : ""}</td>`;
+    tr.innerHTML = `<td>${seat.seatNumber}</td><td>${seat.displayName}</td><td>${seat.stack}</td><td>${state.currentHandId && seat.inCurrentHand ? "Yes" : "—"}</td><td>${badges}</td>`;
     tbody.appendChild(tr);
   }
 }
 
 document.getElementById("btn-create").addEventListener("click", async () => {
-  const res = await apiFetch("/api/gaming/poker/tables", { method: "POST" });
+  const startingStack = parseInt(document.getElementById("cfg-stack").value, 10);
+  const smallBlind = parseInt(document.getElementById("cfg-sb").value, 10);
+  const bigBlind = parseInt(document.getElementById("cfg-bb").value, 10);
+  const res = await apiFetch("/api/gaming/poker/tables", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ startingStack, smallBlind, bigBlind }),
+  });
   if (res.status === 201) {
     saveHost(res.json);
     document.getElementById("pre-create").style.display = "none";
@@ -84,31 +130,33 @@ document.getElementById("btn-create").addEventListener("click", async () => {
     document.getElementById("room-code-display").textContent = res.json.roomCode;
     await refreshTable(res.json);
     setInterval(() => refreshTable(loadHost()), 2000);
+  } else {
+    alert((res.json && res.json.error) || "Failed to create table.");
   }
 });
 
-document.getElementById("btn-deal").addEventListener("click", async () => {
+document.getElementById("btn-start-hand").addEventListener("click", async () => {
   const table = loadHost();
-  const msg = document.getElementById("deal-msg");
-  const btn = document.getElementById("btn-deal");
+  const msg = document.getElementById("hand-msg");
+  const btn = document.getElementById("btn-start-hand");
   btn.disabled = true;
   msg.className = "msg";
-  msg.textContent = "Dealing…";
+  msg.textContent = "Starting…";
 
-  const res = await apiFetch(`/api/gaming/poker/tables/${table.pokerTableId}/deal`, {
+  const res = await apiFetch(`/api/gaming/poker/tables/${table.pokerTableId}/hand`, {
     method: "POST",
     headers: { authorization: "Bearer " + table.hostToken },
   });
 
   if (res.status === 200) {
     msg.className = "msg success";
-    msg.textContent = res.json.alreadyDealt ? "Already dealt — showing the existing Hand." : "Hand dealt. Cards are private to each player's own device.";
+    msg.textContent = res.json.alreadyStarted ? "A hand is already in progress." : "Hand started — cards are private to each player's own device.";
     await refreshTable(table);
   } else {
     msg.className = "msg error";
-    msg.textContent = (res.json && res.json.error) || "Failed to deal.";
+    msg.textContent = (res.json && res.json.error) || "Failed to start hand.";
+    btn.disabled = false;
   }
-  btn.disabled = false;
 });
 
 (function init() {

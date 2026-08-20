@@ -58,5 +58,6 @@ export async function joinTable(
     seatNumber: seat.seatNumber,
     displayName: seat.displayName,
     participantToken: seat.participantToken,
+    stack: seat.stack,
   };
 }

@@ -1,4 +1,13 @@
-import type { PokerTableRecord, PokerSeatRecord, PokerHandRecord } from "../types";
+import type {
+  PokerTableRecord,
+  PokerSeatRecord,
+  PokerHandRecord,
+  PokerHandPlayerRecord,
+  PokerHandActionRecord,
+  PokerHandResultRecord,
+  PokerActionType,
+  PokerStreet,
+} from "../types";
 
 /**
  * Poker Foundation persistence boundary — its own interface, parallel
@@ -44,4 +53,67 @@ export interface PokerRepository {
   }): Promise<{ hand: PokerHandRecord; alreadyDealt: boolean }>;
 
   getCurrentHandForTable(pokerTableId: string): Promise<PokerHandRecord | null>;
+  getHandById(pokerHandId: string): Promise<PokerHandRecord | null>;
+  getMostRecentHandForTable(pokerTableId: string): Promise<PokerHandRecord | null>;
+
+  /**
+   * Posts blinds and begins a new Hand — supersedes dealHand for real
+   * gameplay (0071/dealHand.ts are left untouched, still exercised by
+   * the Poker Foundation's own tests). Idempotent per table: if the
+   * table's most recent Hand is not yet street='COMPLETE', that Hand
+   * is returned unchanged with alreadyStarted: true.
+   */
+  startHand(input: {
+    pokerTableId: string;
+    dealerSeatNumber: number;
+    dealtSeatNumbers: number[];
+    smallBlindSeatNumber: number;
+    bigBlindSeatNumber: number;
+    preFlopFirstActorSeatNumber: number;
+    deckOrder: string[];
+  }): Promise<{ hand: PokerHandRecord; alreadyStarted: boolean }>;
+
+  getHandPlayers(pokerHandId: string): Promise<PokerHandPlayerRecord[]>;
+  getHandPlayer(pokerHandId: string, seatNumber: number): Promise<PokerHandPlayerRecord | null>;
+
+  /**
+   * The single authoritative command for every player action. Stops
+   * at street='SHOWDOWN' without settling (no hand evaluator in SQL) —
+   * the caller (applyPlayerAction.ts) detects showdownReached and
+   * calls settleShowdown next. Idempotent on a repeated idempotencyKey.
+   */
+  applyPlayerAction(input: {
+    pokerHandId: string;
+    seatNumber: number;
+    actionType: PokerActionType;
+    amount: number | null;
+    idempotencyKey: string;
+  }): Promise<{
+    pokerHandId: string;
+    street: PokerStreet;
+    currentActorSeatNumber: number | null;
+    currentBet: number;
+    handOver: boolean;
+    showdownReached: boolean;
+    earlyWinWinnerSeatNumber: number | null;
+    alreadyApplied: boolean;
+  }>;
+
+  listActionsForHand(pokerHandId: string): Promise<PokerHandActionRecord[]>;
+
+  /**
+   * Settles a Hand that has reached street='SHOWDOWN' — applies the
+   * caller-computed pot payouts atomically, independently re-verifying
+   * chip conservation (total payouts must equal total committed) before
+   * trusting them. Idempotent: re-calling on an already-COMPLETE Hand
+   * returns the existing result without paying out twice.
+   */
+  settleShowdown(input: {
+    pokerHandId: string;
+    board: string[];
+    pots: PokerHandResultRecord["pots"];
+    showdownHands: PokerHandResultRecord["showdownHands"];
+  }): Promise<{ alreadySettled: boolean }>;
+
+  getHandResult(pokerHandId: string): Promise<PokerHandResultRecord | null>;
 }
