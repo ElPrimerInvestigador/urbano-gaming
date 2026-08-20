@@ -197,3 +197,20 @@ Constitutionally Accepted: Slices 001–002 only. 003–009 deliberately
   above. Slices 007, 008, and 009 are founder-accepted and closed at
   the same tier as 003–006, which is a distinct question from
   constitutional acceptance — see their table rows above.
+
+## Post-Slice-009 phases (2026-08-19 – 2026-08-20)
+
+Four additional phases were implemented, locally validated, and — as of 2026-08-20 — deployed to production, beyond Slice 009's own scope:
+
+| Phase | What it delivered | Status |
+|---|---|---|
+| Gaming Member Identity Foundation | `gaming_members`/`gaming_admins`, Supabase Auth (email OTP) integration, additive `participants.gaming_member_id` linkage, full Guest/member coexistence | **DEPLOYED. OTP PRODUCTION VALIDATION PENDING SMTP.** Guest gameplay confirmed unaffected in production. See `IDENTITY_FOUNDATION_IMPLEMENTATION_RECORD.md`. |
+| Soccer Predictions | Roster-based prediction gameplay with geolocation-gated venue activations, four-dimension settlement, prize qualification, Gaming XP ledger | **DEPLOYED. LOCAL VALIDATION COMPLETE. PRODUCTION END-TO-END VALIDATION PENDING SMTP.** See `SOCCER_PREDICTIONS_IMPLEMENTATION_RECORD.md`. |
+| Poker Foundation | Private-hand table/seat/hand foundation, authoritative server shuffle, hole-card privacy boundary | **DEPLOYED. PRODUCTION VALIDATED.** See `POKER_FOUNDATION_IMPLEMENTATION_RECORD.md`. |
+| Poker Gameplay | Full session-scoped, non-wagering No-Limit Hold'em runtime — blinds, betting streets, all-in/side pots, showdown evaluation, chip-conserving payout, Next Hand | **DEPLOYED. PRODUCTION VALIDATED** via a real Host+3-Guest proving case (normal Hand, all-in/side-pot Hand, early-fold-win Hand, chip conservation, reconnect/idempotency, mobile 375×812). See `POKER_GAMEPLAY_IMPLEMENTATION_RECORD.md`. |
+
+Production migration ceiling: **0081** (was 0044 before this deployment). Commit `f030558` fast-forward pushed to `origin/main` (`0d38b0f..f030558`) and live at `https://urbano-gaming-playtest.vercel.app`.
+
+Existing Session engines (Open Response, Voting, Quiz): **PRODUCTION REGRESSION PASSED** — each run end-to-end directly against production post-deployment, no regression.
+
+No SMTP configured; no Supabase Auth setting changed; no browser anon-key configured; no other card game begun; no Poker Gaming XP/rating begun; no generic Private Table Engine extracted.

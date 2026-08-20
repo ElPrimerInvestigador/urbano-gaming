@@ -143,4 +143,14 @@ No sports API integration, no Lifestyle integration, no anti-cheat/GPS-spoofing 
 
 ## Production status
 
-**Not touched in any way.** No migration applied beyond local Postgres (0050–0066, confirmed local-only). No production Supabase Auth setting changed. No SMTP configured. Production Identity validation remains exactly as blocked as recorded in `IDENTITY_FOUNDATION_IMPLEMENTATION_RECORD.md`. The `npm run test:contract` incident above is fully accounted for and confirmed to have left production unaffected. This record makes no production-readiness claim for Soccer Predictions.
+~~Not touched in any way. No migration applied beyond local Postgres (0050–0066, confirmed local-only).~~ **Superseded 2026-08-20.**
+
+## Production Deployment & Validation (2026-08-20)
+
+Migrations `0050`–`0066` applied to production as part of the accepted `0045`–`0081` batch; commit `f030558` pushed to `origin/main` and deployed. Schema-only `supabase db dump --linked` confirmed all 13 Predictions tables present with RLS auto-enabled and zero policies; production RPC introspection confirmed `upsert_prediction_atomically`, `finalize_match_result_atomically`, `correct_match_result_atomically`, `redeem_prize_qualification_atomically` all live.
+
+Verified against production, without manufacturing any auth: `soccer-predictions.html` and `predictions-admin.html` both return `200`. `GET /api/gaming/predictions/admin/teams` (unauthenticated) correctly returns `401` — honest rejection, not a crash, not a leak. No production venues/matches/teams have been seeded (admin-authored data, currently empty, as expected).
+
+No SMTP configured; no production Supabase Auth setting changed; no fake or manufactured member/admin account was created to force a proving case, per explicit instruction.
+
+Classification: **DEPLOYED. LOCAL VALIDATION COMPLETE. PRODUCTION END-TO-END VALIDATION PENDING SMTP** — this remains accurate even post-deployment, since every write path requires a completed Supabase Auth OTP sign-in, which requires SMTP.

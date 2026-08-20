@@ -72,4 +72,18 @@ Blinds, chip stacks, pot, betting actions, all-in, side pots, flop/turn/river, s
 
 ## Production status
 
-Local only. Migrations 0067–0071 have never been applied to production (confirmed: production's migration ceiling remains 0044, per the same authoritative `supabase migration list --linked` check used for Identity/Predictions). No push, no deploy, no SMTP. Poker gameplay (betting, showdown, chips) is not implemented — this record does not claim Poker is playable end to end, only that its privacy/state foundation is proven.
+~~Local only. Migrations 0067–0071 have never been applied to production (confirmed: production's migration ceiling remains 0044, per the same authoritative `supabase migration list --linked` check used for Identity/Predictions). No push, no deploy, no SMTP. Poker gameplay (betting, showdown, chips) is not implemented — this record does not claim Poker is playable end to end, only that its privacy/state foundation is proven.~~
+
+**Superseded 2026-08-20.** Migrations `0067`–`0071` applied to production as part of the accepted `0045`–`0081` batch; commit `f030558` (superset of this Foundation commit `f75a759` plus Poker Gameplay) pushed to `origin/main` and deployed. Foundation's own migration files, routes, and tests (`poker.test.ts`, `pokerSupabaseRepository.contract.test.ts`) were not modified by the Gameplay phase and remain passing.
+
+Foundation-specific production evidence, gathered directly against the live table used for the full Gameplay proving case (full detail in `POKER_GAMEPLAY_IMPLEMENTATION_RECORD.md`'s own "Production Deployment & Validation" section):
+
+- **Table creation / Guest seating**: table created with real config (`startingStack:200, smallBlind:5, bigBlind:10`); Alex, Jordan, and Sam joined and seated at sequential seat numbers with `stack` correctly initialized from `starting_stack`.
+- **Host privacy**: the Host's own `GET` view had `myHoleCards: null` throughout, and every seat's `revealedHoleCards: null` before Showdown.
+- **Participant private-card projection**: each participant's `myHoleCards` contained exactly their own two cards and no other seat's.
+- **No raw-deck exposure**: `deckOrder` confirmed absent from every response payload across the entire proving case, including at Showdown (only `board` and the specific revealed hands are ever returned).
+- **Reconnect**: every check throughout the proving case was a fresh, independent `GET` using only a token — full state (hole cards, stack, board, legal actions) restored from the server with no client-side memory.
+- **Join-during-Hand / waiting behavior**: a Guest (`MobileGuest`, joined live via the mobile client) was correctly shown "waiting" and excluded from the Hand already in progress, then correctly included in the next Hand.
+- **Production mobile evidence**: real 375×812 screenshots at `https://urbano-gaming-playtest.vercel.app/poker-table.html` showing the join screen and the waiting-seat view, both legible with no horizontal overflow.
+
+**DEPLOYED. PRODUCTION VALIDATED.**
