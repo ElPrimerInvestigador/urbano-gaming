@@ -1,0 +1,492 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Soccer Predictions Admin — URBANO Gaming</title>
+<style>
+  /*
+   * Smallest founder/admin surface to run the Soccer Predictions
+   * proving case: Match/Venue/Activation/Result/Prize CRUD. Desktop is
+   * the intended control surface (not redesigned for mobile) — this is
+   * a plain, functional internal tool, not a generic CMS.
+   */
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0a0a0a; color: #f5f1e8; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 15px; border-bottom: 1px solid #2a2a2a; padding-bottom: 8px; margin-top: 34px; }
+  section { max-width: 900px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+  input, select { font-size: 13px; padding: 8px 10px; border-radius: 6px; border: 1px solid #2a2a2a; background: #161616; color: #f5f1e8; }
+  button { font-size: 13px; font-weight: 600; padding: 8px 14px; border-radius: 6px; border: none; background: #f5f1e8; color: #0a0a0a; cursor: pointer; }
+  button.secondary { background: transparent; border: 1px solid #f5f1e8; color: #f5f1e8; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #1c1c1c; }
+  .msg { font-size: 12.5px; color: #9b9689; margin: 6px 0; }
+  .msg.error { color: #f87171; }
+  .msg.success { color: #4ade80; }
+  textarea { width: 100%; min-height: 90px; font-family: monospace; font-size: 12px; background: #161616; color: #f5f1e8; border: 1px solid #2a2a2a; border-radius: 6px; padding: 8px; }
+</style>
+</head>
+<body>
+
+<h1>Soccer Predictions — Admin</h1>
+<div class="row">
+  <button id="btn-signin">Sign in with URBANO</button>
+  <span class="msg" id="auth-status">Not signed in.</span>
+</div>
+
+<section id="admin-sections" style="display:none;">
+
+  <h2>Teams &amp; Rosters</h2>
+  <div class="row">
+    <input id="t-name" placeholder="Team name" />
+    <button id="btn-create-team">Create Team</button>
+  </div>
+  <p class="msg" id="msg-team"></p>
+  <div class="row">
+    <select id="p-team"></select>
+    <input id="p-name" placeholder="Player name" />
+    <button id="btn-create-player">Add Player</button>
+  </div>
+  <p class="msg" id="msg-player"></p>
+  <table id="table-roster"><thead><tr><th>Team</th><th>Player</th><th>Active</th><th></th></tr></thead><tbody></tbody></table>
+
+  <h2>Matches</h2>
+  <div class="row">
+    <select id="m-home"></select>
+    <select id="m-away"></select>
+    <input id="m-competition" placeholder="Competition" />
+    <input id="m-kickoff" type="datetime-local" />
+    <button id="btn-create-match">Create Match</button>
+  </div>
+  <p class="msg" id="msg-match"></p>
+  <table id="table-matches"><thead><tr><th>Teams</th><th>Kickoff</th><th>Status</th><th></th></tr></thead><tbody></tbody></table>
+
+  <h2>Venues</h2>
+  <div class="row">
+    <input id="v-name" placeholder="Venue name" />
+    <input id="v-lat" placeholder="Latitude" type="number" step="0.000001" />
+    <input id="v-lng" placeholder="Longitude" type="number" step="0.000001" />
+    <input id="v-radius" placeholder="Radius (m)" type="number" />
+    <button id="btn-create-venue">Create Venue</button>
+  </div>
+  <p class="msg" id="msg-venue"></p>
+  <table id="table-venues"><thead><tr><th>Name</th><th>Lat/Lng</th><th>Radius</th></tr></thead><tbody></tbody></table>
+
+  <h2>Venue Activations</h2>
+  <div class="row">
+    <select id="a-match"></select>
+    <select id="a-venue"></select>
+    <button id="btn-create-activation">Activate</button>
+  </div>
+  <p class="msg" id="msg-activation"></p>
+  <table id="table-activations"><thead><tr><th>Match</th><th>Venue</th><th>Enabled</th><th>Prize tiers</th><th></th></tr></thead><tbody></tbody></table>
+  <div class="row">
+    <select id="pt-activation"></select>
+    <select id="pt-count"><option value="1">1/4</option><option value="2">2/4</option><option value="3">3/4</option><option value="4">4/4</option></select>
+    <input id="pt-label" placeholder="Prize label" />
+    <button id="btn-create-tier">Add Prize Tier</button>
+  </div>
+  <p class="msg" id="msg-tier"></p>
+
+  <h2>Result</h2>
+  <div class="row">
+    <select id="r-match"></select>
+    <button id="btn-load-result">Load</button>
+  </div>
+  <div class="row">
+    <input id="r-home" placeholder="Home score" type="number" min="0" />
+    <input id="r-away" placeholder="Away score" type="number" min="0" />
+  </div>
+  <p class="msg">Goal events — select the scoring Player (own goals still select the Player who touched it last; the credited Team is derived automatically).</p>
+  <div id="r-events-list"></div>
+  <div class="row">
+    <button id="btn-add-goal-event" type="button" class="secondary">Add Goal Event</button>
+  </div>
+  <div class="row">
+    <button id="btn-save-draft">Save Draft</button>
+    <button id="btn-finalize" class="secondary">Finalize</button>
+  </div>
+  <p class="msg" id="msg-result"></p>
+
+  <h2>Prizes</h2>
+  <div class="row">
+    <select id="q-activation"></select>
+    <button id="btn-load-qualifications">Load Qualifications</button>
+  </div>
+  <table id="table-qualifications"><thead><tr><th>Gaming Member</th><th>Tier</th><th>Redeemed</th><th>Superseded</th><th></th></tr></thead><tbody></tbody></table>
+
+</section>
+
+<script src="/urbanoAuth.js"></script>
+<script>
+UrbanoAuth.attachSignInButton(document.getElementById("btn-signin"), document.getElementById("auth-status"));
+
+let cachedMatches = [];
+let cachedVenues = [];
+let cachedActivations = [];
+let cachedTeams = [];
+let cachedRosters = {}; // teamId -> PlayerRecord[]
+
+function teamNameById(teamId) {
+  const team = cachedTeams.find((t) => t.teamId === teamId);
+  return team ? team.name : "?";
+}
+
+function allPlayersForMatch(match) {
+  const home = cachedRosters[match.homeTeamId] || [];
+  const away = cachedRosters[match.awayTeamId] || [];
+  return { home, away };
+}
+
+async function authedFetch(path, options) {
+  const token = await UrbanoAuth.getAccessToken();
+  const headers = Object.assign({ "content-type": "application/json" }, (options && options.headers) || {});
+  if (token) headers.authorization = "Bearer " + token;
+  const res = await fetch(path, Object.assign({}, options, { headers }));
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+function setMsg(id, text, kind) {
+  const elm = document.getElementById(id);
+  elm.textContent = text;
+  elm.className = "msg" + (kind ? " " + kind : "");
+}
+
+async function refreshAuthState() {
+  const state = await UrbanoAuth.getState();
+  const statusEl = document.getElementById("auth-status");
+  const sections = document.getElementById("admin-sections");
+  if (state.status === "authenticated") {
+    statusEl.textContent = "Signed in as " + state.displayName + ".";
+    sections.style.display = "block";
+    await loadAll();
+  } else {
+    statusEl.textContent = "Not signed in.";
+    sections.style.display = "none";
+  }
+}
+
+async function loadTeams() {
+  const res = await authedFetch("/api/gaming/predictions/admin/teams");
+  cachedTeams = (res.json && res.json.teams) || [];
+
+  cachedRosters = {};
+  for (const t of cachedTeams) {
+    const playersRes = await authedFetch(`/api/gaming/predictions/admin/teams/${t.teamId}/players`);
+    cachedRosters[t.teamId] = (playersRes.json && playersRes.json.players) || [];
+  }
+
+  const teamSelects = [document.getElementById("p-team"), document.getElementById("m-home"), document.getElementById("m-away")];
+  teamSelects.forEach((s) => (s.innerHTML = ""));
+  for (const t of cachedTeams) {
+    for (const s of teamSelects) {
+      const opt = document.createElement("option");
+      opt.value = t.teamId;
+      opt.textContent = t.name;
+      s.appendChild(opt);
+    }
+  }
+
+  const tbody = document.querySelector("#table-roster tbody");
+  tbody.innerHTML = "";
+  for (const t of cachedTeams) {
+    for (const p of cachedRosters[t.teamId] || []) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${t.name}</td><td>${p.name}</td><td>${p.active ? "Yes" : "No"}</td><td><button data-toggle-player="${p.playerId}" data-active="${p.active}">${p.active ? "Deactivate" : "Activate"}</button></td>`;
+      tbody.appendChild(tr);
+    }
+  }
+  tbody.querySelectorAll("[data-toggle-player]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const active = btn.dataset.active === "true";
+      await authedFetch(`/api/gaming/predictions/admin/players/${btn.dataset.togglePlayer}`, {
+        method: "PATCH",
+        body: JSON.stringify({ active: !active }),
+      });
+      await loadTeams();
+    });
+  });
+}
+
+async function loadMatches() {
+  const res = await authedFetch("/api/gaming/predictions/admin/matches");
+  cachedMatches = (res.json && res.json.matches) || [];
+  const tbody = document.querySelector("#table-matches tbody");
+  tbody.innerHTML = "";
+  const matchSelects = [document.getElementById("a-match"), document.getElementById("r-match")];
+  matchSelects.forEach((s) => (s.innerHTML = ""));
+  for (const m of cachedMatches) {
+    const label = `${teamNameById(m.homeTeamId)} vs ${teamNameById(m.awayTeamId)}`;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${label}</td><td>${new Date(m.kickoffAt).toLocaleString()}</td><td>${m.cancelledAt ? "Cancelled" : "Active"}</td><td>${m.cancelledAt ? "" : `<button data-cancel="${m.matchId}">Cancel</button>`}</td>`;
+    tbody.appendChild(tr);
+    for (const s of matchSelects) {
+      const opt = document.createElement("option");
+      opt.value = m.matchId;
+      opt.textContent = label;
+      s.appendChild(opt);
+    }
+  }
+  tbody.querySelectorAll("[data-cancel]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await authedFetch(`/api/gaming/predictions/admin/matches/${btn.dataset.cancel}`, { method: "DELETE" });
+      await loadMatches();
+    });
+  });
+}
+
+async function loadVenues() {
+  const res = await authedFetch("/api/gaming/predictions/admin/venues");
+  cachedVenues = (res.json && res.json.venues) || [];
+  const tbody = document.querySelector("#table-venues tbody");
+  tbody.innerHTML = "";
+  const venueSelect = document.getElementById("a-venue");
+  venueSelect.innerHTML = "";
+  for (const v of cachedVenues) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${v.name}</td><td>${v.latitude}, ${v.longitude}</td><td>${v.radiusMeters}m</td>`;
+    tbody.appendChild(tr);
+    const opt = document.createElement("option");
+    opt.value = v.venueId;
+    opt.textContent = v.name;
+    venueSelect.appendChild(opt);
+  }
+}
+
+async function loadActivations() {
+  const tbody = document.querySelector("#table-activations tbody");
+  tbody.innerHTML = "";
+  const ptSelect = document.getElementById("pt-activation");
+  const qSelect = document.getElementById("q-activation");
+  ptSelect.innerHTML = "";
+  qSelect.innerHTML = "";
+  cachedActivations = [];
+  for (const m of cachedMatches) {
+    const res = await fetch("/api/gaming/predictions/matches");
+    const data = await res.json();
+    const match = (data.matches || []).find((x) => x.matchId === m.matchId);
+    if (!match) continue;
+    const label = `${teamNameById(m.homeTeamId)} vs ${teamNameById(m.awayTeamId)}`;
+    for (const activation of match.venueActivations) {
+      cachedActivations.push(activation);
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${label}</td><td>${activation.venue ? activation.venue.name : "?"}</td><td>${activation.enabled ? "Yes" : "No"}</td><td>${activation.prizeTiers.map((t) => t.correctDimensionCount + "/4: " + t.prizeLabel).join(", ") || "none"}</td><td><button data-toggle="${activation.venueActivationId}" data-enabled="${activation.enabled}">${activation.enabled ? "Disable" : "Enable"}</button></td>`;
+      tbody.appendChild(tr);
+      [ptSelect, qSelect].forEach((s) => {
+        const opt = document.createElement("option");
+        opt.value = activation.venueActivationId;
+        opt.textContent = `${label} @ ${activation.venue ? activation.venue.name : "?"}`;
+        s.appendChild(opt);
+      });
+    }
+  }
+  tbody.querySelectorAll("[data-toggle]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const enabled = btn.dataset.enabled === "true";
+      await authedFetch(`/api/gaming/predictions/admin/activations/${btn.dataset.toggle}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: !enabled }),
+      });
+      await loadActivations();
+    });
+  });
+}
+
+async function loadAll() {
+  await loadTeams();
+  await loadMatches();
+  await loadVenues();
+  await loadActivations();
+}
+
+document.getElementById("btn-create-team").addEventListener("click", async () => {
+  const name = document.getElementById("t-name").value.trim();
+  if (!name) { setMsg("msg-team", "Team name is required.", "error"); return; }
+  const res = await authedFetch("/api/gaming/predictions/admin/teams", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  if (res.status === 201) {
+    setMsg("msg-team", "Team created.", "success");
+    document.getElementById("t-name").value = "";
+    await loadTeams();
+  } else setMsg("msg-team", (res.json && res.json.error) || "Failed to create team.", "error");
+});
+
+document.getElementById("btn-create-player").addEventListener("click", async () => {
+  const teamId = document.getElementById("p-team").value;
+  const name = document.getElementById("p-name").value.trim();
+  if (!teamId || !name) { setMsg("msg-player", "Select a team and enter a player name.", "error"); return; }
+  const res = await authedFetch(`/api/gaming/predictions/admin/teams/${teamId}/players`, {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+  if (res.status === 201) {
+    setMsg("msg-player", "Player added.", "success");
+    document.getElementById("p-name").value = "";
+    await loadTeams();
+  } else setMsg("msg-player", (res.json && res.json.error) || "Failed to add player.", "error");
+});
+
+document.getElementById("btn-create-match").addEventListener("click", async () => {
+  const homeTeamId = document.getElementById("m-home").value;
+  const awayTeamId = document.getElementById("m-away").value;
+  const competition = document.getElementById("m-competition").value.trim();
+  const kickoff = document.getElementById("m-kickoff").value;
+  if (!homeTeamId || !awayTeamId || !competition || !kickoff) { setMsg("msg-match", "All fields are required.", "error"); return; }
+  if (homeTeamId === awayTeamId) { setMsg("msg-match", "Home and away teams must be different.", "error"); return; }
+  const res = await authedFetch("/api/gaming/predictions/admin/matches", {
+    method: "POST",
+    body: JSON.stringify({ homeTeamId, awayTeamId, competition, kickoffAt: new Date(kickoff).toISOString() }),
+  });
+  if (res.status === 201) { setMsg("msg-match", "Match created.", "success"); await loadAll(); }
+  else setMsg("msg-match", (res.json && res.json.error) || "Failed to create match.", "error");
+});
+
+document.getElementById("btn-create-venue").addEventListener("click", async () => {
+  const name = document.getElementById("v-name").value.trim();
+  const latitude = parseFloat(document.getElementById("v-lat").value);
+  const longitude = parseFloat(document.getElementById("v-lng").value);
+  const radiusMeters = parseFloat(document.getElementById("v-radius").value);
+  if (!name || !Number.isFinite(latitude) || !Number.isFinite(longitude) || !Number.isFinite(radiusMeters)) {
+    setMsg("msg-venue", "All fields are required.", "error"); return;
+  }
+  const res = await authedFetch("/api/gaming/predictions/admin/venues", {
+    method: "POST",
+    body: JSON.stringify({ name, latitude, longitude, radiusMeters }),
+  });
+  if (res.status === 201) { setMsg("msg-venue", "Venue created.", "success"); await loadAll(); }
+  else setMsg("msg-venue", (res.json && res.json.error) || "Failed to create venue.", "error");
+});
+
+document.getElementById("btn-create-activation").addEventListener("click", async () => {
+  const matchId = document.getElementById("a-match").value;
+  const venueId = document.getElementById("a-venue").value;
+  if (!matchId || !venueId) { setMsg("msg-activation", "Select a match and venue.", "error"); return; }
+  const res = await authedFetch("/api/gaming/predictions/admin/activations", {
+    method: "POST",
+    body: JSON.stringify({ matchId, venueId }),
+  });
+  if (res.status === 201) { setMsg("msg-activation", "Activation created.", "success"); await loadActivations(); }
+  else setMsg("msg-activation", (res.json && res.json.error) || "Failed to create activation.", "error");
+});
+
+document.getElementById("btn-create-tier").addEventListener("click", async () => {
+  const venueActivationId = document.getElementById("pt-activation").value;
+  const correctDimensionCount = parseInt(document.getElementById("pt-count").value, 10);
+  const prizeLabel = document.getElementById("pt-label").value.trim();
+  if (!venueActivationId || !prizeLabel) { setMsg("msg-tier", "Select an activation and enter a label.", "error"); return; }
+  const res = await authedFetch(`/api/gaming/predictions/admin/activations/${venueActivationId}/prize-tiers`, {
+    method: "POST",
+    body: JSON.stringify({ correctDimensionCount, prizeLabel }),
+  });
+  if (res.status === 201) { setMsg("msg-tier", "Prize tier added.", "success"); await loadActivations(); }
+  else setMsg("msg-tier", (res.json && res.json.error) || "Failed to add prize tier.", "error");
+});
+
+function currentResultMatchPlayers() {
+  const matchId = document.getElementById("r-match").value;
+  const match = cachedMatches.find((m) => m.matchId === matchId);
+  if (!match) return [];
+  const home = (cachedRosters[match.homeTeamId] || []).map((p) => ({ ...p, teamName: teamNameById(match.homeTeamId) }));
+  const away = (cachedRosters[match.awayTeamId] || []).map((p) => ({ ...p, teamName: teamNameById(match.awayTeamId) }));
+  return [...home, ...away];
+}
+
+function addGoalEventRow(existing) {
+  const players = currentResultMatchPlayers();
+  const row = document.createElement("div");
+  row.className = "row goal-event-row";
+  const playerOptions = players.map((p) => `<option value="${p.playerId}" ${existing && existing.scorerPlayerId === p.playerId ? "selected" : ""}>${p.teamName}: ${p.name}</option>`).join("");
+  row.innerHTML = `
+    <select class="ge-player">${playerOptions}</select>
+    <input class="ge-minute" type="number" min="1" max="120" placeholder="Minute" value="${existing ? existing.minuteRegulation : ""}" style="max-width:90px" />
+    <label style="font-size:12.5px;"><input class="ge-stoppage" type="number" min="1" placeholder="+stoppage" value="${existing && existing.minuteStoppage ? existing.minuteStoppage : ""}" style="max-width:70px" /></label>
+    <label style="font-size:12.5px;"><input class="ge-own-goal" type="checkbox" ${existing && existing.isOwnGoal ? "checked" : ""} /> Own goal</label>
+    <button type="button" class="secondary ge-remove">Remove</button>
+  `;
+  row.querySelector(".ge-remove").addEventListener("click", () => row.remove());
+  document.getElementById("r-events-list").appendChild(row);
+}
+
+document.getElementById("btn-add-goal-event").addEventListener("click", () => addGoalEventRow(null));
+document.getElementById("r-match").addEventListener("change", () => {
+  document.getElementById("r-events-list").innerHTML = "";
+});
+
+function readGoalEventRows() {
+  return [...document.querySelectorAll("#r-events-list .goal-event-row")].map((row) => ({
+    scorerPlayerId: row.querySelector(".ge-player").value,
+    minuteRegulation: parseInt(row.querySelector(".ge-minute").value, 10),
+    minuteStoppage: row.querySelector(".ge-stoppage").value ? parseInt(row.querySelector(".ge-stoppage").value, 10) : null,
+    isOwnGoal: row.querySelector(".ge-own-goal").checked,
+  }));
+}
+
+document.getElementById("btn-load-result").addEventListener("click", async () => {
+  const matchId = document.getElementById("r-match").value;
+  if (!matchId) return;
+  const res = await authedFetch(`/api/gaming/predictions/admin/matches/${matchId}/result`);
+  const draft = res.json && res.json.draft;
+  document.getElementById("r-events-list").innerHTML = "";
+  if (draft) {
+    document.getElementById("r-home").value = draft.homeScore;
+    document.getElementById("r-away").value = draft.awayScore;
+    for (const e of draft.goalEvents) addGoalEventRow(e);
+    setMsg("msg-result", draft.supersedesMatchResultId ? "Loaded correction draft." : "Loaded draft.", "success");
+  } else {
+    document.getElementById("r-home").value = "";
+    document.getElementById("r-away").value = "";
+    setMsg("msg-result", (res.json && res.json.currentFinalized) ? "No draft — click Save Draft to start a correction." : "No draft yet.", "");
+  }
+});
+
+document.getElementById("btn-save-draft").addEventListener("click", async () => {
+  const matchId = document.getElementById("r-match").value;
+  if (!matchId) { setMsg("msg-result", "Select a match.", "error"); return; }
+  const homeScore = parseInt(document.getElementById("r-home").value, 10);
+  const awayScore = parseInt(document.getElementById("r-away").value, 10);
+  const officialGoalEvents = readGoalEventRows();
+  const res = await authedFetch(`/api/gaming/predictions/admin/matches/${matchId}/result`, {
+    method: "POST",
+    body: JSON.stringify({ homeScore, awayScore, officialGoalEvents }),
+  });
+  if (res.status === 201) setMsg("msg-result", "Draft saved.", "success");
+  else setMsg("msg-result", (res.json && res.json.error) || "Failed to save draft.", "error");
+});
+
+document.getElementById("btn-finalize").addEventListener("click", async () => {
+  const matchId = document.getElementById("r-match").value;
+  if (!matchId) { setMsg("msg-result", "Select a match.", "error"); return; }
+  const res = await authedFetch(`/api/gaming/predictions/admin/matches/${matchId}/result/finalize`, { method: "POST" });
+  if (res.status === 200) setMsg("msg-result", "Finalized.", "success");
+  else setMsg("msg-result", (res.json && res.json.error) || "Failed to finalize.", "error");
+});
+
+document.getElementById("btn-load-qualifications").addEventListener("click", async () => {
+  const venueActivationId = document.getElementById("q-activation").value;
+  if (!venueActivationId) return;
+  const res = await authedFetch(`/api/gaming/predictions/admin/qualifications?venueActivationId=${venueActivationId}`);
+  const tbody = document.querySelector("#table-qualifications tbody");
+  tbody.innerHTML = "";
+  for (const q of (res.json && res.json.qualifications) || []) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${q.gamingMemberId}</td><td>${q.prizeTierId}</td><td>${q.redeemedAt ? "Yes" : "No"}</td><td>${q.supersededAt ? "Yes" : "No"}</td><td>${q.redeemedAt ? "" : `<button data-redeem="${q.prizeQualificationId}">Mark Redeemed</button>`}</td>`;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll("[data-redeem]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await authedFetch(`/api/gaming/predictions/admin/qualifications/${btn.dataset.redeem}/redeem`, { method: "POST" });
+      document.getElementById("btn-load-qualifications").click();
+    });
+  });
+});
+
+UrbanoAuth.onAuthStateChange(refreshAuthState);
+refreshAuthState();
+</script>
+
+</body>
+</html>

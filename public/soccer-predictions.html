@@ -9,12 +9,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   /*
-   * Soccer Predictions destination shell. Pre-launch: no prediction
-   * mechanics, match data APIs, scoring, geolocation, or auth are
-   * implemented here — see APPLICATION_SHELL_IMPLEMENTATION_RECORD.md.
-   * The one fixture shown is real, founder-verified schedule
-   * information, not fabricated content. Reuses the same identity
-   * tokens as index.html/host.html/participant.html.
+   * Soccer Predictions — real Experience. Built on Gaming Member
+   * identity (urbanoAuth.js); Prediction data via
+   * /api/gaming/predictions/*. Reuses the same identity tokens as
+   * index.html/host.html/participant.html — no shell redesign.
    */
   :root {
     --bg-page: #0a0a0a;
@@ -30,6 +28,8 @@
     --exp-purple: #7c3aed;
     --exp-purple-glow: rgba(124, 58, 237, 0.45);
     --exp-purple-bg: rgba(124, 58, 237, 0.12);
+    --good: #4ade80;
+    --bad: #f87171;
   }
   * { box-sizing: border-box; }
   body {
@@ -85,68 +85,77 @@
   }
   .back-link:hover { color: var(--ink); }
 
-  .hero-card {
-    max-width: 720px; margin: 20px auto 0; padding: 0 20px;
-  }
-  .hero-inner {
-    border-radius: 18px; border: 1px solid var(--exp-purple);
-    background:
-      radial-gradient(120% 160% at 100% 0%, var(--exp-purple-bg), transparent 60%),
-      var(--bg-card);
-    box-shadow: 0 0 0 1px rgba(124, 58, 237, 0.14), 0 0 34px var(--exp-purple-glow);
-    padding: 36px 26px;
-    text-align: center;
-  }
-  .ball { font-size: 30px; margin-bottom: 10px; display: block; }
-  .hero-inner h1 { font-size: clamp(22px, 5vw, 28px); font-weight: 800; margin: 0 0 18px; }
+  .content { max-width: 720px; margin: 20px auto 0; padding: 0 20px; }
 
-  /* Real fixture card — same original, no-crest treatment as the
-     landing page's Featured module. Structured to later hold more
-     than one match without redesign. */
-  .match-slide {
-    border-radius: 14px; border: 1px solid rgba(124, 58, 237, 0.35);
-    background:
-      linear-gradient(135deg, rgba(124,58,237,0.18) 0%, transparent 55%),
-      repeating-linear-gradient(135deg, rgba(255,255,255,0.025) 0 2px, transparent 2px 16px),
-      var(--surface-2);
-    padding: 20px; margin: 0 0 18px; text-align: center;
+  .card {
+    border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2);
+    padding: 20px; margin: 0 0 18px;
   }
+  .card.accent { border-color: var(--exp-purple); box-shadow: 0 0 0 1px rgba(124,58,237,0.14), 0 0 24px var(--exp-purple-glow); }
+
   .match-teams {
     display: flex; align-items: center; justify-content: center; gap: 14px;
-    font-size: 20px; font-weight: 800; margin: 0 0 12px; flex-wrap: wrap;
+    font-size: 20px; font-weight: 800; margin: 0 0 10px; flex-wrap: wrap; text-align: center;
   }
   .match-vs { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; }
   .match-meta {
     display: flex; flex-wrap: wrap; gap: 6px 16px; justify-content: center;
-    font-size: 12.5px; color: var(--muted);
+    font-size: 12.5px; color: var(--muted); margin-bottom: 14px;
   }
 
-  .hero-inner p {
-    color: var(--muted); font-size: 15px; line-height: 1.65; max-width: 480px; margin: 0 auto;
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; font-weight: 600; }
+  .field input, .field select {
+    width: 100%; font-family: inherit; font-size: 15px; padding: 12px 14px;
+    border-radius: 10px; border: 1px solid var(--line); background: var(--bg-card); color: var(--ink);
+    min-height: 44px;
   }
-  .status-row { display: flex; justify-content: center; margin-top: 20px; }
+  .score-row { display: flex; align-items: center; gap: 12px; }
+  .score-row input { text-align: center; }
+  .score-row .score-vs { font-size: 13px; color: var(--muted); font-weight: 700; }
+
+  .team-toggle-row { display: flex; gap: 8px; }
+  .team-toggle {
+    flex: 1; font-family: inherit; font-size: 13px; font-weight: 600; padding: 12px 8px;
+    border-radius: 10px; border: 1px solid var(--line); background: var(--bg-card); color: var(--ink);
+    cursor: pointer; min-height: 44px; text-align: center;
+  }
+  .team-toggle.is-selected { border-color: var(--gold); background: var(--gold-bg); color: var(--gold); }
+
+  .btn-primary {
+    font-family: inherit; font-size: 14px; font-weight: 700; padding: 13px 18px;
+    border-radius: 10px; border: none; background: var(--primary-fill); color: var(--primary-ink);
+    cursor: pointer; width: 100%; min-height: 46px;
+  }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
   .status-pill {
     font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
     padding: 5px 12px; border-radius: 999px; background: rgba(255,255,255,0.04);
-    color: var(--muted); border: 1px solid var(--line);
+    color: var(--muted); border: 1px solid var(--line); display: inline-block;
   }
+  .status-pill.good { color: var(--good); border-color: var(--good); }
+  .status-pill.bad { color: var(--bad); border-color: var(--bad); }
 
-  .info-section {
-    max-width: 720px; margin: 28px auto 0; padding: 0 20px;
-  }
-  .info-card {
-    border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2);
-    padding: 18px 20px; font-size: 14px; color: var(--muted); line-height: 1.6;
-  }
-  .info-card strong { color: var(--ink); }
+  .dimension-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
+  .dimension-cell { border-radius: 10px; border: 1px solid var(--line); padding: 12px; text-align: center; }
+  .dimension-cell.correct { border-color: var(--good); background: rgba(74,222,128,0.08); }
+  .dimension-cell.incorrect { border-color: var(--bad); background: rgba(248,113,113,0.06); }
+  .dimension-cell .label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .dimension-cell .mark { font-size: 20px; margin-top: 4px; }
+
+  .msg { font-size: 13px; color: var(--muted); margin: 10px 0 0; line-height: 1.5; }
+  .msg.error { color: var(--bad); }
+  .msg.success { color: var(--good); }
+
+  .empty-state { text-align: center; color: var(--muted); padding: 40px 20px; }
 
   @media (max-width: 640px) {
     .shell-header { padding: 16px 16px 0; }
     .brand-word { font-size: 15px; }
     .signin-btn { font-size: 12px; padding: 9px 12px; white-space: nowrap; }
     .primary-nav { padding: 0 16px 2px; }
-    .back-link, .hero-card, .info-section { padding-left: 16px; padding-right: 16px; }
-    .hero-inner { padding: 28px 18px; }
+    .back-link, .content { padding-left: 16px; padding-right: 16px; }
     .match-teams { font-size: 17px; }
   }
 </style>
@@ -173,41 +182,294 @@
 
 <a class="back-link" href="/">← Back to URBANO Gaming</a>
 
-<div class="hero-card">
-  <div class="hero-inner">
-    <span class="ball">⚽</span>
-    <h1>Soccer Predictions</h1>
-    <div class="match-slide">
-      <div class="match-teams">
-        <span>Espanyol</span>
-        <span class="match-vs">vs</span>
-        <span>Real Madrid</span>
-      </div>
-      <div class="match-meta">
-        <span>LaLiga · Sat, Aug 22</span>
-        <span>RCDE Stadium</span>
-        <span>1:30 PM · Tegucigalpa</span>
-      </div>
-    </div>
-    <p>Predict the biggest matches and compete with the community. We're putting the finishing touches on this experience — check back soon to make your picks.</p>
-    <div class="status-row">
-      <span class="status-pill">Opening Soon</span>
-    </div>
-  </div>
-</div>
-
-<div class="info-section">
-  <div class="info-card">
-    <strong>What to expect:</strong> pick your predictions before kickoff, see how you stack up against other URBANO members, and follow along as results come in.
-  </div>
+<div class="content" id="content">
+  <div class="empty-state">Loading Soccer Predictions…</div>
 </div>
 
 <script src="/urbanoAuth.js"></script>
 <script>
-  UrbanoAuth.attachSignInButton(
-    document.getElementById("btn-signin"),
-    document.getElementById("signin-status")
-  );
+UrbanoAuth.attachSignInButton(
+  document.getElementById("btn-signin"),
+  document.getElementById("signin-status")
+);
+
+const content = document.getElementById("content");
+
+function el(html) {
+  const div = document.createElement("div");
+  div.innerHTML = html.trim();
+  return div.firstElementChild;
+}
+
+async function authedFetch(path, options) {
+  const token = await UrbanoAuth.getAccessToken();
+  const headers = Object.assign({ "content-type": "application/json" }, (options && options.headers) || {});
+  if (token) headers.authorization = "Bearer " + token;
+  const res = await fetch(path, Object.assign({}, options, { headers }));
+  const json = await res.json().catch(() => null);
+  return { status: res.status, json };
+}
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+function findPlayerName(match, playerId) {
+  if (!playerId) return null;
+  const pools = [
+    (match.homeTeam && match.homeTeam.players) || [],
+    (match.awayTeam && match.awayTeam.players) || [],
+  ];
+  for (const pool of pools) {
+    const found = pool.find((p) => p.playerId === playerId);
+    if (found) return found.name;
+  }
+  return null;
+}
+
+function getCurrentPosition() {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude, accuracyMeters: pos.coords.accuracy }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  });
+}
+
+async function renderMatch(match) {
+  const authState = await UrbanoAuth.getState();
+  const kickoffPassed = new Date() >= new Date(match.kickoffAt);
+
+  const homeTeamName = match.homeTeam ? match.homeTeam.name : "Home";
+  const awayTeamName = match.awayTeam ? match.awayTeam.name : "Away";
+
+  const card = el(`<div class="card accent">
+    <div class="match-teams"><span>${homeTeamName}</span><span class="match-vs">vs</span><span>${awayTeamName}</span></div>
+    <div class="match-meta"><span>${match.competition}</span><span>${new Date(match.kickoffAt).toLocaleString()}</span></div>
+    <div id="match-body-${match.matchId}"></div>
+  </div>`);
+  const body = card.querySelector(`#match-body-${match.matchId}`);
+
+  if (match.finalized) {
+    body.appendChild(el(`<span class="status-pill">Result: ${match.finalResult.homeScore}–${match.finalResult.awayScore}</span>`));
+  } else if (kickoffPassed) {
+    body.appendChild(el(`<span class="status-pill bad">Locked — awaiting official result</span>`));
+  }
+
+  if (authState.status !== "authenticated") {
+    body.appendChild(el(`<p class="msg">Sign in with URBANO to make your prediction.</p>`));
+    return card;
+  }
+
+  const mineRes = await authedFetch(`/api/gaming/predictions/matches/${match.matchId}/mine`);
+  const mine = mineRes.json || {};
+
+  if (match.finalized && mine.evaluation) {
+    const ev = mine.evaluation;
+    const pred = mine.prediction;
+    const scorerName = findPlayerName(match, pred.predictedGoalscorerPlayerId) || "No Goalscorer";
+    const minuteLabel = pred.predictedGoalMinute === null ? "No Goal" : `${pred.predictedGoalMinute}'`;
+    const firstTeamLabel =
+      pred.predictedFirstTeamToScore === "HOME" ? homeTeamName :
+      pred.predictedFirstTeamToScore === "AWAY" ? awayTeamName : "No Goal";
+    // el() returns only firstElementChild — every sibling after the
+    // dimension-grid div must live inside ONE wrapper, or it is
+    // silently dropped rather than appended.
+    body.appendChild(el(`
+      <div>
+        <div class="dimension-grid">
+          <div class="dimension-cell ${ev.scorelineCorrect ? "correct" : "incorrect"}"><div class="label">Scoreline</div><div class="mark">${ev.scorelineCorrect ? "✓" : "✗"}</div></div>
+          <div class="dimension-cell ${ev.goalscorerCorrect ? "correct" : "incorrect"}"><div class="label">Goalscorer</div><div class="mark">${ev.goalscorerCorrect ? "✓" : "✗"}</div></div>
+          <div class="dimension-cell ${ev.goalMinuteCorrect ? "correct" : "incorrect"}"><div class="label">Goal Minute</div><div class="mark">${ev.goalMinuteCorrect ? "✓" : "✗"}</div></div>
+          <div class="dimension-cell ${ev.firstTeamToScoreCorrect ? "correct" : "incorrect"}"><div class="label">First Scorer</div><div class="mark">${ev.firstTeamToScoreCorrect ? "✓" : "✗"}</div></div>
+        </div>
+        <p class="msg success">${ev.correctDimensionCount} of 4 correct.</p>
+        ${mine.qualification ? `<p class="msg success">Prize qualified: ${mine.qualification.supersededAt ? "(superseded by a result correction)" : mine.qualification.redeemedAt ? "already redeemed" : "not yet redeemed — see an URBANO host"}.</p>` : ""}
+        <p class="msg">Your prediction: ${pred.predictedHomeScore}–${pred.predictedAwayScore}, ${scorerName}, ${minuteLabel}, first: ${firstTeamLabel}</p>
+      </div>
+    `));
+    return card;
+  }
+
+  if (kickoffPassed) {
+    if (mine.prediction) {
+      body.appendChild(el(`<p class="msg">Your prediction: ${mine.prediction.predictedHomeScore}–${mine.prediction.predictedAwayScore}. Awaiting the official result.</p>`));
+    } else {
+      body.appendChild(el(`<p class="msg">You did not submit a prediction before kickoff.</p>`));
+    }
+    return card;
+  }
+
+  const enabledActivations = match.venueActivations.filter((a) => a.enabled && a.venue && a.venue.active);
+  if (enabledActivations.length === 0) {
+    body.appendChild(el(`<p class="msg">No venue is currently active for this match.</p>`));
+    return card;
+  }
+
+  const form = el(`<form>
+    <div class="field">
+      <label>Venue</label>
+      <select id="venue-select-${match.matchId}"></select>
+    </div>
+    <p class="msg" id="geo-status-${match.matchId}">Checking your location…</p>
+    <div class="field">
+      <label>Exact score</label>
+      <div class="score-row">
+        <input type="number" min="0" id="home-score-${match.matchId}" value="${mine.prediction ? mine.prediction.predictedHomeScore : 0}" />
+        <span class="score-vs">–</span>
+        <input type="number" min="0" id="away-score-${match.matchId}" value="${mine.prediction ? mine.prediction.predictedAwayScore : 0}" />
+      </div>
+    </div>
+    <div class="field">
+      <label>Who will score?</label>
+      <select id="goalscorer-select-${match.matchId}">
+        <option value="">No Goalscorer / No Goal</option>
+        <optgroup label="${homeTeamName}">
+          ${(match.homeTeam ? match.homeTeam.players : []).map((p) => `<option value="${p.playerId}">${p.name}</option>`).join("")}
+        </optgroup>
+        <optgroup label="${awayTeamName}">
+          ${(match.awayTeam ? match.awayTeam.players : []).map((p) => `<option value="${p.playerId}">${p.name}</option>`).join("")}
+        </optgroup>
+      </select>
+    </div>
+    <div class="field">
+      <label>At what minute will any goal be scored?</label>
+      <input type="number" min="1" max="120" id="goal-minute-${match.matchId}" placeholder="No Goal — leave blank" value="${mine.prediction && mine.prediction.predictedGoalMinute !== null ? mine.prediction.predictedGoalMinute : ""}" />
+    </div>
+    <div class="field">
+      <label>Who scores first?</label>
+      <div class="team-toggle-row" id="first-team-toggle-${match.matchId}">
+        <button type="button" class="team-toggle" data-value="HOME">${homeTeamName}</button>
+        <button type="button" class="team-toggle" data-value="AWAY">${awayTeamName}</button>
+        <button type="button" class="team-toggle" data-value="">No Goal</button>
+      </div>
+    </div>
+    <button type="submit" class="btn-primary" id="submit-btn-${match.matchId}">${mine.prediction ? "Update Prediction" : "Submit Prediction"}</button>
+    <p class="msg" id="submit-msg-${match.matchId}"></p>
+  </form>`);
+  body.appendChild(form);
+
+  const goalscorerSelect = form.querySelector(`#goalscorer-select-${match.matchId}`);
+  if (mine.prediction && mine.prediction.predictedGoalscorerPlayerId) {
+    goalscorerSelect.value = mine.prediction.predictedGoalscorerPlayerId;
+  }
+
+  const firstTeamToggle = form.querySelector(`#first-team-toggle-${match.matchId}`);
+  let selectedFirstTeam = mine.prediction ? mine.prediction.predictedFirstTeamToScore : null;
+  function renderFirstTeamToggle() {
+    for (const btn of firstTeamToggle.querySelectorAll(".team-toggle")) {
+      const btnValue = btn.getAttribute("data-value") || null;
+      btn.classList.toggle("is-selected", btnValue === selectedFirstTeam);
+    }
+  }
+  renderFirstTeamToggle();
+  for (const btn of firstTeamToggle.querySelectorAll(".team-toggle")) {
+    btn.addEventListener("click", () => {
+      selectedFirstTeam = btn.getAttribute("data-value") || null;
+      renderFirstTeamToggle();
+    });
+  }
+
+  const select = form.querySelector(`#venue-select-${match.matchId}`);
+  const lockedActivationId = mine.prediction ? mine.prediction.venueActivationId : null;
+  for (const activation of enabledActivations) {
+    const opt = document.createElement("option");
+    opt.value = activation.venueActivationId;
+    opt.textContent = activation.venue.name;
+    if (lockedActivationId && activation.venueActivationId === lockedActivationId) opt.selected = true;
+    select.appendChild(opt);
+  }
+  if (lockedActivationId) select.disabled = true;
+
+  const geoStatus = form.querySelector(`#geo-status-${match.matchId}`);
+  const position = await getCurrentPosition();
+  if (!position) {
+    geoStatus.textContent = "Location unavailable — enable location access to submit a prediction.";
+    geoStatus.className = "msg error";
+  } else {
+    const selectedActivation = enabledActivations.find((a) => a.venueActivationId === select.value) || enabledActivations[0];
+    const distance = haversineMeters(position.latitude, position.longitude, selectedActivation.venue.latitude, selectedActivation.venue.longitude);
+    const eligible = distance <= selectedActivation.venue.radiusMeters;
+    geoStatus.textContent = eligible ? "You're within range of this venue." : "You appear to be outside this venue's range — submission may be rejected.";
+    geoStatus.className = eligible ? "msg success" : "msg error";
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const submitMsg = form.querySelector(`#submit-msg-${match.matchId}`);
+    const submitBtn = form.querySelector(`#submit-btn-${match.matchId}`);
+    submitBtn.disabled = true;
+    submitMsg.className = "msg";
+    submitMsg.textContent = "Submitting…";
+
+    const freshPosition = await getCurrentPosition();
+    if (!freshPosition) {
+      submitMsg.className = "msg error";
+      submitMsg.textContent = "Location is required to submit a prediction.";
+      submitBtn.disabled = false;
+      return;
+    }
+
+    const goalMinuteRaw = form.querySelector(`#goal-minute-${match.matchId}`).value;
+    const predictedGoalMinute = goalMinuteRaw.trim() === "" ? null : parseInt(goalMinuteRaw, 10);
+
+    const result = await authedFetch(`/api/gaming/predictions/matches/${match.matchId}/predict`, {
+      method: "POST",
+      body: JSON.stringify({
+        venueActivationId: select.value,
+        predictedHomeScore: parseInt(form.querySelector(`#home-score-${match.matchId}`).value, 10) || 0,
+        predictedAwayScore: parseInt(form.querySelector(`#away-score-${match.matchId}`).value, 10) || 0,
+        predictedGoalscorerPlayerId: goalscorerSelect.value || null,
+        predictedGoalMinute: Number.isFinite(predictedGoalMinute) ? predictedGoalMinute : null,
+        predictedFirstTeamToScore: selectedFirstTeam,
+        latitude: freshPosition.latitude,
+        longitude: freshPosition.longitude,
+        accuracyMeters: freshPosition.accuracyMeters,
+      }),
+    });
+
+    if (result.status === 201) {
+      submitMsg.className = "msg success";
+      submitMsg.textContent = "Prediction saved. You can edit it until kickoff.";
+      mine.prediction = result.json.prediction;
+    } else {
+      submitMsg.className = "msg error";
+      submitMsg.textContent = (result.json && result.json.error) || "Failed to submit prediction.";
+    }
+    submitBtn.disabled = false;
+  });
+
+  return card;
+}
+
+async function init() {
+  const res = await fetch("/api/gaming/predictions/matches");
+  const data = await res.json();
+  content.innerHTML = "";
+
+  if (!data.matches || data.matches.length === 0) {
+    content.appendChild(el(`<div class="empty-state">No matches are open for prediction yet — check back soon.</div>`));
+    return;
+  }
+
+  for (const match of data.matches) {
+    if (match.cancelledAt) continue;
+    content.appendChild(await renderMatch(match));
+  }
+
+  if (content.children.length === 0) {
+    content.appendChild(el(`<div class="empty-state">No matches are open for prediction yet — check back soon.</div>`));
+  }
+}
+
+init();
 </script>
 
 </body>
