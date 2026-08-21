@@ -28,6 +28,7 @@ const gamingRepo = new SupabaseGamingRepository(supabaseUrl, supabaseServiceRole
 const cleanupClient = createClient(supabaseUrl, supabaseServiceRoleKey);
 
 const createdAuthUserIds: string[] = [];
+const createdGamingMemberIds: string[] = [];
 const createdMatchIds: string[] = [];
 const createdVenueIds: string[] = [];
 const createdTeamIds: string[] = [];
@@ -38,6 +39,7 @@ async function createRealGamingMember(displayName: string): Promise<{ authUserId
   if (error || !data.user) throw error ?? new Error("Failed to create test auth user.");
   createdAuthUserIds.push(data.user.id);
   const member = await gamingRepo.createGamingMember(data.user.id, displayName);
+  createdGamingMemberIds.push(member.gamingMemberId);
   return { authUserId: data.user.id, gamingMemberId: member.gamingMemberId };
 }
 
@@ -118,6 +120,19 @@ afterAll(async () => {
     await cleanupClient.from("players").delete().eq("team_id", teamId);
     await cleanupClient.from("teams").delete().eq("team_id", teamId);
   }
+  // Persistent Metagame Phase 1: gaming_xp_events/experience_summaries
+  // reference gaming_members with no ON DELETE CASCADE (XP is
+  // participation evidence, never silently cascade-deleted — see
+  // 0088's own migration comment) — deleted explicitly here, in
+  // dependency order, before the auth user delete that would otherwise
+  // be blocked by that same deliberate FK restriction.
+  if (createdGamingMemberIds.length > 0) {
+    await cleanupClient.from("gaming_xp_events").delete().in("gaming_member_id", createdGamingMemberIds);
+    await cleanupClient.from("experience_summaries").delete().in("gaming_member_id", createdGamingMemberIds);
+  }
+  await cleanupClient.from("gaming_xp_rules").delete().eq("category_key", "SOCCER_PREDICTIONS");
+  await cleanupClient.from("gaming_category_participation_policy").delete().eq("category_key", "SOCCER_PREDICTIONS");
+
   for (const authUserId of createdAuthUserIds) {
     await cleanupClient.auth.admin.deleteUser(authUserId);
   }
@@ -130,14 +145,18 @@ describe("SupabasePredictionsRepository contract", () => {
     // non-zero values here so the compensating-reversal assertion below
     // is meaningful, without asserting anything about what value the
     // founder eventually configures.
+    // Persistent Metagame Phase 1: real fixture rows against the real
+    // canonical XP ledger tables — never a Product-authorized value,
+    // just enough to make the compensating-reversal assertion below
+    // meaningful.
     await cleanupClient
-      .from("progression_rule_points")
-      .update({ points: 100 })
-      .eq("rule_key", "PREDICTION_4_OF_4");
-    await cleanupClient
-      .from("progression_rule_points")
-      .update({ points: 10 })
-      .eq("rule_key", "PREDICTION_3_OF_4");
+      .from("gaming_category_participation_policy")
+      .insert({ category_key: "SOCCER_PREDICTIONS", daily_participation_allowance: 1000 });
+    await cleanupClient.from("gaming_xp_rules").insert([
+      { category_key: "SOCCER_PREDICTIONS", consequence_class: "PARTICIPATION", performance_band_key: null, points: 5 },
+      { category_key: "SOCCER_PREDICTIONS", consequence_class: "PERFORMANCE", performance_band_key: "CORRECT_4_OF_4", points: 100 },
+      { category_key: "SOCCER_PREDICTIONS", consequence_class: "PERFORMANCE", performance_band_key: "CORRECT_3_OF_4", points: 10 },
+    ]);
 
     const admin = await createRealGamingMember("ContractAdmin");
     const alex = await createRealGamingMember("ContractAlex");
@@ -150,6 +169,7 @@ describe("SupabasePredictionsRepository contract", () => {
       kickoffAt: futureIso(),
     });
     createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
 
     const venue = await repo.createVenue({
       name: "Contract Venue",
@@ -242,10 +262,26 @@ describe("SupabasePredictionsRepository contract", () => {
     const newQualification = await repo.getQualificationForEvaluation(newEvaluation!.evaluationId);
     expect(newQualification).not.toBeNull();
 
-    const events = await repo.listProgressionEventsForMember(alex.gamingMemberId);
-    const reversal = events.find((e) => e.reversesGamingProgressionEventId !== null);
-    expect(reversal).toBeDefined();
-    expect(reversal!.points).toBeLessThan(0);
+    // gaming_progression_events (0061) receives no new writes as of
+    // this phase — the canonical Gaming XP ledger is gaming_xp_events,
+    // consumed only through the Metagame's own record/process functions,
+    // never queried by Predictions directly.
+    expect(await repo.listProgressionEventsForMember(alex.gamingMemberId)).toHaveLength(0);
+
+    const { data: xpEvents } = await cleanupClient
+      .from("gaming_xp_events")
+      .select("*")
+      .eq("gaming_member_id", alex.gamingMemberId);
+    const netTotal = (xpEvents ?? []).reduce((sum, e) => sum + e.points, 0);
+    expect(netTotal).toBe(5 + 10); // participation (5) + corrected 3/4 performance (10)
+
+    const xpReversal = (xpEvents ?? []).find((e) => e.reverses_gaming_xp_event_id !== null);
+    expect(xpReversal).toBeDefined();
+    expect(xpReversal!.points).toBe(-100);
+    expect(xpReversal!.consequence_class).toBe("PERFORMANCE");
+
+    const participationEvents = (xpEvents ?? []).filter((e) => e.consequence_class === "PARTICIPATION");
+    expect(participationEvents).toHaveLength(1); // preserved, never reversed by an ordinary correctness correction
   }, 30000);
 
   it("an own goal credits the opposing Team for First Team to Score, evaluated against the real database", async () => {
@@ -260,6 +296,7 @@ describe("SupabasePredictionsRepository contract", () => {
       kickoffAt: futureIso(),
     });
     createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
 
     const venue = await repo.createVenue({ name: "Own Goal Venue", latitude: 10, longitude: 10, radiusMeters: 100 });
     createdVenueIds.push(venue.venueId);
@@ -302,6 +339,7 @@ describe("SupabasePredictionsRepository contract", () => {
       homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Contract Test", kickoffAt: futureIso(),
     });
     createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
     const venue = await repo.createVenue({ name: "V", latitude: 10, longitude: 10, radiusMeters: 100 });
     createdVenueIds.push(venue.venueId);
     const activation = await repo.createVenueActivation({ matchId: match.matchId, venueId: venue.venueId });

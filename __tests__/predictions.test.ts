@@ -5,7 +5,6 @@ import { submitPrediction } from "../lib/gaming/predictions/submitPrediction";
 import { finalizeMatchResult } from "../lib/gaming/predictions/finalizeMatchResult";
 import { correctMatchResult } from "../lib/gaming/predictions/correctMatchResult";
 import { redeemPrizeQualification } from "../lib/gaming/predictions/redeemPrizeQualification";
-import { getLeaderboard } from "../lib/gaming/predictions/leaderboard";
 import {
   createTeam,
   createPlayer,
@@ -16,6 +15,7 @@ import {
   createPrizeTier,
   saveDraftResult,
   startResultCorrection,
+  setMatchActivityClassification,
 } from "../lib/gaming/predictions/adminCatalog";
 import {
   InvalidGoalscorerSelectionError,
@@ -59,6 +59,24 @@ async function setupMatchAndVenue(repo: InMemoryPredictionsRepository, kickoffAt
     awayTeamId: away.teamId,
     competition: "Friendly",
     kickoffAt,
+  });
+  // Persistent Metagame Phase 1: a Match must have a declared Activity
+  // Classification before it can accept any Prediction. RANKED matches
+  // the Phase 1 proving case default; fixture policy/rule rows are
+  // seeded so finalize/correct (which now always attempt to resolve a
+  // participation policy for any meaningfully-participating Prediction)
+  // never hit an unconfigured-policy error in tests that don't care
+  // about specific XP fixture values.
+  await setMatchActivityClassification(repo, match.matchId, "RANKED");
+  await repo.metagameRepository.createCategoryParticipationPolicy({
+    categoryKey: "SOCCER_PREDICTIONS",
+    dailyParticipationAllowance: 1000,
+  });
+  await repo.metagameRepository.createGamingXpRule({
+    categoryKey: "SOCCER_PREDICTIONS",
+    consequenceClass: "PARTICIPATION",
+    performanceBandKey: null,
+    points: 1,
   });
   const venue = await createVenue(repo, {
     name: "Test Venue",
@@ -523,6 +541,7 @@ describe("Prediction uniqueness — one per Match per Gaming Member, globally", 
     const matchB = await createMatch(repo, {
       homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Friendly", kickoffAt: futureIso(),
     });
+    await setMatchActivityClassification(repo, matchB.matchId, "RANKED");
     const activationB = await createVenueActivation(repo, { matchId: matchB.matchId, venueId: activationA.venueId });
 
     await submitPrediction(repo, {
@@ -708,11 +727,19 @@ describe("Result draft / finalization boundary", () => {
 describe("Result correction — supersession, compensation, no destroyed evidence", () => {
   it("a correction preserves the old evaluation and produces a new one against the corrected result", async () => {
     const repo = new InMemoryPredictionsRepository();
-    repo.setRulePoints("PREDICTION_4_OF_4", 100);
-    repo.setRulePoints("PREDICTION_3_OF_4", 10);
-    repo.setRulePoints("PREDICTION_PARTICIPATED", 5);
-
     const { match, activation, mbappe, vini } = await setupMatchAndVenue(repo);
+    // Override setupMatchAndVenue's generic default (PARTICIPATION=1)
+    // with this test's specific fixture values — later insertion wins.
+    await repo.metagameRepository.createGamingXpRule({
+      categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PARTICIPATION", performanceBandKey: null, points: 5,
+    });
+    await repo.metagameRepository.createGamingXpRule({
+      categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PERFORMANCE", performanceBandKey: "CORRECT_4_OF_4", points: 100,
+    });
+    await repo.metagameRepository.createGamingXpRule({
+      categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PERFORMANCE", performanceBandKey: "CORRECT_3_OF_4", points: 10,
+    });
+
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 0,
@@ -744,13 +771,24 @@ describe("Result correction — supersession, compensation, no destroyed evidenc
     const newEvaluation = await repo.getEvaluation(prediction.predictionId, correctionDraft.matchResultId);
     expect(newEvaluation!.correctDimensionCount).toBe(3);
 
-    const events = await repo.listProgressionEventsForMember("gm-1");
+    // gaming_progression_events (0061) receives no new writes as of
+    // this phase — the canonical Gaming XP ledger is gaming_xp_events.
+    expect(await repo.listProgressionEventsForMember("gm-1")).toHaveLength(0);
+
+    const events = await repo.metagameRepository.listXpEventsForMember("gm-1");
     const netTotal = events.reduce((sum, e) => sum + e.points, 0);
     expect(netTotal).toBe(5 + 10);
 
-    const reversal = events.find((e) => e.reversesGamingProgressionEventId !== null);
+    const reversal = events.find((e) => e.reversesGamingXpEventId !== null);
     expect(reversal).toBeDefined();
     expect(reversal!.points).toBe(-100);
+    expect(reversal!.consequenceClass).toBe("PERFORMANCE");
+
+    // Ordinary correctness correction preserves participation XP — it
+    // is never reversed just because the score changed.
+    const participationEvents = events.filter((e) => e.consequenceClass === "PARTICIPATION");
+    expect(participationEvents).toHaveLength(1);
+    expect(participationEvents[0].points).toBe(5);
   });
 
   it("a superseded qualification is never deleted; redemption history is preserved with the discrepancy visible", async () => {
@@ -802,9 +840,13 @@ describe("Result correction — supersession, compensation, no destroyed evidenc
 describe("Gaming XP (progression events)", () => {
   it("participation and performance both fire and stack when configured to", async () => {
     const repo = new InMemoryPredictionsRepository();
-    repo.setRulePoints("PREDICTION_PARTICIPATED", 5);
-    repo.setRulePoints("PREDICTION_4_OF_4", 100);
     const { match, activation } = await setupMatchAndVenue(repo);
+    await repo.metagameRepository.createGamingXpRule({
+      categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PARTICIPATION", performanceBandKey: null, points: 5,
+    });
+    await repo.metagameRepository.createGamingXpRule({
+      categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PERFORMANCE", performanceBandKey: "CORRECT_4_OF_4", points: 100,
+    });
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
@@ -812,13 +854,13 @@ describe("Gaming XP (progression events)", () => {
     });
     const draft = await saveDraftResult(repo, { matchId: match.matchId, homeScore: 0, awayScore: 0, officialGoalEvents: [], enteredByGamingMemberId: "gm-admin" });
     await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
-    const events = await repo.listProgressionEventsForMember("gm-1");
+    const events = await repo.metagameRepository.listXpEventsForMember("gm-1");
     expect(events.reduce((s, e) => s + e.points, 0)).toBe(105);
+    expect(events.map((e) => e.consequenceClass).sort()).toEqual(["PARTICIPATION", "PERFORMANCE"]);
   });
 
   it("venue-hopping cannot create duplicate progression — only one prediction, one evaluation, ever exists per member per match", async () => {
     const repo = new InMemoryPredictionsRepository();
-    repo.setRulePoints("PREDICTION_PARTICIPATED", 5);
     const { match, activation } = await setupMatchAndVenue(repo);
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
@@ -830,25 +872,18 @@ describe("Gaming XP (progression events)", () => {
 
     expect(await repo.listPredictionsForMatch(match.matchId)).toHaveLength(1);
 
-    const events = await repo.listProgressionEventsForMember("gm-1");
-    const distinctEvaluationIds = new Set(events.map((e) => e.evaluationId));
-    expect(distinctEvaluationIds.size).toBe(1);
+    const events = await repo.metagameRepository.listXpEventsForMember("gm-1");
+    const distinctSummaryIds = new Set(events.map((e) => e.experienceSummaryId));
+    expect(distinctSummaryIds.size).toBe(1);
   });
 
-  it("the leaderboard sums points per member, descending", async () => {
+  it("gaming_progression_events (0061) receives no new writes — the canonical ledger is gaming_xp_events", async () => {
     const repo = new InMemoryPredictionsRepository();
-    repo.setRulePoints("PREDICTION_PARTICIPATED", 5);
-    repo.setRulePoints("PREDICTION_4_OF_4", 100);
     const { match, activation, mbappe } = await setupMatchAndVenue(repo);
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-alex", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
       predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 1, predictedFirstTeamToScore: "HOME", geo: INSIDE,
-    });
-    await submitPrediction(repo, {
-      matchId: match.matchId, gamingMemberId: "gm-jordan", venueActivationId: activation.venueActivationId,
-      predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
       matchId: match.matchId, homeScore: 1, awayScore: 0,
@@ -856,9 +891,9 @@ describe("Gaming XP (progression events)", () => {
       enteredByGamingMemberId: "gm-admin",
     });
     await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
-    const board = await getLeaderboard(repo);
-    expect(board[0].gamingMemberId).toBe("gm-alex");
-    expect(board[0].totalPoints).toBe(105);
+    expect(await repo.listProgressionEventsForMember("gm-alex")).toHaveLength(0);
+    const events = await repo.metagameRepository.listXpEventsForMember("gm-alex");
+    expect(events.length).toBeGreaterThan(0);
   });
 });
 

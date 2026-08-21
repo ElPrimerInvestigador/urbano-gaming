@@ -52,6 +52,10 @@ export interface PredictionsRepository {
   cancelMatch(matchId: string): Promise<MatchRecord>;
   getMatchById(matchId: string): Promise<MatchRecord | null>;
   listMatches(): Promise<MatchRecord[]>;
+  setMatchActivityClassification(
+    matchId: string,
+    activityClassification: "TRAINING" | "CASUAL" | "RANKED" | "OFFICIAL"
+  ): Promise<{ matchId: string; activityClassification: string; locked: boolean }>;
 
   // Venues
   createVenue(input: {

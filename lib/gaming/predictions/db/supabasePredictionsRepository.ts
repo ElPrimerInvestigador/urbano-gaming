@@ -22,6 +22,8 @@ import {
   MatchNotFoundError,
   MatchCancelledError,
   KickoffPassedError,
+  MatchNotClassifiedError,
+  ActivityClassificationLockedError,
   VenueActivationNotFoundError,
   VenueActivationMatchMismatchError,
   VenueActivationDisabledError,
@@ -65,6 +67,7 @@ function mapMatch(row: any): MatchRecord {
     competition: row.competition,
     kickoffAt: row.kickoff_at,
     cancelledAt: row.cancelled_at,
+    activityClassification: row.activity_classification,
     createdAt: row.created_at,
   };
 }
@@ -195,6 +198,8 @@ function translateNamedError(error: { code?: string; message?: string }): Error 
   const table: Array<[string, () => Error]> = [
     ["MATCH_NOT_FOUND", () => new MatchNotFoundError()],
     ["MATCH_CANCELLED", () => new MatchCancelledError()],
+    ["MATCH_NOT_CLASSIFIED", () => new MatchNotClassifiedError()],
+    ["ACTIVITY_CLASSIFICATION_LOCKED", () => new ActivityClassificationLockedError()],
     ["KICKOFF_PASSED", () => new KickoffPassedError()],
     ["VENUE_ACTIVATION_NOT_FOUND", () => new VenueActivationNotFoundError()],
     ["VENUE_ACTIVATION_MATCH_MISMATCH", () => new VenueActivationMatchMismatchError()],
@@ -371,6 +376,22 @@ export class SupabasePredictionsRepository implements PredictionsRepository {
       .single();
     if (error) throw error;
     return mapMatch(data);
+  }
+
+  async setMatchActivityClassification(
+    matchId: string,
+    activityClassification: "TRAINING" | "CASUAL" | "RANKED" | "OFFICIAL"
+  ): Promise<{ matchId: string; activityClassification: string; locked: boolean }> {
+    const { data, error } = await this.client.rpc("set_match_activity_classification_atomically", {
+      p_match_id: matchId,
+      p_activity_classification: activityClassification,
+    });
+    if (error) {
+      const translated = translateNamedError(error);
+      throw translated ?? error;
+    }
+    const row = data[0];
+    return { matchId: row.match_id, activityClassification: row.activity_classification, locked: row.locked };
   }
 
   async getMatchById(matchId: string): Promise<MatchRecord | null> {

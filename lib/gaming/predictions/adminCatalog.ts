@@ -110,6 +110,30 @@ export async function cancelMatch(
   return repo.cancelMatch(matchId);
 }
 
+const ACTIVITY_CLASSIFICATIONS = ["TRAINING", "CASUAL", "RANKED", "OFFICIAL"] as const;
+type ActivityClassificationInput = (typeof ACTIVITY_CLASSIFICATIONS)[number];
+
+/**
+ * SET_MATCH_ACTIVITY_CLASSIFICATION — declares (or re-declares, while
+ * still free to change) the Match-level Activity Classification a
+ * Prediction on it will be recognized under. Must be called before
+ * any Prediction can be submitted (enforced inside
+ * upsert_prediction_atomically); becomes immutable the moment
+ * Prediction or Result evidence exists (enforced inside
+ * set_match_activity_classification_atomically itself). This is a
+ * Predictions-owned concept — Venue Activation never owns it.
+ */
+export async function setMatchActivityClassification(
+  repo: PredictionsRepository,
+  matchId: string,
+  activityClassification: string
+): Promise<{ matchId: string; activityClassification: string; locked: boolean }> {
+  if (!ACTIVITY_CLASSIFICATIONS.includes(activityClassification as ActivityClassificationInput)) {
+    throw new Error("activityClassification must be one of TRAINING, CASUAL, RANKED, OFFICIAL.");
+  }
+  return repo.setMatchActivityClassification(matchId, activityClassification as ActivityClassificationInput);
+}
+
 export async function createVenue(
   repo: PredictionsRepository,
   input: { name: string; latitude: number; longitude: number; radiusMeters: number }

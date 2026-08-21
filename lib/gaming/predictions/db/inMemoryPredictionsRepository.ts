@@ -16,10 +16,13 @@ import type {
   PrizeQualificationRecord,
   LeaderboardEntry,
 } from "../types";
+import { InMemoryMetagameRepository } from "../../metagame/db/inMemoryMetagameRepository";
 import {
   MatchNotFoundError,
   MatchCancelledError,
   KickoffPassedError,
+  MatchNotClassifiedError,
+  ActivityClassificationLockedError,
   VenueActivationNotFoundError,
   VenueActivationMatchMismatchError,
   VenueActivationDisabledError,
@@ -70,6 +73,22 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
   private progressionRulePoints = new Map<string, number>(
     PROGRESSION_RULE_KEYS.map((k) => [k, 0])
   );
+
+  /**
+   * Persistent Metagame Phase 1. Composed, not injected — mirrors how
+   * finalize_match_result_atomically/correct_match_result_atomically
+   * call record_experience_summary_atomically/
+   * process_experience_summary_consequences_atomically as plain nested
+   * function calls in the real Postgres implementation; this is that
+   * same call relationship expressed in TypeScript. Exposed via a
+   * getter so tests can inspect the ledger directly without a second,
+   * separately-constructed repository instance that would silently
+   * diverge from what finalize/correct actually wrote to.
+   */
+  private readonly metagame = new InMemoryMetagameRepository();
+  get metagameRepository(): InMemoryMetagameRepository {
+    return this.metagame;
+  }
 
   /** Test-only seam: configure a progression rule's point value. */
   setRulePoints(ruleKey: string, points: number): void {
@@ -143,6 +162,7 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
       competition: input.competition,
       kickoffAt: input.kickoffAt,
       cancelledAt: null,
+      activityClassification: null,
       createdAt: new Date().toISOString(),
     };
     this.matches.set(record.matchId, record);
@@ -166,6 +186,27 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
     const updated = { ...existing, cancelledAt: new Date().toISOString() };
     this.matches.set(matchId, updated);
     return updated;
+  }
+
+  async setMatchActivityClassification(
+    matchId: string,
+    activityClassification: "TRAINING" | "CASUAL" | "RANKED" | "OFFICIAL"
+  ): Promise<{ matchId: string; activityClassification: string; locked: boolean }> {
+    const existing = this.matches.get(matchId);
+    if (!existing) throw new MatchNotFoundError();
+
+    const hasPredictions = [...this.predictions.values()].some((p) => p.matchId === matchId);
+    const hasResults = [...this.matchResults.values()].some((r) => r.matchId === matchId);
+
+    if (hasPredictions || hasResults) {
+      if (existing.activityClassification !== activityClassification) {
+        throw new ActivityClassificationLockedError();
+      }
+      return { matchId, activityClassification: existing.activityClassification!, locked: true };
+    }
+
+    this.matches.set(matchId, { ...existing, activityClassification });
+    return { matchId, activityClassification, locked: false };
   }
 
   async getMatchById(matchId: string): Promise<MatchRecord | null> {
@@ -295,6 +336,7 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
     const match = this.matches.get(input.matchId);
     if (!match) throw new MatchNotFoundError();
     if (match.cancelledAt) throw new MatchCancelledError();
+    if (match.activityClassification === null) throw new MatchNotClassifiedError();
     if (new Date() >= new Date(match.kickoffAt)) throw new KickoffPassedError();
 
     const activation = this.activations.get(input.venueActivationId);
@@ -589,24 +631,30 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
       };
       this.evaluations.set(evaluation.evaluationId, evaluation);
 
-      this.awardProgressionEvent(
-        prediction.gamingMemberId,
-        "PREDICTION_PARTICIPATED",
-        result.matchId,
-        evaluation.evaluationId,
-        `${evaluation.evaluationId}:PREDICTION_PARTICIPATED`
-      );
-
-      if (evaluated.correctDimensionCount > 0) {
-        const ruleKey = `PREDICTION_${evaluated.correctDimensionCount}_OF_4`;
-        this.awardProgressionEvent(
-          prediction.gamingMemberId,
-          ruleKey,
-          result.matchId,
-          evaluation.evaluationId,
-          `${evaluation.evaluationId}:${ruleKey}`
-        );
-      }
+      const match = this.matches.get(result.matchId)!;
+      const { experienceSummaryId } = await this.metagame.recordExperienceSummary({
+        gamingMemberId: prediction.gamingMemberId,
+        experienceKey: "SOCCER_PREDICTIONS",
+        categoryKey: "SOCCER_PREDICTIONS",
+        activityClassification: match.activityClassification!,
+        authorityTier: "ADMIN_FINALIZED",
+        occurredAt: prediction.createdAt,
+        finalizedAt,
+        meaningfulParticipation: true,
+        performanceBandKey: `CORRECT_${evaluated.correctDimensionCount}_OF_4`,
+        sourceReference: evaluation.evaluationId,
+        rulesetVersion: "predictions-v1",
+        supersedesExperienceSummaryId: null,
+        idempotencyKey: evaluation.evaluationId,
+        evidence: {
+          correctDimensionCount: evaluated.correctDimensionCount,
+          scorelineCorrect: evaluated.scorelineCorrect,
+          goalscorerCorrect: evaluated.goalscorerCorrect,
+          goalMinuteCorrect: evaluated.goalMinuteCorrect,
+          firstTeamCorrect: evaluated.firstTeamToScoreCorrect,
+        },
+      });
+      await this.metagame.processExperienceSummaryConsequences(experienceSummaryId);
 
       const tier = [...this.prizeTiers.values()].find(
         (t) =>
@@ -683,34 +731,35 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
       };
       this.evaluations.set(newEvaluation.evaluationId, newEvaluation);
 
-      if (oldEvaluation && oldEvaluation.correctDimensionCount > 0) {
-        const oldRuleKey = `PREDICTION_${oldEvaluation.correctDimensionCount}_OF_4`;
-        const oldTierEvent = [...this.progressionEvents.values()].find(
-          (e) => e.evaluationId === oldEvaluation.evaluationId && e.ruleKey === oldRuleKey
-        );
-        if (oldTierEvent) {
-          this.awardProgressionEvent(
-            prediction.gamingMemberId,
-            oldRuleKey,
-            result.matchId,
-            oldEvaluation.evaluationId,
-            `reverse:${oldTierEvent.gamingProgressionEventId}`,
-            oldTierEvent.gamingProgressionEventId,
-            -oldTierEvent.points
-          );
-        }
-      }
+      const match = this.matches.get(result.matchId)!;
+      const oldExperienceSummary = oldEvaluation
+        ? await this.metagame.getExperienceSummaryByIdempotencyKey("SOCCER_PREDICTIONS", oldEvaluation.evaluationId)
+        : null;
 
-      if (evaluated.correctDimensionCount > 0) {
-        const ruleKey = `PREDICTION_${evaluated.correctDimensionCount}_OF_4`;
-        this.awardProgressionEvent(
-          prediction.gamingMemberId,
-          ruleKey,
-          result.matchId,
-          newEvaluation.evaluationId,
-          `${newEvaluation.evaluationId}:${ruleKey}`
-        );
-      }
+      const { experienceSummaryId: newExperienceSummaryId } = await this.metagame.recordExperienceSummary({
+        gamingMemberId: prediction.gamingMemberId,
+        experienceKey: "SOCCER_PREDICTIONS",
+        categoryKey: "SOCCER_PREDICTIONS",
+        activityClassification: match.activityClassification!,
+        authorityTier: "ADMIN_FINALIZED",
+        occurredAt: prediction.createdAt,
+        finalizedAt,
+        meaningfulParticipation: true,
+        performanceBandKey: `CORRECT_${evaluated.correctDimensionCount}_OF_4`,
+        sourceReference: newEvaluation.evaluationId,
+        rulesetVersion: "predictions-v1",
+        supersedesExperienceSummaryId: oldExperienceSummary?.experienceSummaryId ?? null,
+        idempotencyKey: newEvaluation.evaluationId,
+        evidence: {
+          correctDimensionCount: evaluated.correctDimensionCount,
+          scorelineCorrect: evaluated.scorelineCorrect,
+          goalscorerCorrect: evaluated.goalscorerCorrect,
+          goalMinuteCorrect: evaluated.goalMinuteCorrect,
+          firstTeamCorrect: evaluated.firstTeamToScoreCorrect,
+          correction: true,
+        },
+      });
+      await this.metagame.processExperienceSummaryConsequences(newExperienceSummaryId);
 
       if (oldEvaluation) {
         const oldQualification = [...this.qualifications.values()].find(

@@ -39,6 +39,7 @@ export interface MatchRecord {
   competition: string;
   kickoffAt: string;
   cancelledAt: string | null;
+  activityClassification: "TRAINING" | "CASUAL" | "RANKED" | "OFFICIAL" | null;
   createdAt: string;
 }
 
@@ -206,6 +207,20 @@ export class KickoffPassedError extends Error {
   constructor() {
     super("Predictions are locked for this match.");
     this.name = "KickoffPassedError";
+  }
+}
+
+export class MatchNotClassifiedError extends Error {
+  constructor() {
+    super("This match has no declared Activity Classification and cannot accept predictions yet.");
+    this.name = "MatchNotClassifiedError";
+  }
+}
+
+export class ActivityClassificationLockedError extends Error {
+  constructor() {
+    super("This match already has Prediction or Result evidence and its Activity Classification cannot change.");
+    this.name = "ActivityClassificationLockedError";
   }
 }
 
