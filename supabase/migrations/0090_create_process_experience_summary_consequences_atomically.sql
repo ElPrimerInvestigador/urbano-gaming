@@ -180,6 +180,14 @@ begin
        )
      )
   then
+    -- Missing-policy boundary correction: the absence of a configured
+    -- category participation policy, or of a PARTICIPATION rule, is a
+    -- valid Product state — "no applicable XP consequence" — never an
+    -- invalid Experience result. Neither case may abort this function
+    -- (and therefore the calling Experience's own finalize/correct
+    -- transaction, since this runs as a nested call within it). Only a
+    -- genuine data-integrity violation belongs behind a raised
+    -- exception here; an unconfigured policy/rule is not one.
     select gaming_category_participation_policy.* into v_policy
     from gaming_category_participation_policy
     where gaming_category_participation_policy.category_key = v_category_key
@@ -189,61 +197,61 @@ begin
     order by gaming_category_participation_policy.effective_at desc
     limit 1;
 
-    if v_policy.gaming_category_participation_policy_id is null then
-      raise exception 'NO_PARTICIPATION_POLICY_CONFIGURED: no category participation policy is effective for % at %',
-        v_category_key, v_occurred_at using errcode = 'P0001';
-    end if;
+    if v_policy.gaming_category_participation_policy_id is not null then
+      v_gaming_day := (v_occurred_at at time zone v_policy.gaming_day_timezone)::date;
 
-    v_gaming_day := (v_occurred_at at time zone v_policy.gaming_day_timezone)::date;
+      -- Counts only CURRENTLY EFFECTIVE participation awards — a real
+      -- award later validly reversed (points > 0, but some other event's
+      -- reverses_gaming_xp_event_id points back at it) must not remain
+      -- permanently counted against the allowance; the slot it occupied
+      -- frees up, exactly as a fresh unconsumed allowance would. Neither
+      -- row is ever deleted — this is a read-time filter, not a mutation.
+      select count(*) into v_existing_count
+      from gaming_xp_events
+      where gaming_xp_events.gaming_member_id = v_gaming_member_id
+        and gaming_xp_events.category_key = v_category_key
+        and gaming_xp_events.gaming_day = v_gaming_day
+        and gaming_xp_events.consequence_class = 'PARTICIPATION'
+        and gaming_xp_events.points > 0
+        and not exists (
+          select 1 from gaming_xp_events reversal
+          where reversal.reverses_gaming_xp_event_id = gaming_xp_events.gaming_xp_event_id
+        );
 
-    -- Counts only CURRENTLY EFFECTIVE participation awards — a real
-    -- award later validly reversed (points > 0, but some other event's
-    -- reverses_gaming_xp_event_id points back at it) must not remain
-    -- permanently counted against the allowance; the slot it occupied
-    -- frees up, exactly as a fresh unconsumed allowance would. Neither
-    -- row is ever deleted — this is a read-time filter, not a mutation.
-    select count(*) into v_existing_count
-    from gaming_xp_events
-    where gaming_xp_events.gaming_member_id = v_gaming_member_id
-      and gaming_xp_events.category_key = v_category_key
-      and gaming_xp_events.gaming_day = v_gaming_day
-      and gaming_xp_events.consequence_class = 'PARTICIPATION'
-      and gaming_xp_events.points > 0
-      and not exists (
-        select 1 from gaming_xp_events reversal
-        where reversal.reverses_gaming_xp_event_id = gaming_xp_events.gaming_xp_event_id
-      );
+      if v_existing_count < v_policy.daily_participation_allowance then
+        select gaming_xp_rules.* into v_rule
+        from gaming_xp_rules
+        where gaming_xp_rules.category_key = v_category_key
+          and gaming_xp_rules.consequence_class = 'PARTICIPATION'
+          and gaming_xp_rules.performance_band_key is null
+          and gaming_xp_rules.effective_at <= v_occurred_at
+          and (gaming_xp_rules.superseded_at is null or gaming_xp_rules.superseded_at > v_occurred_at)
+        order by gaming_xp_rules.effective_at desc
+        limit 1;
 
-    if v_existing_count < v_policy.daily_participation_allowance then
-      select gaming_xp_rules.* into v_rule
-      from gaming_xp_rules
-      where gaming_xp_rules.category_key = v_category_key
-        and gaming_xp_rules.consequence_class = 'PARTICIPATION'
-        and gaming_xp_rules.performance_band_key is null
-        and gaming_xp_rules.effective_at <= v_occurred_at
-        and (gaming_xp_rules.superseded_at is null or gaming_xp_rules.superseded_at > v_occurred_at)
-      order by gaming_xp_rules.effective_at desc
-      limit 1;
-
-      if v_rule.gaming_xp_rule_id is null then
-        raise exception 'NO_XP_RULE_CONFIGURED: no PARTICIPATION rule is effective for % at %',
-          v_category_key, v_occurred_at using errcode = 'P0001';
+        if v_rule.gaming_xp_rule_id is not null then
+          insert into gaming_xp_events (
+            gaming_member_id, category_key, consequence_class, points, experience_summary_id,
+            gaming_xp_rule_id, gaming_category_participation_policy_id, gaming_day, idempotency_key
+          )
+          values (
+            v_gaming_member_id, v_category_key, 'PARTICIPATION', v_rule.points, p_experience_summary_id,
+            v_rule.gaming_xp_rule_id, v_policy.gaming_category_participation_policy_id, v_gaming_day,
+            p_experience_summary_id::text || ':PARTICIPATION'
+          )
+          on conflict (gaming_member_id, idempotency_key) do nothing;
+        end if;
+        -- else: no PARTICIPATION rule configured for this category as
+        -- of occurred_at — no applicable consequence, no event, no error.
       end if;
-
-      insert into gaming_xp_events (
-        gaming_member_id, category_key, consequence_class, points, experience_summary_id,
-        gaming_xp_rule_id, gaming_category_participation_policy_id, gaming_day, idempotency_key
-      )
-      values (
-        v_gaming_member_id, v_category_key, 'PARTICIPATION', v_rule.points, p_experience_summary_id,
-        v_rule.gaming_xp_rule_id, v_policy.gaming_category_participation_policy_id, v_gaming_day,
-        p_experience_summary_id::text || ':PARTICIPATION'
-      )
-      on conflict (gaming_member_id, idempotency_key) do nothing;
+      -- else: allowance exhausted for this member/category/day — no
+      -- event, no error. The Summary remains valid; performance
+      -- processing below is entirely unaffected.
     end if;
-    -- else: allowance exhausted for this member/category/day — no
-    -- event, no error. The Summary remains valid; performance
-    -- processing below is entirely unaffected.
+    -- else: no category participation policy configured as of
+    -- occurred_at at all — no applicable consequence, no event, no
+    -- error. Deploying this schema never requires a Product allowance
+    -- number to exist.
   end if;
 
   -- PERFORMANCE: a fact-driven lookup only, never chosen by the caller.

@@ -14,8 +14,6 @@ import {
   InvalidActivityClassificationError,
   InvalidAuthorityTierError,
   ExperienceSummaryNotFoundError,
-  NoParticipationPolicyConfiguredError,
-  NoXpRuleConfiguredError,
 } from "../types";
 
 const ACTIVITY_CLASSIFICATIONS = ["TRAINING", "CASUAL", "RANKED", "OFFICIAL"];
@@ -235,48 +233,61 @@ export class InMemoryMetagameRepository implements MetagameRepository {
         (e) => e.consequenceClass === "PARTICIPATION"
       );
 
+    // Missing-policy boundary correction: the absence of a configured
+    // category participation policy, or of a PARTICIPATION rule, is a
+    // valid Product state — "no applicable XP consequence" — never an
+    // invalid Experience result. Neither case may throw here, since
+    // this method is called from within the Experience's own
+    // finalize/correct flow and an exception here must never be able
+    // to invalidate an otherwise-valid Result/Evaluation/Summary.
     if (summary.meaningfulParticipation && !oldStandingParticipation) {
       const policy = this.resolvePolicy(summary.categoryKey, summary.occurredAt);
-      if (!policy) throw new NoParticipationPolicyConfiguredError(summary.categoryKey);
 
-      const gamingDay = gamingDayFor(summary.occurredAt, policy.gamingDayTimezone);
+      if (policy) {
+        const gamingDay = gamingDayFor(summary.occurredAt, policy.gamingDayTimezone);
 
-      // Counts only currently-EFFECTIVE participation awards — a
-      // reversed award frees its slot back up rather than remaining
-      // permanently counted. Neither row is ever deleted.
-      const reversedIds = new Set(
-        [...this.xpEvents.values()]
-          .filter((e) => e.reversesGamingXpEventId)
-          .map((e) => e.reversesGamingXpEventId as string)
-      );
-      const existingCount = [...this.xpEvents.values()].filter(
-        (e) =>
-          e.gamingMemberId === summary.gamingMemberId &&
-          e.categoryKey === summary.categoryKey &&
-          e.gamingDay === gamingDay &&
-          e.consequenceClass === "PARTICIPATION" &&
-          e.points > 0 &&
-          !reversedIds.has(e.gamingXpEventId)
-      ).length;
+        // Counts only currently-EFFECTIVE participation awards — a
+        // reversed award frees its slot back up rather than remaining
+        // permanently counted. Neither row is ever deleted.
+        const reversedIds = new Set(
+          [...this.xpEvents.values()]
+            .filter((e) => e.reversesGamingXpEventId)
+            .map((e) => e.reversesGamingXpEventId as string)
+        );
+        const existingCount = [...this.xpEvents.values()].filter(
+          (e) =>
+            e.gamingMemberId === summary.gamingMemberId &&
+            e.categoryKey === summary.categoryKey &&
+            e.gamingDay === gamingDay &&
+            e.consequenceClass === "PARTICIPATION" &&
+            e.points > 0 &&
+            !reversedIds.has(e.gamingXpEventId)
+        ).length;
 
-      if (existingCount < policy.dailyParticipationAllowance) {
-        const rule = this.resolveRule(summary.categoryKey, "PARTICIPATION", null, summary.occurredAt);
-        if (!rule) throw new NoXpRuleConfiguredError(summary.categoryKey);
+        if (existingCount < policy.dailyParticipationAllowance) {
+          const rule = this.resolveRule(summary.categoryKey, "PARTICIPATION", null, summary.occurredAt);
 
-        this.insertXpEvent({
-          gamingMemberId: summary.gamingMemberId,
-          categoryKey: summary.categoryKey,
-          consequenceClass: "PARTICIPATION",
-          points: rule.points,
-          experienceSummaryId,
-          gamingXpRuleId: rule.gamingXpRuleId,
-          gamingCategoryParticipationPolicyId: policy.gamingCategoryParticipationPolicyId,
-          gamingDay,
-          reversesGamingXpEventId: null,
-          idempotencyKey: `${experienceSummaryId}:PARTICIPATION`,
-        });
+          if (rule) {
+            this.insertXpEvent({
+              gamingMemberId: summary.gamingMemberId,
+              categoryKey: summary.categoryKey,
+              consequenceClass: "PARTICIPATION",
+              points: rule.points,
+              experienceSummaryId,
+              gamingXpRuleId: rule.gamingXpRuleId,
+              gamingCategoryParticipationPolicyId: policy.gamingCategoryParticipationPolicyId,
+              gamingDay,
+              reversesGamingXpEventId: null,
+              idempotencyKey: `${experienceSummaryId}:PARTICIPATION`,
+            });
+          }
+          // else: no PARTICIPATION rule configured — no applicable
+          // consequence, no event, no error.
+        }
+        // else: allowance exhausted — no event, no error.
       }
-      // else: allowance exhausted — no event, no error.
+      // else: no category participation policy configured at all —
+      // no applicable consequence, no event, no error.
     }
 
     if (summary.performanceBandKey !== null) {

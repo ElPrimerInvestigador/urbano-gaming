@@ -5,11 +5,7 @@ import { describe, expect, it } from "vitest";
 import { InMemoryMetagameRepository } from "../lib/gaming/metagame/db/inMemoryMetagameRepository";
 import { recordExperienceSummary } from "../lib/gaming/metagame/recordExperienceSummary";
 import { processExperienceSummaryConsequences } from "../lib/gaming/metagame/processExperienceSummaryConsequences";
-import {
-  ExperienceSummaryNotFoundError,
-  NoParticipationPolicyConfiguredError,
-  NoXpRuleConfiguredError,
-} from "../lib/gaming/metagame/types";
+import { ExperienceSummaryNotFoundError } from "../lib/gaming/metagame/types";
 
 import { InMemoryPredictionsRepository } from "../lib/gaming/predictions/db/inMemoryPredictionsRepository";
 import { submitPrediction } from "../lib/gaming/predictions/submitPrediction";
@@ -21,6 +17,7 @@ import {
   createMatch,
   createVenue,
   createVenueActivation,
+  createPrizeTier,
   saveDraftResult,
   startResultCorrection,
   setMatchActivityClassification,
@@ -43,6 +40,20 @@ async function setupRankedMatch(repo: InMemoryPredictionsRepository, kickoffAt =
   await setMatchActivityClassification(repo, match.matchId, "RANKED");
   await repo.metagameRepository.createCategoryParticipationPolicy({ categoryKey: "SOCCER_PREDICTIONS", dailyParticipationAllowance: 1000 });
   await repo.metagameRepository.createGamingXpRule({ categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PARTICIPATION", performanceBandKey: null, points: 5 });
+  const venue = await createVenue(repo, { name: "Test Venue", latitude: VENUE_LAT, longitude: VENUE_LON, radiusMeters: 100 });
+  const activation = await createVenueActivation(repo, { matchId: match.matchId, venueId: venue.venueId });
+  return { home, away, striker, match, venue, activation };
+}
+
+// Deliberately configures NO category participation policy and NO XP
+// rules at all — proves the missing-policy boundary correction via
+// the real Predictions finalize path, not just direct Metagame calls.
+async function setupRankedMatchNoXpConfig(repo: InMemoryPredictionsRepository, kickoffAt = futureIso()) {
+  const home = await createTeam(repo, { name: "Home FC" });
+  const away = await createTeam(repo, { name: "Away FC" });
+  const striker = await createPlayer(repo, { teamId: home.teamId, name: "Striker" });
+  const match = await createMatch(repo, { homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Test Cup", kickoffAt });
+  await setMatchActivityClassification(repo, match.matchId, "RANKED");
   const venue = await createVenue(repo, { name: "Test Venue", latitude: VENUE_LAT, longitude: VENUE_LON, radiusMeters: 100 });
   const activation = await createVenueActivation(repo, { matchId: match.matchId, venueId: venue.venueId });
   return { home, away, striker, match, venue, activation };
@@ -378,20 +389,151 @@ describe("Daily participation allowance — configurable N, never a Product-chos
     expect(events[0].points).toBe(100);
   });
 
-  it("throws NoParticipationPolicyConfiguredError / NoXpRuleConfiguredError rather than silently skipping when nothing is configured", async () => {
+});
+
+// --- MISSING-POLICY BOUNDARY: absence of configuration is never an error ---
+//
+// A finalized Experience fact must not become invalid merely because
+// no Gaming XP policy/rule is configured. Absence means "no applicable
+// XP consequence," never "invalid Experience result." Deploying the XP
+// infrastructure must never require Product XP numbers to exist.
+
+describe("Missing-policy boundary — absence of configuration is never an error", () => {
+  it("NO CONFIGURATION: a real Prediction finalize succeeds end-to-end with zero policy/rule rows — Evaluation, Summary, and Prize Qualification all behave normally, zero XP events", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, striker } = await setupRankedMatchNoXpConfig(repo);
+    const gamingMemberId = "gm-no-config";
+
+    await createPrizeTier(repo, { venueActivationId: activation.venueActivationId, correctDimensionCount: 4, prizeLabel: "Grand Prize" });
+
+    const prediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId, venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 2, predictedAwayScore: 1,
+      predictedGoalscorerPlayerId: striker.playerId, predictedGoalMinute: 10, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+    });
+
+    const draft = await saveDraftResult(repo, { matchId: match.matchId, homeScore: 2, awayScore: 1, officialGoalEvents: [{ scorerPlayerId: striker.playerId, minuteRegulation: 10 }], enteredByGamingMemberId: "gm-admin" });
+
+    // Must not throw — this is the exact defect being corrected: a
+    // missing policy/rule must never roll back Evaluation/Summary/
+    // Prize Qualification.
+    const finalized = await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+    expect(finalized.alreadyFinalized).toBe(false);
+
+    const evaluation = await repo.getEvaluation(prediction.predictionId, draft.matchResultId);
+    expect(evaluation).not.toBeNull();
+    expect(evaluation!.correctDimensionCount).toBe(4);
+
+    const events = await repo.metagameRepository.listXpEventsForMember(gamingMemberId);
+    expect(events).toHaveLength(0); // zero XP rows — not merely zero-effective
+
+    const qualification = await repo.getQualificationForEvaluation(evaluation!.evaluationId);
+    expect(qualification).not.toBeNull(); // Prize Qualification is fully independent of XP configuration
+  });
+
+  it("PARTIAL CONFIGURATION: policy only, no PARTICIPATION rule — no PARTICIPATION event, no failure", async () => {
     const repo = new InMemoryMetagameRepository();
+    await repo.createCategoryParticipationPolicy({ categoryKey: "SOCCER_PREDICTIONS", dailyParticipationAllowance: 10 });
     const gamingMemberId = randomUUID();
+    const occurredAt = "2027-03-01T12:00:00.000Z";
     const { experienceSummaryId } = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt: new Date().toISOString(), finalizedAt: new Date().toISOString(),
-      meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
       sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e1", evidence: {},
     });
-    await expect(processExperienceSummaryConsequences(repo, experienceSummaryId)).rejects.toBeInstanceOf(
-      NoParticipationPolicyConfiguredError
-    );
+    const events = await processExperienceSummaryConsequences(repo, experienceSummaryId);
+    expect(events).toHaveLength(0);
+  });
+
+  it("PARTIAL CONFIGURATION: policy + PARTICIPATION rule only, no PERFORMANCE rule — PARTICIPATION awarded, no PERFORMANCE event, no failure", async () => {
+    const repo = new InMemoryMetagameRepository();
+    await repo.createCategoryParticipationPolicy({ categoryKey: "SOCCER_PREDICTIONS", dailyParticipationAllowance: 10 });
+    await repo.createGamingXpRule({ categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PARTICIPATION", performanceBandKey: null, points: 5 });
+    const gamingMemberId = randomUUID();
+    const occurredAt = "2027-03-01T12:00:00.000Z";
+    const { experienceSummaryId } = await recordExperienceSummary(repo, {
+      gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: "CORRECT_4_OF_4",
+      sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
+      idempotencyKey: "e1", evidence: {},
+    });
+    const events = await processExperienceSummaryConsequences(repo, experienceSummaryId);
+    expect(events).toHaveLength(1);
+    expect(events[0].consequenceClass).toBe("PARTICIPATION");
+  });
+
+  it("PARTIAL CONFIGURATION: PERFORMANCE rule only, no policy at all — no PARTICIPATION event, PERFORMANCE still applies, no failure", async () => {
+    const repo = new InMemoryMetagameRepository();
+    await repo.createGamingXpRule({ categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PERFORMANCE", performanceBandKey: "CORRECT_4_OF_4", points: 100 });
+    const gamingMemberId = randomUUID();
+    const occurredAt = "2027-03-01T12:00:00.000Z";
+    const { experienceSummaryId } = await recordExperienceSummary(repo, {
+      gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: "CORRECT_4_OF_4",
+      sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
+      idempotencyKey: "e1", evidence: {},
+    });
+    const events = await processExperienceSummaryConsequences(repo, experienceSummaryId);
+    expect(events).toHaveLength(1);
+    expect(events[0].consequenceClass).toBe("PERFORMANCE");
+    expect(events[0].points).toBe(100);
+  });
+
+  it("PARTIAL CONFIGURATION: policy + rules exist, but no rule matches this specific performance_band_key — no PERFORMANCE event, PARTICIPATION still applies, no failure", async () => {
+    const repo = new InMemoryMetagameRepository();
+    await repo.createCategoryParticipationPolicy({ categoryKey: "SOCCER_PREDICTIONS", dailyParticipationAllowance: 10 });
+    await repo.createGamingXpRule({ categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PARTICIPATION", performanceBandKey: null, points: 5 });
+    await repo.createGamingXpRule({ categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PERFORMANCE", performanceBandKey: "CORRECT_4_OF_4", points: 100 });
+    const gamingMemberId = randomUUID();
+    const occurredAt = "2027-03-01T12:00:00.000Z";
+    const { experienceSummaryId } = await recordExperienceSummary(repo, {
+      gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      // CORRECT_1_OF_4 has no configured PERFORMANCE rule — only CORRECT_4_OF_4 does.
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: "CORRECT_1_OF_4",
+      sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
+      idempotencyKey: "e1", evidence: {},
+    });
+    const events = await processExperienceSummaryConsequences(repo, experienceSummaryId);
+    expect(events).toHaveLength(1);
+    expect(events[0].consequenceClass).toBe("PARTICIPATION");
+  });
+
+  it("NO CONFIGURATION AT ALL: valid finalize with zero XP rows, then CORRECTION still succeeds with zero XP and no phantom reversal", async () => {
+    const repo = new InMemoryMetagameRepository();
+    const gamingMemberId = randomUUID();
+    const occurredAt = "2027-03-01T12:00:00.000Z";
+
+    const original = await recordExperienceSummary(repo, {
+      gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: "CORRECT_4_OF_4",
+      sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
+      idempotencyKey: "e1", evidence: {},
+    });
+    const originalEvents = await processExperienceSummaryConsequences(repo, original.experienceSummaryId);
+    expect(originalEvents).toHaveLength(0); // no configuration at all — valid Summary, zero XP
+
+    // A correction changes the finalized performance band (e.g. a
+    // scorer dispute) — the superseding Summary must still succeed
+    // with zero XP, and must not fabricate a reversal event for XP
+    // that never existed.
+    const correction = await recordExperienceSummary(repo, {
+      gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: true, performanceBandKey: "CORRECT_3_OF_4",
+      sourceReference: "e1-corrected", rulesetVersion: "v1", supersedesExperienceSummaryId: original.experienceSummaryId,
+      idempotencyKey: "e1-corrected", evidence: {},
+    });
+    const correctionEvents = await processExperienceSummaryConsequences(repo, correction.experienceSummaryId);
+    expect(correctionEvents).toHaveLength(0); // still zero XP — no phantom reversal, no fabricated award
+
+    const allEvents = await repo.listXpEventsForMember(gamingMemberId);
+    expect(allEvents).toHaveLength(0);
   });
 });
 

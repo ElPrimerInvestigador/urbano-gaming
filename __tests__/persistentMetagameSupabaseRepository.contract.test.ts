@@ -8,7 +8,6 @@ import { SupabaseMetagameRepository } from "../lib/gaming/metagame/db/supabaseMe
 import { SupabaseGamingRepository } from "../lib/gaming/db/supabaseGamingRepository";
 import { recordExperienceSummary } from "../lib/gaming/metagame/recordExperienceSummary";
 import { processExperienceSummaryConsequences } from "../lib/gaming/metagame/processExperienceSummaryConsequences";
-import { NoParticipationPolicyConfiguredError } from "../lib/gaming/metagame/types";
 
 const env = loadEnv("development", process.cwd(), "");
 const supabaseUrl = env.SUPABASE_URL;
@@ -74,9 +73,9 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
     expect(second.alreadyRecorded).toBe(true);
   });
 
-  it("throws NoParticipationPolicyConfiguredError, translated from the real Postgres error, rather than silently skipping", async () => {
+  it("NO CONFIGURATION: zero policy/rule rows against the real database — no error, zero XP events, a valid Summary still records", async () => {
     const gamingMemberId = await createRealGamingMember("MetagameNoPolicy");
-    const { experienceSummaryId } = await recordExperienceSummary(repo, {
+    const { experienceSummaryId, alreadyRecorded } = await recordExperienceSummary(repo, {
       gamingMemberId,
       experienceKey: "METAGAME_CONTRACT",
       categoryKey: "METAGAME_CONTRACT_NEVER_CONFIGURED",
@@ -92,9 +91,32 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
       idempotencyKey: "nopolicy-1",
       evidence: {},
     });
-    await expect(processExperienceSummaryConsequences(repo, experienceSummaryId)).rejects.toBeInstanceOf(
-      NoParticipationPolicyConfiguredError
-    );
+    expect(alreadyRecorded).toBe(false);
+    // Must not throw — the missing-policy boundary correction: absence
+    // of configuration is a valid Product state, not an invalid Result.
+    const events = await processExperienceSummaryConsequences(repo, experienceSummaryId);
+    expect(events).toHaveLength(0);
+  });
+
+  it("PARTIAL CONFIGURATION: policy exists with no PARTICIPATION rule, against the real database — no error, zero XP events", async () => {
+    const category = "METAGAME_CONTRACT_POLICY_ONLY";
+    await cleanupClient
+      .from("gaming_category_participation_policy")
+      .insert({ category_key: category, daily_participation_allowance: 10 });
+
+    const gamingMemberId = await createRealGamingMember("MetagamePolicyOnly");
+    const { experienceSummaryId } = await recordExperienceSummary(repo, {
+      gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: category,
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt: new Date().toISOString(), finalizedAt: new Date().toISOString(),
+      meaningfulParticipation: true, performanceBandKey: null,
+      sourceReference: "policyonly-1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
+      idempotencyKey: "policyonly-1", evidence: {},
+    });
+    const events = await processExperienceSummaryConsequences(repo, experienceSummaryId);
+    expect(events).toHaveLength(0);
+
+    await cleanupClient.from("gaming_category_participation_policy").delete().eq("category_key", category);
   });
 
   it("America/Tegucigalpa Gaming Day boundary, computed server-side by real Postgres, ignores any client-side notion of timezone", async () => {

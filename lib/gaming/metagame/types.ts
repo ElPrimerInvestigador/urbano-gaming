@@ -130,16 +130,8 @@ export class ExperienceSummaryNotFoundError extends Error {
   }
 }
 
-export class NoParticipationPolicyConfiguredError extends Error {
-  constructor(categoryKey: string) {
-    super(`No category participation policy is effective for ${categoryKey} at the summary's occurred_at.`);
-    this.name = "NoParticipationPolicyConfiguredError";
-  }
-}
-
-export class NoXpRuleConfiguredError extends Error {
-  constructor(categoryKey: string) {
-    super(`No XP rule is effective for ${categoryKey} at the summary's occurred_at.`);
-    this.name = "NoXpRuleConfiguredError";
-  }
-}
+// Note: there is deliberately no "no policy configured" / "no rule
+// configured" error class. Absence of a category participation policy
+// or an XP rule is a valid Product state — "no applicable XP
+// consequence" — never an invalid Experience result, and must never
+// be surfaced as a thrown error from consequence processing.

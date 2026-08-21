@@ -18,8 +18,6 @@ import {
   InvalidActivityClassificationError,
   InvalidAuthorityTierError,
   ExperienceSummaryNotFoundError,
-  NoParticipationPolicyConfiguredError,
-  NoXpRuleConfiguredError,
 } from "../types";
 
 function translateNamedError(error: { code?: string; message?: string }): Error | null {
@@ -28,8 +26,6 @@ function translateNamedError(error: { code?: string; message?: string }): Error 
     ["INVALID_ACTIVITY_CLASSIFICATION", () => new InvalidActivityClassificationError()],
     ["INVALID_AUTHORITY_TIER", () => new InvalidAuthorityTierError()],
     ["EXPERIENCE_SUMMARY_NOT_FOUND", () => new ExperienceSummaryNotFoundError()],
-    ["NO_PARTICIPATION_POLICY_CONFIGURED", () => new NoParticipationPolicyConfiguredError("")],
-    ["NO_XP_RULE_CONFIGURED", () => new NoXpRuleConfiguredError("")],
   ];
   for (const [code, build] of table) {
     if (error.message.includes(code)) return build();
