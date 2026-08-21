@@ -8,9 +8,13 @@ import { getLeaderboard } from "@/lib/gaming/predictions/leaderboard";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/gaming/predictions/leaderboard — public: global Gaming
- * progression ranking, SUM(points) per Gaming Member. No auth
- * required — a leaderboard is inherently public-facing.
+ * GET /api/gaming/predictions/leaderboard — public: Predictions-
+ * specific, pre-Persistent-Metagame progression ranking over the
+ * legacy gaming_progression_events ledger, SUM(points) per Gaming
+ * Member. NOT the canonical Global Gaming XP Leaderboard — see
+ * lib/gaming/predictions/leaderboard.ts's own doc comment and
+ * GET /api/gaming/leaderboard for that. No auth required — a
+ * leaderboard is inherently public-facing.
  */
 export async function GET() {
   const credentials = getSupabaseCredentials();

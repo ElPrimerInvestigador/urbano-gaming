@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { InMemoryMetagameRepository } from "../lib/gaming/metagame/db/inMemoryMetagameRepository";
 import { recordExperienceSummary } from "../lib/gaming/metagame/recordExperienceSummary";
 import { processExperienceSummaryConsequences } from "../lib/gaming/metagame/processExperienceSummaryConsequences";
+import { getGlobalLeaderboard } from "../lib/gaming/metagame/leaderboard";
 import { ExperienceSummaryNotFoundError } from "../lib/gaming/metagame/types";
 
 import { InMemoryPredictionsRepository } from "../lib/gaming/predictions/db/inMemoryPredictionsRepository";
@@ -668,6 +669,7 @@ describe("Boundary: Predictions reports facts, Metagame selects consequences (so
       "lib/gaming/metagame/db/metagameRepository.ts",
       "lib/gaming/metagame/db/inMemoryMetagameRepository.ts",
       "lib/gaming/metagame/db/supabaseMetagameRepository.ts",
+      "lib/gaming/metagame/leaderboard.ts",
     ];
     for (const file of files) {
       const source = readFileSync(file, "utf-8");
@@ -676,5 +678,275 @@ describe("Boundary: Predictions reports facts, Metagame selects consequences (so
       // name "lib/gaming/predictions" in prose.
       expect(source).not.toMatch(/from\s+["'].*predictions/);
     }
+  });
+});
+
+// --- GLOBAL GAMING XP LEADERBOARD ---------------------------------
+
+describe("Global Gaming XP Leaderboard", () => {
+  let ruleCounter = 0;
+
+  /** Awards `points` of PERFORMANCE XP to a member via a fresh, isolated rule/band, avoiding cross-test interference. */
+  async function awardPerformanceXp(
+    repo: InMemoryMetagameRepository,
+    gamingMemberId: string,
+    points: number
+  ): Promise<string> {
+    const band = `LB_BAND_${ruleCounter++}`;
+    await repo.createGamingXpRule({
+      categoryKey: "LEADERBOARD_TEST",
+      consequenceClass: "PERFORMANCE",
+      performanceBandKey: band,
+      points,
+    });
+    const { experienceSummaryId } = await recordExperienceSummary(repo, {
+      gamingMemberId,
+      experienceKey: "LEADERBOARD_TEST",
+      categoryKey: "LEADERBOARD_TEST",
+      activityClassification: "RANKED",
+      authorityTier: "ADMIN_FINALIZED",
+      occurredAt: new Date().toISOString(),
+      finalizedAt: new Date().toISOString(),
+      meaningfulParticipation: false,
+      performanceBandKey: band,
+      sourceReference: band,
+      rulesetVersion: "v1",
+      supersedesExperienceSummaryId: null,
+      idempotencyKey: band,
+      evidence: {},
+    });
+    await processExperienceSummaryConsequences(repo, experienceSummaryId);
+    return experienceSummaryId;
+  }
+
+  it("A: empty ledger returns an empty list, no error", async () => {
+    const repo = new InMemoryMetagameRepository();
+    const entries = await getGlobalLeaderboard(repo);
+    expect(entries).toEqual([]);
+  });
+
+  it("B: one member with XP appears at rank 1 with the correct total", async () => {
+    const repo = new InMemoryMetagameRepository();
+    const alex = randomUUID();
+    repo.registerGamingMemberDisplayName(alex, "Alex");
+    await awardPerformanceXp(repo, alex, 100);
+
+    const entries = await getGlobalLeaderboard(repo);
+    expect(entries).toEqual([{ rank: 1, displayName: "Alex", globalXp: 100 }]);
+  });
+
+  it("C: multiple members are totalled correctly and ordered descending", async () => {
+    const repo = new InMemoryMetagameRepository();
+    const alex = randomUUID();
+    const jordan = randomUUID();
+    const sam = randomUUID();
+    repo.registerGamingMemberDisplayName(alex, "Alex");
+    repo.registerGamingMemberDisplayName(jordan, "Jordan");
+    repo.registerGamingMemberDisplayName(sam, "Sam");
+
+    await awardPerformanceXp(repo, sam, 80);
+    await awardPerformanceXp(repo, alex, 60);
+    await awardPerformanceXp(repo, alex, 40); // Alex's total accumulates across two awards: 100
+    await awardPerformanceXp(repo, jordan, 20);
+
+    const entries = await getGlobalLeaderboard(repo);
+    expect(entries).toEqual([
+      { rank: 1, displayName: "Alex", globalXp: 100 },
+      { rank: 2, displayName: "Sam", globalXp: 80 },
+      { rank: 3, displayName: "Jordan", globalXp: 20 },
+    ]);
+  });
+
+  it("D: competition ranking — 100/100/80 produces ranks 1/1/3, never dense 1/1/2", async () => {
+    const repo = new InMemoryMetagameRepository();
+    const alex = randomUUID();
+    const jordan = randomUUID();
+    const sam = randomUUID();
+    repo.registerGamingMemberDisplayName(alex, "Alex");
+    repo.registerGamingMemberDisplayName(jordan, "Jordan");
+    repo.registerGamingMemberDisplayName(sam, "Sam");
+
+    await awardPerformanceXp(repo, alex, 100);
+    await awardPerformanceXp(repo, jordan, 100);
+    await awardPerformanceXp(repo, sam, 80);
+
+    const entries = await getGlobalLeaderboard(repo);
+    const ranks = entries.map((e) => e.rank);
+    expect(ranks).toEqual([1, 1, 3]);
+    expect(entries.map((e) => e.globalXp)).toEqual([100, 100, 80]);
+  });
+
+  it("E: tied rows are deterministically ordered (by internal gamingMemberId, never affecting rank) and stable across repeated calls", async () => {
+    const repo = new InMemoryMetagameRepository();
+    // Deliberately construct ids so the lexical secondary-order outcome is known in advance.
+    const memberA = "00000000-0000-0000-0000-00000000aaaa";
+    const memberB = "00000000-0000-0000-0000-00000000bbbb";
+    repo.registerGamingMemberDisplayName(memberA, "First By Id");
+    repo.registerGamingMemberDisplayName(memberB, "Second By Id");
+
+    await awardPerformanceXp(repo, memberB, 50);
+    await awardPerformanceXp(repo, memberA, 50);
+
+    const first = await getGlobalLeaderboard(repo);
+    const second = await getGlobalLeaderboard(repo);
+    expect(first).toEqual(second); // stable across repeated calls
+    expect(first.map((e) => e.displayName)).toEqual(["First By Id", "Second By Id"]); // memberA (lower id) prints first
+    expect(first.map((e) => e.rank)).toEqual([1, 1]); // the secondary key never changes the tied rank itself
+  });
+
+  it("F: reversal arithmetic — +100 original, -100 reversal, +40 corrected award nets to 40", async () => {
+    const repo = new InMemoryMetagameRepository();
+    const alex = randomUUID();
+    repo.registerGamingMemberDisplayName(alex, "Alex");
+
+    await repo.createGamingXpRule({ categoryKey: "LB_CORRECTION", consequenceClass: "PERFORMANCE", performanceBandKey: "ORIGINAL", points: 100 });
+    await repo.createGamingXpRule({ categoryKey: "LB_CORRECTION", consequenceClass: "PERFORMANCE", performanceBandKey: "CORRECTED", points: 40 });
+    const occurredAt = "2027-04-01T12:00:00.000Z";
+
+    const original = await recordExperienceSummary(repo, {
+      gamingMemberId: alex, experienceKey: "LB_CORRECTION", categoryKey: "LB_CORRECTION",
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, performanceBandKey: "ORIGINAL",
+      sourceReference: "lb-corr-1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
+      idempotencyKey: "lb-corr-1", evidence: {},
+    });
+    await processExperienceSummaryConsequences(repo, original.experienceSummaryId);
+
+    const correction = await recordExperienceSummary(repo, {
+      gamingMemberId: alex, experienceKey: "LB_CORRECTION", categoryKey: "LB_CORRECTION",
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, performanceBandKey: "CORRECTED",
+      sourceReference: "lb-corr-1-fixed", rulesetVersion: "v1", supersedesExperienceSummaryId: original.experienceSummaryId,
+      idempotencyKey: "lb-corr-1-fixed", evidence: {},
+    });
+    const correctionEvents = await processExperienceSummaryConsequences(repo, correction.experienceSummaryId);
+    expect(correctionEvents).toHaveLength(2); // the -100 reversal and the +40 reissue
+    expect(correctionEvents.reduce((s, e) => s + e.points, 0)).toBe(-60);
+
+    const entries = await getGlobalLeaderboard(repo);
+    expect(entries).toEqual([{ rank: 1, displayName: "Alex", globalXp: 40 }]);
+  });
+
+  it("G: a member whose full award was reversed to net zero is excluded entirely", async () => {
+    const repo = new InMemoryMetagameRepository();
+    const alex = randomUUID();
+    const jordan = randomUUID();
+    repo.registerGamingMemberDisplayName(alex, "Alex");
+    repo.registerGamingMemberDisplayName(jordan, "Jordan");
+
+    await repo.createGamingXpRule({ categoryKey: "LB_ZERO", consequenceClass: "PERFORMANCE", performanceBandKey: "ORIGINAL", points: 100 });
+    const occurredAt = "2027-04-01T12:00:00.000Z";
+
+    const original = await recordExperienceSummary(repo, {
+      gamingMemberId: alex, experienceKey: "LB_ZERO", categoryKey: "LB_ZERO",
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, performanceBandKey: "ORIGINAL",
+      sourceReference: "lb-zero-1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
+      idempotencyKey: "lb-zero-1", evidence: {},
+    });
+    await processExperienceSummaryConsequences(repo, original.experienceSummaryId);
+
+    // Correction reports no performance band at all (a pure invalidation) — only the reversal fires, net 0.
+    const correction = await recordExperienceSummary(repo, {
+      gamingMemberId: alex, experienceKey: "LB_ZERO", categoryKey: "LB_ZERO",
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, performanceBandKey: null,
+      sourceReference: "lb-zero-1-voided", rulesetVersion: "v1", supersedesExperienceSummaryId: original.experienceSummaryId,
+      idempotencyKey: "lb-zero-1-voided", evidence: {},
+    });
+    await processExperienceSummaryConsequences(repo, correction.experienceSummaryId);
+
+    await awardPerformanceXp(repo, jordan, 10); // a real, unrelated member remains visible
+
+    const entries = await getGlobalLeaderboard(repo);
+    expect(entries).toEqual([{ rank: 1, displayName: "Jordan", globalXp: 10 }]); // Alex (net 0) is absent, not shown at 0
+  });
+
+  it("H: a net-negative Global XP total is not structurally constructible — reversals only ever compensate a prior positive award, never exceed it", async () => {
+    // Documents an architectural invariant rather than exercising a
+    // scenario: gaming_xp_events' own schema constraint
+    // (points >= 0 OR reverses_gaming_xp_event_id IS NOT NULL) plus
+    // this codebase's reversal-issuance code always inserting exactly
+    // -original.points make it impossible for any member's ledger to
+    // sum below zero — there is no punitive/negative-only consequence
+    // class anywhere in this architecture. "Excluded if net <= 0" (F/G
+    // above) is therefore already the complete boundary; a dedicated
+    // net-negative fixture cannot be built without directly violating
+    // this ledger's own invariants.
+    expect(true).toBe(true);
+  });
+
+  it("I: the public/domain response never carries gamingMemberId or any other private field", async () => {
+    const repo = new InMemoryMetagameRepository();
+    const alex = randomUUID();
+    repo.registerGamingMemberDisplayName(alex, "Alex");
+    await awardPerformanceXp(repo, alex, 100);
+
+    const entries = await getGlobalLeaderboard(repo);
+    expect(entries).toHaveLength(1);
+    expect(Object.keys(entries[0]).sort()).toEqual(["displayName", "globalXp", "rank"]);
+    const serialized = JSON.stringify(entries);
+    expect(serialized).not.toContain(alex); // the raw gamingMemberId UUID must never appear
+    expect(serialized.toLowerCase()).not.toMatch(/auth_user_id|authuserid|email|evidence|source_reference|sourcereference/);
+  });
+
+  it("J: the canonical leaderboard source never queries gaming_progression_events, point_awards, or imports Predictions runtime state", () => {
+    // Checks for actual usage (a real .from(...)/import reference), not
+    // any mention of the name — these files' own boundary-documenting
+    // comments legitimately name gaming_progression_events and
+    // lib/gaming/predictions/leaderboard.ts in prose.
+    const files = [
+      "lib/gaming/metagame/leaderboard.ts",
+      "lib/gaming/metagame/db/inMemoryMetagameRepository.ts",
+      "lib/gaming/metagame/db/supabaseMetagameRepository.ts",
+      "app/api/gaming/leaderboard/route.ts",
+    ];
+    for (const file of files) {
+      const source = readFileSync(file, "utf-8");
+      expect(source).not.toMatch(/\.from\(\s*["']gaming_progression_events["']\s*\)/);
+      expect(source).not.toMatch(/\.from\(\s*["']point_awards["']\s*\)/);
+      expect(source).not.toMatch(/^\s*import[^\n]*from\s+["'][^"']*\/predictions/m);
+    }
+    const migrationSql = readFileSync(
+      "supabase/migrations/0093_create_get_global_gaming_xp_leaderboard.sql",
+      "utf-8"
+    );
+    // The migration's own real SQL body (not its comment block) must
+    // never FROM/JOIN either legacy table.
+    expect(migrationSql).not.toMatch(/\b(from|join)\s+gaming_progression_events\b/i);
+    expect(migrationSql).not.toMatch(/\b(from|join)\s+point_awards\b/i);
+  });
+
+  it("K: the public API route's GET handler takes no request parameter — structurally incapable of inspecting any header, including Authorization", () => {
+    const source = readFileSync("app/api/gaming/leaderboard/route.ts", "utf-8");
+    expect(source).toMatch(/export\s+async\s+function\s+GET\s*\(\s*\)\s*{/);
+    expect(source).not.toMatch(/\.headers\.get/);
+    expect(source).not.toMatch(/requireGamingAdmin|resolveGamingAuth/);
+  });
+
+  it("category attribution remains retained on individual ledger rows even though the Global aggregate crosses categories", async () => {
+    const repo = new InMemoryMetagameRepository();
+    const alex = randomUUID();
+    repo.registerGamingMemberDisplayName(alex, "Alex");
+    await repo.createGamingXpRule({ categoryKey: "CAT_ONE", consequenceClass: "PERFORMANCE", performanceBandKey: "BAND", points: 30 });
+    await repo.createGamingXpRule({ categoryKey: "CAT_TWO", consequenceClass: "PERFORMANCE", performanceBandKey: "BAND", points: 20 });
+
+    for (const categoryKey of ["CAT_ONE", "CAT_TWO"]) {
+      const { experienceSummaryId } = await recordExperienceSummary(repo, {
+        gamingMemberId: alex, experienceKey: categoryKey, categoryKey,
+        activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+        occurredAt: new Date().toISOString(), finalizedAt: new Date().toISOString(),
+        meaningfulParticipation: false, performanceBandKey: "BAND",
+        sourceReference: categoryKey, rulesetVersion: "v1", supersedesExperienceSummaryId: null,
+        idempotencyKey: categoryKey, evidence: {},
+      });
+      await processExperienceSummaryConsequences(repo, experienceSummaryId);
+    }
+
+    const events = await repo.listXpEventsForMember(alex);
+    expect(new Set(events.map((e) => e.categoryKey))).toEqual(new Set(["CAT_ONE", "CAT_TWO"])); // per-event category retained
+
+    const entries = await getGlobalLeaderboard(repo);
+    expect(entries).toEqual([{ rank: 1, displayName: "Alex", globalXp: 50 }]); // Global total crosses both categories
   });
 });

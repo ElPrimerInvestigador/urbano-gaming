@@ -22,6 +22,7 @@ const gamingRepo = new SupabaseGamingRepository(supabaseUrl, supabaseServiceRole
 const cleanupClient = createClient(supabaseUrl, supabaseServiceRoleKey);
 
 const CATEGORY = "METAGAME_CONTRACT_TEST";
+const LEADERBOARD_CATEGORY = "METAGAME_LEADERBOARD_CONTRACT_TEST";
 
 const createdAuthUserIds: string[] = [];
 const createdGamingMemberIds: string[] = [];
@@ -43,6 +44,7 @@ afterAll(async () => {
   }
   await cleanupClient.from("gaming_xp_rules").delete().eq("category_key", CATEGORY);
   await cleanupClient.from("gaming_category_participation_policy").delete().eq("category_key", CATEGORY);
+  await cleanupClient.from("gaming_xp_rules").delete().eq("category_key", LEADERBOARD_CATEGORY);
   for (const authUserId of createdAuthUserIds) {
     await cleanupClient.auth.admin.deleteUser(authUserId);
   }
@@ -315,4 +317,139 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
       .gt("points", 0);
     expect(xpEvents).toHaveLength(1); // the allowance was never exceeded despite the race
   }, 30000);
+});
+
+describe("Global Gaming XP Leaderboard — real Postgres, get_global_gaming_xp_leaderboard()", () => {
+  // The full leaderboard reflects every real Gaming Member/XP event in
+  // this database, including ones created by other tests/files sharing
+  // it — so every assertion below filters to this describe block's own
+  // uniquely-named fixture members and asserts relative facts about
+  // just them, never the full returned array or an absolute rank.
+  function findEntry(entries: { rank: number; displayName: string; globalXp: number }[], displayName: string) {
+    return entries.find((e) => e.displayName === displayName);
+  }
+
+  it("aggregates correctly, ranks by competition ranking, and excludes a fully-reversed net-zero member — all in one real read", async () => {
+    const alexId = await createRealGamingMember("LB-Contract-Alex");
+    const jordanId = await createRealGamingMember("LB-Contract-Jordan");
+    const voidedId = await createRealGamingMember("LB-Contract-Voided");
+
+    await cleanupClient
+      .from("gaming_xp_rules")
+      .insert({ category_key: LEADERBOARD_CATEGORY, consequence_class: "PERFORMANCE", performance_band_key: "TIE_BAND", points: 100 });
+    await cleanupClient
+      .from("gaming_xp_rules")
+      .insert({ category_key: LEADERBOARD_CATEGORY, consequence_class: "PERFORMANCE", performance_band_key: "VOID_BAND", points: 100 });
+
+    const occurredAt = new Date().toISOString();
+    async function award(gamingMemberId: string, band: string, key: string) {
+      const { experienceSummaryId } = await recordExperienceSummary(repo, {
+        gamingMemberId, experienceKey: "LB_CONTRACT", categoryKey: LEADERBOARD_CATEGORY,
+        activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+        occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, performanceBandKey: band,
+        sourceReference: key, rulesetVersion: "v1", supersedesExperienceSummaryId: null,
+        idempotencyKey: key, evidence: {},
+      });
+      await processExperienceSummaryConsequences(repo, experienceSummaryId);
+      return experienceSummaryId;
+    }
+
+    // Alex and Jordan tie at 100.
+    await award(alexId, "TIE_BAND", `lb-tie-alex-${alexId}`);
+    await award(jordanId, "TIE_BAND", `lb-tie-jordan-${jordanId}`);
+
+    // Voided gets +100 then a pure invalidation correction (no new band) -> net 0.
+    const original = await award(voidedId, "VOID_BAND", `lb-void-${voidedId}`);
+    const correction = await recordExperienceSummary(repo, {
+      gamingMemberId: voidedId, experienceKey: "LB_CONTRACT", categoryKey: LEADERBOARD_CATEGORY,
+      activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, performanceBandKey: null,
+      sourceReference: `lb-void-corrected-${voidedId}`, rulesetVersion: "v1", supersedesExperienceSummaryId: original,
+      idempotencyKey: `lb-void-corrected-${voidedId}`, evidence: {},
+    });
+    await processExperienceSummaryConsequences(repo, correction.experienceSummaryId);
+
+    const entries = await repo.getGlobalLeaderboard();
+
+    const alexEntry = findEntry(entries, "LB-Contract-Alex");
+    const jordanEntry = findEntry(entries, "LB-Contract-Jordan");
+    const voidedEntry = findEntry(entries, "LB-Contract-Voided");
+
+    expect(alexEntry?.globalXp).toBe(100);
+    expect(jordanEntry?.globalXp).toBe(100);
+    expect(alexEntry?.rank).toBe(jordanEntry?.rank); // competition ranking: an exact tie shares one rank
+    expect(voidedEntry).toBeUndefined(); // net-zero after full reversal — absent, not shown at 0
+
+    // No Gaming Member UUID anywhere in the returned, JSON-serialized shape.
+    const serialized = JSON.stringify(entries);
+    expect(serialized).not.toContain(alexId);
+    expect(serialized).not.toContain(jordanId);
+    expect(serialized).not.toContain(voidedId);
+  }, 30000);
+
+  it("returns the correct COMPLETE total for a ledger exceeding PostgREST's row cap, where a raw select would silently truncate", async () => {
+    const gamingMemberId = await createRealGamingMember("LB-Contract-BigLedger");
+
+    const { data: rule, error: ruleErr } = await cleanupClient
+      .from("gaming_xp_rules")
+      .insert({ category_key: LEADERBOARD_CATEGORY, consequence_class: "PARTICIPATION", performance_band_key: null, points: 1 })
+      .select()
+      .single();
+    if (ruleErr) throw ruleErr;
+
+    const { data: summary, error: summaryErr } = await cleanupClient
+      .from("experience_summaries")
+      .insert({
+        gaming_member_id: gamingMemberId,
+        experience_key: "LB_CONTRACT_BIG",
+        category_key: LEADERBOARD_CATEGORY,
+        activity_classification: "RANKED",
+        authority_tier: "ADMIN_FINALIZED",
+        occurred_at: new Date().toISOString(),
+        finalized_at: new Date().toISOString(),
+        meaningful_participation: true,
+        performance_band_key: null,
+        source_reference: "lb-big-ledger",
+        ruleset_version: "v1",
+        idempotency_key: "lb-big-ledger",
+      })
+      .select()
+      .single();
+    if (summaryErr) throw summaryErr;
+
+    // 1500 rows, all for this one member, 1 point each — well past
+    // PostgREST's configured max_rows (1000 locally; supabase/config.toml).
+    const ROW_COUNT = 1500;
+    const rows = Array.from({ length: ROW_COUNT }, (_, i) => ({
+      gaming_member_id: gamingMemberId,
+      category_key: LEADERBOARD_CATEGORY,
+      consequence_class: "PARTICIPATION",
+      points: 1,
+      experience_summary_id: summary.experience_summary_id,
+      gaming_xp_rule_id: rule.gaming_xp_rule_id,
+      gaming_day: "2027-01-01",
+      idempotency_key: `lb-big-ledger-${i}`,
+    }));
+    const CHUNK = 500;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const { error: insErr } = await cleanupClient.from("gaming_xp_events").insert(rows.slice(i, i + CHUNK));
+      if (insErr) throw insErr;
+    }
+
+    // Evidence: a raw, unpaginated select over just this member's rows
+    // already silently truncates at PostgREST's row cap.
+    const { data: rawRows } = await cleanupClient
+      .from("gaming_xp_events")
+      .select("points")
+      .eq("gaming_member_id", gamingMemberId);
+    expect(rawRows!.length).toBeLessThan(ROW_COUNT);
+    const naiveSum = rawRows!.reduce((s, r: any) => s + r.points, 0);
+    expect(naiveSum).not.toBe(ROW_COUNT); // proves the naive approach would be silently wrong
+
+    // The canonical read model, going through the actual repository
+    // under test, must still return the correct COMPLETE total.
+    const entries = await repo.getGlobalLeaderboard();
+    const bigLedgerEntry = findEntry(entries, "LB-Contract-BigLedger");
+    expect(bigLedgerEntry?.globalXp).toBe(ROW_COUNT);
+  }, 60000);
 });

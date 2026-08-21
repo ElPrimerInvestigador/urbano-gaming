@@ -10,6 +10,7 @@ import type {
   GamingXpEventRecord,
   GamingCategoryParticipationPolicyRecord,
   GamingXpRuleRecord,
+  GlobalLeaderboardEntry,
   ConsequenceClass,
   ActivityClassification,
   AuthorityTier,
@@ -233,6 +234,24 @@ export class SupabaseMetagameRepository implements MetagameRepository {
       effectiveAt: data.effective_at,
       supersededAt: data.superseded_at,
     };
+  }
+
+  async getGlobalLeaderboard(): Promise<GlobalLeaderboardEntry[]> {
+    // Delegates aggregation and competition ranking entirely to
+    // Postgres via get_global_gaming_xp_leaderboard() (0093) — never a
+    // raw multi-row gaming_xp_events select, which PostgREST's
+    // configured max_rows silently truncates once the ledger exceeds
+    // it (empirically confirmed during the readiness gate). The
+    // function's own output is one row per Gaming Member currently at
+    // positive Global XP, not one row per event, so it stays correct
+    // at a materially larger scale than a raw event select would.
+    const { data, error } = await this.client.rpc("get_global_gaming_xp_leaderboard");
+    if (error) throw error;
+    return (data ?? []).map((row: any) => ({
+      rank: row.global_rank,
+      displayName: row.display_name,
+      globalXp: row.total_xp,
+    }));
   }
 }
 

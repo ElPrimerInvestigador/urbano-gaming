@@ -107,6 +107,17 @@ export interface GamingXpRuleRecord {
   supersededAt: string | null;
 }
 
+/**
+ * One row of the Global Gaming XP Leaderboard — deliberately excludes
+ * gamingMemberId. Competition-ranked (ties share a rank); only Gaming
+ * Members with currently-effective Global XP > 0 appear at all.
+ */
+export interface GlobalLeaderboardEntry {
+  rank: number;
+  displayName: string;
+  globalXp: number;
+}
+
 // --- Errors ---------------------------------------------------------
 
 export class InvalidActivityClassificationError extends Error {

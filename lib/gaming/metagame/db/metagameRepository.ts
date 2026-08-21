@@ -6,6 +6,7 @@ import type {
   GamingXpEventRecord,
   GamingCategoryParticipationPolicyRecord,
   GamingXpRuleRecord,
+  GlobalLeaderboardEntry,
   ConsequenceClass,
 } from "../types";
 
@@ -28,6 +29,15 @@ export interface MetagameRepository {
 
   listXpEventsForMember(gamingMemberId: string): Promise<GamingXpEventRecord[]>;
   listXpEventsForSummary(experienceSummaryId: string): Promise<GamingXpEventRecord[]>;
+
+  /**
+   * Global Gaming XP Leaderboard — competition-ranked, currently-
+   * effective Global XP > 0 only. Aggregation and ranking are computed
+   * entirely server-side (the Supabase implementation delegates to
+   * get_global_gaming_xp_leaderboard(), never a raw multi-row
+   * gaming_xp_events select — see that migration's own comment for why).
+   */
+  getGlobalLeaderboard(): Promise<GlobalLeaderboardEntry[]>;
 
   /** Test/fixture seam — Phase 1 has no admin route for configuring these; local tests insert explicit values directly. */
   createCategoryParticipationPolicy(input: {

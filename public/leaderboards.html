@@ -111,6 +111,20 @@
   }
   .info-card strong { color: var(--ink); }
 
+  .lb-table { width: 100%; border-collapse: collapse; }
+  .lb-table th {
+    text-align: left; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted); padding: 0 10px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  .lb-table td {
+    padding: 12px 10px; font-size: 14px; border-bottom: 1px solid var(--line);
+  }
+  .lb-table tr:last-child td { border-bottom: none; }
+  .lb-rank { color: var(--muted); font-weight: 700; width: 48px; }
+  .lb-name { color: var(--ink); font-weight: 600; }
+  .lb-xp { text-align: right; color: var(--ink); font-weight: 700; }
+
   @media (max-width: 640px) {
     .shell-header { padding: 16px 16px 0; }
     .brand-word { font-size: 15px; }
@@ -151,10 +165,24 @@
   </div>
 
   <div class="tab-panel" data-panel="global">
-    <div class="empty-state">
+    <div id="global-leaderboard-loading" class="empty-state">
+      <p class="empty-title">Loading…</p>
+      <p class="empty-sub">Fetching the Global Gaming XP Leaderboard.</p>
+    </div>
+    <div id="global-leaderboard-empty" class="empty-state" hidden>
       <p class="empty-title">No rankings yet.</p>
       <p class="empty-sub">Play eligible URBANO Gaming experiences to enter the leaderboard.</p>
     </div>
+    <div id="global-leaderboard-error" class="empty-state" hidden>
+      <p class="empty-title">Couldn't load the leaderboard.</p>
+      <p class="empty-sub">Something went wrong fetching current rankings. Try again shortly.</p>
+    </div>
+    <table id="global-leaderboard-table" class="lb-table" hidden>
+      <thead>
+        <tr><th>Rank</th><th>Display Name</th><th style="text-align:right;">Gaming XP</th></tr>
+      </thead>
+      <tbody id="global-leaderboard-rows"></tbody>
+    </table>
   </div>
 
   <div class="tab-panel" data-panel="by-game" hidden>
@@ -197,6 +225,57 @@
       });
     });
   });
+
+  // Global Gaming XP Leaderboard — GET /api/gaming/leaderboard, public,
+  // no Authorization header. "By Game" and "My Circles" remain the
+  // existing static placeholders; wiring them is not authorized here.
+  (function loadGlobalLeaderboard() {
+    const loadingEl = document.getElementById("global-leaderboard-loading");
+    const emptyEl = document.getElementById("global-leaderboard-empty");
+    const errorEl = document.getElementById("global-leaderboard-error");
+    const tableEl = document.getElementById("global-leaderboard-table");
+    const rowsEl = document.getElementById("global-leaderboard-rows");
+
+    function show(el) {
+      [loadingEl, emptyEl, errorEl, tableEl].forEach((e) => {
+        e.hidden = e !== el;
+      });
+    }
+
+    fetch("/api/gaming/leaderboard")
+      .then((res) => {
+        if (!res.ok) throw new Error("Leaderboard request failed: " + res.status);
+        return res.json();
+      })
+      .then((body) => {
+        const entries = Array.isArray(body.entries) ? body.entries : [];
+        if (entries.length === 0) {
+          show(emptyEl);
+          return;
+        }
+        rowsEl.innerHTML = "";
+        entries.forEach((entry) => {
+          const tr = document.createElement("tr");
+          const rankTd = document.createElement("td");
+          rankTd.className = "lb-rank";
+          rankTd.textContent = String(entry.rank);
+          const nameTd = document.createElement("td");
+          nameTd.className = "lb-name";
+          nameTd.textContent = entry.displayName;
+          const xpTd = document.createElement("td");
+          xpTd.className = "lb-xp";
+          xpTd.textContent = String(entry.globalXp);
+          tr.appendChild(rankTd);
+          tr.appendChild(nameTd);
+          tr.appendChild(xpTd);
+          rowsEl.appendChild(tr);
+        });
+        show(tableEl);
+      })
+      .catch(() => {
+        show(errorEl);
+      });
+  })();
 </script>
 
 </body>
