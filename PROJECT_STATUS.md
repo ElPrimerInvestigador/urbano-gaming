@@ -214,3 +214,19 @@ Production migration ceiling: **0081** (was 0044 before this deployment). Commit
 Existing Session engines (Open Response, Voting, Quiz): **PRODUCTION REGRESSION PASSED** — each run end-to-end directly against production post-deployment, no regression.
 
 No SMTP configured; no Supabase Auth setting changed; no browser anon-key configured; no other card game begun; no Poker Gaming XP/rating begun; no generic Private Table Engine extracted.
+
+## Persistent Metagame Phase 1 (2026-08-21)
+
+| Phase | What it delivered | Status |
+|---|---|---|
+| Persistent Metagame Phase 1 | `experience_summaries`/`gaming_category_participation_policy`/`gaming_xp_rules`/`gaming_xp_events`, a canonical generalized Gaming XP ledger superseding the deprecated `gaming_progression_events`, Match Activity Classification (TRAINING/CASUAL/RANKED/OFFICIAL) as a Prediction precondition, and a corrected missing-policy boundary so absent XP configuration is a valid no-consequence state rather than a settlement failure | **DEPLOYED. SCHEMA/CODE FULLY VALIDATED. AUTHENTICATED PREDICTIONS SETTLEMENT PENDING SMTP/ANON-KEY.** See `PERSISTENT_METAGAME_PHASE1_IMPLEMENTATION_RECORD.md`'s "Production Deployment" section for full evidence. |
+
+Production migration ceiling: **0092** (was 0081 before this deployment). Commit `2e3cf2f` fast-forward pushed to `origin/main` (`f030558..2e3cf2f`) and live at `https://urbano-gaming-playtest.vercel.app`, confirmed via GitHub's Vercel deployment-status check.
+
+RLS on the four new Metagame tables was empirically proven, not assumed: a live anon-key `INSERT` attempt against `gaming_xp_events` was denied (`42501`), matching the identical denial reproduced against the pre-existing `gaming_members` table as a control.
+
+Existing Session engines (Open Response, Quiz, Voting) and Guest Poker (create→join→deal): **PRODUCTION REGRESSION PASSED** — each run end-to-end directly against production post-deployment, no regression.
+
+The classification gate (`MATCH_NOT_CLASSIFIED`) and the zero-XP-configuration boundary were proven live at the one point reachable without a real Gaming Member. **`SUPABASE_ANON_KEY` is not configured in production** (`GET /api/gaming/config` returns 500), so no real end-user can complete OTP sign-in and production holds zero Gaming Members — per explicit instruction, none was manufactured to work around this. The full authenticated Prediction→Evaluation→Summary→zero-XP settlement path and the correction case therefore remain genuinely unproven in production, classified pending Auth readiness, not assumed safe.
+
+`gaming_category_participation_policy` and `gaming_xp_rules` remain at **zero rows** in production after this deployment: Phase 1 infrastructure is deployed; Gaming XP is not yet activated. No Product XP values, daily cap values, Global Leaderboard, Category Rating, or Achievements work was begun.
