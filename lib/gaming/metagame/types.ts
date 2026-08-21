@@ -23,7 +23,19 @@ export type AuthorityTier =
 
 export type ConsequenceClass = "PARTICIPATION" | "PERFORMANCE";
 
-/** The Finalized Experience Summary — the one object that crosses the Experience/Metagame boundary. */
+/**
+ * The Finalized Experience Summary — the one object that crosses the
+ * Experience/Metagame boundary.
+ *
+ * correctDimensionCount / correctDimensionKeys — additive, nullable,
+ * Experience-agnostic dimension-fact fields. The only invariant this
+ * generic contract enforces (both present and consistent, or both
+ * absent together) is universal; the exact vocabulary of "what a
+ * dimension key means" and any band-key format belong entirely to
+ * whichever Experience populates them (for Soccer Predictions, see
+ * lib/gaming/predictions' own adapter) — this module has no opinion on
+ * either and must never gain one.
+ */
 export interface ExperienceSummaryRecord {
   experienceSummaryId: string;
   gamingMemberId: string;
@@ -40,6 +52,8 @@ export interface ExperienceSummaryRecord {
   supersedesExperienceSummaryId: string | null;
   idempotencyKey: string;
   evidence: Record<string, unknown>;
+  correctDimensionCount: number | null;
+  correctDimensionKeys: string[] | null;
   createdAt: string;
 }
 
@@ -58,6 +72,8 @@ export interface RecordExperienceSummaryInput {
   supersedesExperienceSummaryId: string | null;
   idempotencyKey: string;
   evidence: Record<string, unknown>;
+  correctDimensionCount?: number | null;
+  correctDimensionKeys?: string[] | null;
 }
 
 export interface RecordExperienceSummaryResult {

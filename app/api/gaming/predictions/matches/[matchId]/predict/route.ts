@@ -47,7 +47,8 @@ export async function POST(
     predictedHomeScore,
     predictedAwayScore,
     predictedGoalscorerPlayerId,
-    predictedGoalMinute,
+    predictedGoalMinuteRegulation,
+    predictedGoalMinuteStoppage,
     predictedFirstTeamToScore,
     latitude,
     longitude,
@@ -59,7 +60,8 @@ export async function POST(
     typeof predictedHomeScore !== "number" ||
     typeof predictedAwayScore !== "number" ||
     !(predictedGoalscorerPlayerId === null || typeof predictedGoalscorerPlayerId === "string") ||
-    !(predictedGoalMinute === null || typeof predictedGoalMinute === "number") ||
+    !(predictedGoalMinuteRegulation === null || typeof predictedGoalMinuteRegulation === "number") ||
+    !(predictedGoalMinuteStoppage === null || typeof predictedGoalMinuteStoppage === "number") ||
     !(
       predictedFirstTeamToScore === null ||
       predictedFirstTeamToScore === "HOME" ||
@@ -88,7 +90,8 @@ export async function POST(
       predictedHomeScore,
       predictedAwayScore,
       predictedGoalscorerPlayerId: predictedGoalscorerPlayerId as string | null,
-      predictedGoalMinute: predictedGoalMinute as number | null,
+      predictedGoalMinuteRegulation: predictedGoalMinuteRegulation as number | null,
+      predictedGoalMinuteStoppage: predictedGoalMinuteStoppage as number | null,
       predictedFirstTeamToScore: predictedFirstTeamToScore as "HOME" | "AWAY" | null,
       geo,
     });

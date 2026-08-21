@@ -51,6 +51,8 @@ function mapSummary(row: any): ExperienceSummaryRecord {
     supersedesExperienceSummaryId: row.supersedes_experience_summary_id,
     idempotencyKey: row.idempotency_key,
     evidence: row.evidence ?? {},
+    correctDimensionCount: row.correct_dimension_count ?? null,
+    correctDimensionKeys: row.correct_dimension_keys ?? null,
     createdAt: row.created_at,
   };
 }
@@ -111,6 +113,8 @@ export class SupabaseMetagameRepository implements MetagameRepository {
       p_supersedes_experience_summary_id: input.supersedesExperienceSummaryId,
       p_idempotency_key: input.idempotencyKey,
       p_evidence: input.evidence,
+      p_correct_dimension_count: input.correctDimensionCount ?? null,
+      p_correct_dimension_keys: input.correctDimensionKeys ?? null,
     });
 
     if (error) {

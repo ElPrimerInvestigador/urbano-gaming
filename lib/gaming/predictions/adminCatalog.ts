@@ -11,10 +11,38 @@ import type {
 } from "./types";
 import {
   InvalidPrizeTierDimensionCountError,
+  InvalidOfficialGoalMinuteError,
   DraftResultAlreadyExistsError,
   NoFinalizedResultToCorrectError,
   ResultAlreadyBeingCorrectedError,
 } from "./types";
+
+/**
+ * Official Goal-Time boundary check, shared by first-time draft entry
+ * and correction — mirrors 0100's own official_goal_events_minute_
+ * stoppage_requires_boundary CHECK constraint so a malformed tuple
+ * (e.g. a stoppage offset attached to a non-boundary minute like
+ * (46, 1)) is rejected here, with a clear typed error, before it ever
+ * reaches either repository backend. The DB constraint remains the
+ * authoritative backstop; this is the single shared entry point for
+ * both backends, since (unlike Predictions' own upsert_prediction_
+ * atomically RPC) official goal events are never written via a route
+ * a Gaming Member's own client could call directly — adminCatalog.ts
+ * is already the sole write path, so one check here is sufficient.
+ */
+function validateOfficialGoalEvents(events: OfficialGoalEventInput[]): void {
+  for (const event of events) {
+    if (
+      event.minuteStoppage != null &&
+      event.minuteRegulation !== 45 &&
+      event.minuteRegulation !== 90 &&
+      event.minuteRegulation !== 105 &&
+      event.minuteRegulation !== 120
+    ) {
+      throw new InvalidOfficialGoalMinuteError();
+    }
+  }
+}
 
 /**
  * The smallest founder/admin catalog surface: Team/Player roster,
@@ -201,6 +229,7 @@ export async function saveDraftResult(
     // startResultCorrection, not a plain first-time draft save.
     throw new DraftResultAlreadyExistsError();
   }
+  validateOfficialGoalEvents(input.officialGoalEvents);
   return repo.saveDraftMatchResult({
     ...input,
     supersedesMatchResultId: null,
@@ -228,6 +257,7 @@ export async function startResultCorrection(
     throw new ResultAlreadyBeingCorrectedError();
   }
 
+  validateOfficialGoalEvents(input.officialGoalEvents);
   return repo.saveDraftMatchResult({
     ...input,
     supersedesMatchResultId: currentFinalized.matchResultId,

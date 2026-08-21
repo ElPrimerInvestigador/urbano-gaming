@@ -326,7 +326,8 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
     predictedHomeScore: number;
     predictedAwayScore: number;
     predictedGoalscorerPlayerId: string | null;
-    predictedGoalMinute: number | null;
+    predictedGoalMinuteRegulation: number | null;
+    predictedGoalMinuteStoppage: number | null;
     predictedFirstTeamToScore: "HOME" | "AWAY" | null;
     geoVerifiedAt: string;
     measuredDistanceMeters: number;
@@ -351,8 +352,20 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
     }
 
     if (
-      input.predictedGoalMinute !== null &&
-      (input.predictedGoalMinute < 1 || input.predictedGoalMinute > 120)
+      input.predictedGoalMinuteRegulation !== null &&
+      (input.predictedGoalMinuteRegulation < 1 || input.predictedGoalMinuteRegulation > 90)
+    ) {
+      throw new InvalidGoalMinuteError();
+    }
+
+    if (input.predictedGoalMinuteStoppage !== null && input.predictedGoalMinuteStoppage <= 0) {
+      throw new InvalidGoalMinuteError();
+    }
+
+    if (
+      input.predictedGoalMinuteStoppage !== null &&
+      (input.predictedGoalMinuteRegulation === null ||
+        (input.predictedGoalMinuteRegulation !== 45 && input.predictedGoalMinuteRegulation !== 90))
     ) {
       throw new InvalidGoalMinuteError();
     }
@@ -391,7 +404,8 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
       predictedHomeScore: input.predictedHomeScore,
       predictedAwayScore: input.predictedAwayScore,
       predictedGoalscorerPlayerId: input.predictedGoalscorerPlayerId,
-      predictedGoalMinute: input.predictedGoalMinute,
+      predictedGoalMinuteRegulation: input.predictedGoalMinuteRegulation,
+      predictedGoalMinuteStoppage: input.predictedGoalMinuteStoppage,
       predictedFirstTeamToScore: input.predictedFirstTeamToScore,
       geoVerifiedAt: input.geoVerifiedAt,
       measuredDistanceMeters: input.measuredDistanceMeters,
@@ -486,19 +500,41 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
   }
 
   /**
+   * Predictions-v2 regulation-time eligibility predicate, applied
+   * identically everywhere official goal evidence is consulted for
+   * settlement: an event is REGULATION-TIME ELIGIBLE iff
+   * minuteRegulation is between 1 and 90 inclusive. This correctly
+   * includes first-half stoppage (minuteRegulation === 45, any
+   * stoppage offset) and second-half stoppage (minuteRegulation ===
+   * 90, any stoppage offset) — both remain within 1-90 — while
+   * excluding every extra-time event (minuteRegulation 91-120) from
+   * all four Prediction dimensions, without removing extra-time
+   * events from the official record itself (listGoalEventsForResult
+   * still returns them unfiltered; only settlement's own reads apply
+   * this predicate). Mirrors 0098's own identical SQL predicate.
+   */
+  private regulationTimeEligibleGoalEvents(matchResultId: string): OfficialGoalEventRecord[] {
+    return (this.goalEvents.get(matchResultId) ?? []).filter(
+      (e) => e.minuteRegulation >= 1 && e.minuteRegulation <= 90
+    );
+  }
+
+  /**
    * Mirrors finalize_match_result_atomically's own once-per-Result-
-   * Version facts: the total official goal count, and the
-   * chronologically first goal's credited Team (HOME/AWAY/NO_GOAL) —
-   * ordered by effective elapsed minute, then ordinal as a tiebreaker,
-   * exactly as the SQL function orders. An own goal credits the
-   * *opposing* Team from the scorer's own Team.
+   * Version facts: the total REGULATION-TIME-ELIGIBLE official goal
+   * count, and the chronologically first *eligible* goal's credited
+   * Team (HOME/AWAY/NO_GOAL) — ordered by effective elapsed minute,
+   * then ordinal as a tiebreaker, exactly as the SQL function orders.
+   * An own goal credits the *opposing* Team from the scorer's own
+   * Team. An extra-time-only match therefore still correctly derives
+   * zero eligible goals / NO_GOAL, exactly as Predictions-v2 requires.
    */
   private deriveOfficialFacts(
     matchId: string,
     matchResultId: string
   ): { goalCount: number; firstTeam: "HOME" | "AWAY" | "NO_GOAL" } {
     const match = this.matches.get(matchId)!;
-    const events = [...(this.goalEvents.get(matchResultId) ?? [])].sort((a, b) => {
+    const events = this.regulationTimeEligibleGoalEvents(matchResultId).sort((a, b) => {
       const aMinute = a.minuteRegulation + (a.minuteStoppage ?? 0);
       const bMinute = b.minuteRegulation + (b.minuteStoppage ?? 0);
       if (aMinute !== bMinute) return aMinute - bMinute;
@@ -522,6 +558,14 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
     return { goalCount: events.length, firstTeam };
   }
 
+  /** Canonical, fixed dimension-key order — never derived from evaluation order. */
+  private static readonly DIMENSION_KEY_ORDER = [
+    ["scorelineCorrect", "EXACT_SCORELINE"],
+    ["goalscorerCorrect", "ANY_GOALSCORER"],
+    ["goalMinuteCorrect", "ANY_GOAL_MINUTE"],
+    ["firstTeamToScoreCorrect", "FIRST_TEAM_TO_SCORE"],
+  ] as const;
+
   private evaluatePrediction(
     prediction: PredictionRecord,
     result: MatchResultRecord,
@@ -533,23 +577,30 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
     goalMinuteCorrect: boolean;
     firstTeamToScoreCorrect: boolean;
     correctDimensionCount: number;
+    correctDimensionKeys: string[];
   } {
-    const events = this.goalEvents.get(matchResultId) ?? [];
+    const events = this.regulationTimeEligibleGoalEvents(matchResultId);
 
     const scorelineCorrect =
       prediction.predictedHomeScore === result.homeScore &&
       prediction.predictedAwayScore === result.awayScore;
 
+    // Own goal does NOT satisfy Any Goalscorer for the player who committed it.
     const goalscorerCorrect =
       prediction.predictedGoalscorerPlayerId === null
         ? facts.goalCount === 0
-        : events.some((e) => e.scorerPlayerId === prediction.predictedGoalscorerPlayerId);
+        : events.some((e) => e.scorerPlayerId === prediction.predictedGoalscorerPlayerId && !e.isOwnGoal);
 
+    // Own goal DOES satisfy Any Goal Minute — it is still a legitimate
+    // goal event at its own effective moment. Structural, null-safe
+    // tuple comparison — never a summed elapsed-minute integer.
     const goalMinuteCorrect =
-      prediction.predictedGoalMinute === null
+      prediction.predictedGoalMinuteRegulation === null
         ? facts.goalCount === 0
         : events.some(
-            (e) => e.minuteRegulation + (e.minuteStoppage ?? 0) === prediction.predictedGoalMinute
+            (e) =>
+              e.minuteRegulation === prediction.predictedGoalMinuteRegulation &&
+              (e.minuteStoppage ?? null) === (prediction.predictedGoalMinuteStoppage ?? null)
           );
 
     const firstTeamToScoreCorrect =
@@ -563,12 +614,23 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
       Number(goalMinuteCorrect) +
       Number(firstTeamToScoreCorrect);
 
+    const dimensionFlags: Record<string, boolean> = {
+      scorelineCorrect,
+      goalscorerCorrect,
+      goalMinuteCorrect,
+      firstTeamToScoreCorrect,
+    };
+    const correctDimensionKeys = InMemoryPredictionsRepository.DIMENSION_KEY_ORDER.filter(
+      ([flag]) => dimensionFlags[flag]
+    ).map(([, key]) => key);
+
     return {
       scorelineCorrect,
       goalscorerCorrect,
       goalMinuteCorrect,
       firstTeamToScoreCorrect,
       correctDimensionCount,
+      correctDimensionKeys,
     };
   }
 
@@ -612,6 +674,15 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
       return { matchResultId, finalizedAt: result.finalizedAt, alreadyFinalized: true };
     }
 
+    // Checked before any mutation — unlike the SQL implementation
+    // (where any later exception rolls back the whole transaction
+    // including an earlier write), this in-memory Map has no
+    // transactional rollback, so the cancelled-Match guard must run
+    // before match_results is touched at all, not merely before this
+    // function returns.
+    const matchForGuard = this.matches.get(result.matchId)!;
+    if (matchForGuard.cancelledAt) throw new MatchCancelledError();
+
     const finalizedAt = new Date().toISOString();
     this.matchResults.set(matchResultId, { ...result, finalizedAt });
 
@@ -643,7 +714,7 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
         meaningfulParticipation: true,
         performanceBandKey: `CORRECT_${evaluated.correctDimensionCount}_OF_4`,
         sourceReference: evaluation.evaluationId,
-        rulesetVersion: "predictions-v1",
+        rulesetVersion: "predictions-v2",
         supersedesExperienceSummaryId: null,
         idempotencyKey: evaluation.evaluationId,
         evidence: {
@@ -653,6 +724,8 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
           goalMinuteCorrect: evaluated.goalMinuteCorrect,
           firstTeamCorrect: evaluated.firstTeamToScoreCorrect,
         },
+        correctDimensionCount: evaluated.correctDimensionCount,
+        correctDimensionKeys: evaluated.correctDimensionKeys,
       });
       await this.metagame.processExperienceSummaryConsequences(experienceSummaryId);
 
@@ -706,6 +779,12 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
       throw new SupersededResultNotFinalizedError();
     }
 
+    // Checked before any mutation — same reasoning as
+    // finalizeMatchResult: a cancelled Match may not produce a
+    // settlement via correction either.
+    const matchForGuard = this.matches.get(result.matchId)!;
+    if (matchForGuard.cancelledAt) throw new MatchCancelledError();
+
     const finalizedAt = new Date().toISOString();
     this.matchResults.set(matchResultId, { ...result, finalizedAt });
 
@@ -747,7 +826,7 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
         meaningfulParticipation: true,
         performanceBandKey: `CORRECT_${evaluated.correctDimensionCount}_OF_4`,
         sourceReference: newEvaluation.evaluationId,
-        rulesetVersion: "predictions-v1",
+        rulesetVersion: "predictions-v2",
         supersedesExperienceSummaryId: oldExperienceSummary?.experienceSummaryId ?? null,
         idempotencyKey: newEvaluation.evaluationId,
         evidence: {
@@ -758,6 +837,8 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
           firstTeamCorrect: evaluated.firstTeamToScoreCorrect,
           correction: true,
         },
+        correctDimensionCount: evaluated.correctDimensionCount,
+        correctDimensionKeys: evaluated.correctDimensionKeys,
       });
       await this.metagame.processExperienceSummaryConsequences(newExperienceSummaryId);
 

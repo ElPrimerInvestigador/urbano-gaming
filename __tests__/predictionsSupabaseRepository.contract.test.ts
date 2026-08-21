@@ -11,7 +11,8 @@ import { finalizeMatchResult } from "../lib/gaming/predictions/finalizeMatchResu
 import { correctMatchResult } from "../lib/gaming/predictions/correctMatchResult";
 import { redeemPrizeQualification } from "../lib/gaming/predictions/redeemPrizeQualification";
 import { requireGamingAdmin } from "../lib/gaming/predictions/httpAuth";
-import { InvalidGoalscorerSelectionError } from "../lib/gaming/predictions/types";
+import { cancelMatch } from "../lib/gaming/predictions/adminCatalog";
+import { InvalidGoalscorerSelectionError, InvalidGoalMinuteError, MatchCancelledError } from "../lib/gaming/predictions/types";
 
 const env = loadEnv("development", process.cwd(), "");
 const supabaseUrl = env.SUPABASE_URL;
@@ -202,7 +203,7 @@ describe("SupabasePredictionsRepository contract", () => {
       predictedHomeScore: 2,
       predictedAwayScore: 0,
       predictedGoalscorerPlayerId: mbappe.playerId,
-      predictedGoalMinute: 20,
+      predictedGoalMinuteRegulation: 20, predictedGoalMinuteStoppage: null,
       predictedFirstTeamToScore: "HOME",
       geo: { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 },
     });
@@ -310,7 +311,7 @@ describe("SupabasePredictionsRepository contract", () => {
       predictedHomeScore: 0,
       predictedAwayScore: 1,
       predictedGoalscorerPlayerId: null,
-      predictedGoalMinute: null,
+      predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null,
       predictedFirstTeamToScore: "AWAY",
       geo: { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 },
     });
@@ -352,7 +353,7 @@ describe("SupabasePredictionsRepository contract", () => {
         predictedHomeScore: 1,
         predictedAwayScore: 0,
         predictedGoalscorerPlayerId: outsider.playerId,
-        predictedGoalMinute: 1,
+        predictedGoalMinuteRegulation: 1, predictedGoalMinuteStoppage: null,
         predictedFirstTeamToScore: "HOME",
         geo: { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 },
       })
@@ -423,5 +424,202 @@ describe("SupabasePredictionsRepository contract", () => {
       serviceKey: supabaseServiceRoleKey!,
     });
     expect("errorResponse" in revokedResult).toBe(true);
+  }, 30000);
+
+  // --- PREDICTIONS-V2 -------------------------------------------------
+
+  it("Predictions-v2: an invalid Goal-Time shape (stoppage without a 45/90 base) is rejected by the real database CHECK constraint", async () => {
+    const alex = await createRealGamingMember("ContractGoalTimeInvalid");
+    const { home, away } = await createTeamsAndRoster();
+    const match = await repo.createMatch({
+      homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Contract Test", kickoffAt: futureIso(),
+    });
+    createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
+    const venue = await repo.createVenue({ name: "V", latitude: 10, longitude: 10, radiusMeters: 100 });
+    createdVenueIds.push(venue.venueId);
+    const activation = await repo.createVenueActivation({ matchId: match.matchId, venueId: venue.venueId });
+
+    await expect(
+      submitPrediction(repo, {
+        matchId: match.matchId,
+        gamingMemberId: alex.gamingMemberId,
+        venueActivationId: activation.venueActivationId,
+        predictedHomeScore: 1,
+        predictedAwayScore: 0,
+        predictedGoalscorerPlayerId: null,
+        predictedGoalMinuteRegulation: 46, predictedGoalMinuteStoppage: 1,
+        predictedFirstTeamToScore: null,
+        geo: { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 },
+      })
+    ).rejects.toBeInstanceOf(InvalidGoalMinuteError);
+  }, 30000);
+
+  it("Predictions-v2 acceptance gate (0100): a non-boundary official stoppage tuple (46, 1) is rejected by the real official_goal_events CHECK constraint", async () => {
+    const admin = await createRealGamingMember("ContractOfficialBoundaryInvalid");
+    const { home, away, mbappe } = await createTeamsAndRoster();
+    const match = await repo.createMatch({
+      homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Contract Test", kickoffAt: futureIso(),
+    });
+    createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
+
+    // Calling repo.saveDraftMatchResult directly, bypassing
+    // adminCatalog.ts's own TS-level guard entirely, so this proves
+    // the real database constraint (0100) in isolation, not merely
+    // the application-layer check that sits in front of it.
+    await expect(
+      repo.saveDraftMatchResult({
+        matchId: match.matchId,
+        homeScore: 1,
+        awayScore: 0,
+        officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 46, minuteStoppage: 1 }],
+        enteredByGamingMemberId: admin.gamingMemberId,
+      })
+    ).rejects.toThrow(/official_goal_events_minute_stoppage_requires_boundary/);
+  }, 30000);
+
+  it("Predictions-v2 acceptance gate (0100): legal period-boundary stoppage tuples, including extra-time (105, 120), are accepted by the real database", async () => {
+    const admin = await createRealGamingMember("ContractOfficialBoundaryValid");
+    const { home, away, mbappe } = await createTeamsAndRoster();
+    const match = await repo.createMatch({
+      homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Contract Test", kickoffAt: futureIso(),
+    });
+    createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
+
+    const draft = await repo.saveDraftMatchResult({
+      matchId: match.matchId,
+      homeScore: 4,
+      awayScore: 0,
+      officialGoalEvents: [
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 45, minuteStoppage: 2 },
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 90, minuteStoppage: 7 },
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 105, minuteStoppage: 1 },
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 120, minuteStoppage: 3 },
+      ],
+      enteredByGamingMemberId: admin.gamingMemberId,
+    });
+    const events = await repo.listGoalEventsForResult(draft.matchResultId);
+    expect(events).toHaveLength(4);
+  }, 30000);
+
+  it("Predictions-v2: structural Goal Minute comparison distinguishes ordinary 46 from the true (45, stoppage 1) pair against real Postgres", async () => {
+    const admin = await createRealGamingMember("ContractStoppageAdmin");
+    const ordinaryGuesser = await createRealGamingMember("ContractStoppageOrdinary");
+    const stoppageGuesser = await createRealGamingMember("ContractStoppageExact");
+    const { home, away, mbappe } = await createTeamsAndRoster();
+
+    const match = await repo.createMatch({
+      homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Contract Test", kickoffAt: futureIso(),
+    });
+    createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
+    const venue = await repo.createVenue({ name: "Stoppage Venue", latitude: 10, longitude: 10, radiusMeters: 100 });
+    createdVenueIds.push(venue.venueId);
+    const activation = await repo.createVenueActivation({ matchId: match.matchId, venueId: venue.venueId });
+    const geo = { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 };
+
+    const ordinaryPrediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: ordinaryGuesser.gamingMemberId, venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: 46, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: null, geo,
+    });
+    const stoppagePrediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: stoppageGuesser.gamingMemberId, venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: 45, predictedGoalMinuteStoppage: 1,
+      predictedFirstTeamToScore: null, geo,
+    });
+
+    // The one real official goal is genuinely first-half stoppage:
+    // (45, stoppage 1) — summed elapsed minute 46, the exact collision
+    // the old flattened `predicted_goal_minute` scheme could not see.
+    const draft = await repo.saveDraftMatchResult({
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 45, minuteStoppage: 1 }],
+      enteredByGamingMemberId: admin.gamingMemberId,
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, admin.gamingMemberId);
+
+    const ordinaryEvaluation = await repo.getEvaluation(ordinaryPrediction.predictionId, draft.matchResultId);
+    expect(ordinaryEvaluation!.goalMinuteCorrect).toBe(false);
+
+    const stoppageEvaluation = await repo.getEvaluation(stoppagePrediction.predictionId, draft.matchResultId);
+    expect(stoppageEvaluation!.goalMinuteCorrect).toBe(true);
+  }, 30000);
+
+  it("Predictions-v2: an own goal is excluded from Any Goalscorer but included for Any Goal Minute against real Postgres", async () => {
+    const admin = await createRealGamingMember("ContractOwnGoalDimensionsAdmin");
+    const alex = await createRealGamingMember("ContractOwnGoalDimensionsAlex");
+    const { home, away, vini } = await createTeamsAndRoster();
+
+    const match = await repo.createMatch({
+      homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Contract Test", kickoffAt: futureIso(),
+    });
+    createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
+    const venue = await repo.createVenue({ name: "Own Goal Dimensions Venue", latitude: 10, longitude: 10, radiusMeters: 100 });
+    createdVenueIds.push(venue.venueId);
+    const activation = await repo.createVenueActivation({ matchId: match.matchId, venueId: venue.venueId });
+
+    const prediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: alex.gamingMemberId, venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 0, predictedAwayScore: 1,
+      predictedGoalscorerPlayerId: vini.playerId, predictedGoalMinuteRegulation: 30, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "AWAY",
+      geo: { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 },
+    });
+
+    const draft = await repo.saveDraftMatchResult({
+      matchId: match.matchId, homeScore: 0, awayScore: 1,
+      officialGoalEvents: [{ scorerPlayerId: vini.playerId, minuteRegulation: 30, isOwnGoal: true }],
+      enteredByGamingMemberId: admin.gamingMemberId,
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, admin.gamingMemberId);
+
+    const evaluation = await repo.getEvaluation(prediction.predictionId, draft.matchResultId);
+    expect(evaluation!.goalscorerCorrect).toBe(false); // Vini's own goal does not satisfy predicting Vini as scorer
+    expect(evaluation!.goalMinuteCorrect).toBe(true); // the same own goal DOES satisfy the matching minute
+    expect(evaluation!.firstTeamToScoreCorrect).toBe(true); // credits AWAY, the receiving side
+  }, 30000);
+
+  it("Predictions-v2: a cancelled Match cannot be finalized against real Postgres, and produces zero Evaluation rows", async () => {
+    const admin = await createRealGamingMember("ContractCancelledAdmin");
+    const alex = await createRealGamingMember("ContractCancelledAlex");
+    const { home, away, mbappe } = await createTeamsAndRoster();
+
+    const match = await repo.createMatch({
+      homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Contract Test", kickoffAt: futureIso(),
+    });
+    createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
+    const venue = await repo.createVenue({ name: "Cancelled Venue", latitude: 10, longitude: 10, radiusMeters: 100 });
+    createdVenueIds.push(venue.venueId);
+    const activation = await repo.createVenueActivation({ matchId: match.matchId, venueId: venue.venueId });
+
+    const prediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: alex.gamingMemberId, venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME",
+      geo: { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 },
+    });
+
+    const draft = await repo.saveDraftMatchResult({
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 10 }],
+      enteredByGamingMemberId: admin.gamingMemberId,
+    });
+
+    await cancelMatch(repo, match.matchId);
+
+    await expect(finalizeMatchResult(repo, draft.matchResultId, admin.gamingMemberId)).rejects.toBeInstanceOf(
+      MatchCancelledError
+    );
+
+    const evaluation = await repo.getEvaluation(prediction.predictionId, draft.matchResultId);
+    expect(evaluation).toBeNull();
   }, 30000);
 });

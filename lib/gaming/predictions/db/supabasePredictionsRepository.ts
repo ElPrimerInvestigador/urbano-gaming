@@ -113,7 +113,8 @@ function mapPrediction(row: any): PredictionRecord {
     predictedHomeScore: row.predicted_home_score,
     predictedAwayScore: row.predicted_away_score,
     predictedGoalscorerPlayerId: row.predicted_goalscorer_player_id,
-    predictedGoalMinute: row.predicted_goal_minute,
+    predictedGoalMinuteRegulation: row.predicted_goal_minute_regulation,
+    predictedGoalMinuteStoppage: row.predicted_goal_minute_stoppage,
     predictedFirstTeamToScore: row.predicted_first_team_to_score,
     geoVerifiedAt: row.geo_verified_at,
     measuredDistanceMeters: Number(row.measured_distance_meters),
@@ -558,7 +559,8 @@ export class SupabasePredictionsRepository implements PredictionsRepository {
     predictedHomeScore: number;
     predictedAwayScore: number;
     predictedGoalscorerPlayerId: string | null;
-    predictedGoalMinute: number | null;
+    predictedGoalMinuteRegulation: number | null;
+    predictedGoalMinuteStoppage: number | null;
     predictedFirstTeamToScore: "HOME" | "AWAY" | null;
     geoVerifiedAt: string;
     measuredDistanceMeters: number;
@@ -572,7 +574,8 @@ export class SupabasePredictionsRepository implements PredictionsRepository {
       p_predicted_home_score: input.predictedHomeScore,
       p_predicted_away_score: input.predictedAwayScore,
       p_predicted_goalscorer_player_id: input.predictedGoalscorerPlayerId,
-      p_predicted_goal_minute: input.predictedGoalMinute,
+      p_predicted_goal_minute_regulation: input.predictedGoalMinuteRegulation,
+      p_predicted_goal_minute_stoppage: input.predictedGoalMinuteStoppage,
       p_predicted_first_team_to_score: input.predictedFirstTeamToScore,
       p_geo_verified_at: input.geoVerifiedAt,
       p_measured_distance_meters: input.measuredDistanceMeters,

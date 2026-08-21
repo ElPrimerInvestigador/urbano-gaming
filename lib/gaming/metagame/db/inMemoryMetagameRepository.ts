@@ -70,6 +70,21 @@ export class InMemoryMetagameRepository implements MetagameRepository {
       return { experienceSummaryId: existingId, alreadyRecorded: true };
     }
 
+    // Mirrors 0095's own table-level CHECK constraint exactly: both
+    // dimension-fact fields present and consistent, or both absent
+    // together. This function stays Experience-agnostic — it enforces
+    // only the universal shape, never Predictions' own vocabulary.
+    const correctDimensionCount = input.correctDimensionCount ?? null;
+    const correctDimensionKeys = input.correctDimensionKeys ?? null;
+    const bothPresent = correctDimensionCount !== null && correctDimensionKeys !== null;
+    const bothAbsent = correctDimensionCount === null && correctDimensionKeys === null;
+    if (!bothPresent && !bothAbsent) {
+      throw new Error("correctDimensionCount and correctDimensionKeys must both be present or both be null.");
+    }
+    if (bothPresent && correctDimensionCount !== correctDimensionKeys!.length) {
+      throw new Error("correctDimensionCount must equal correctDimensionKeys.length.");
+    }
+
     const experienceSummaryId = randomUUID();
     const record: ExperienceSummaryRecord = {
       experienceSummaryId,
@@ -87,6 +102,8 @@ export class InMemoryMetagameRepository implements MetagameRepository {
       supersedesExperienceSummaryId: input.supersedesExperienceSummaryId,
       idempotencyKey: input.idempotencyKey,
       evidence: input.evidence,
+      correctDimensionCount,
+      correctDimensionKeys,
       createdAt: new Date().toISOString(),
     };
     this.summaries.set(experienceSummaryId, record);

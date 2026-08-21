@@ -19,6 +19,7 @@ import {
   GeoUnavailableError,
   InvalidPredictionScoreError,
   InvalidGoalMinuteError,
+  InvalidOfficialGoalMinuteError,
   InvalidFirstTeamError,
   InvalidGoalscorerSelectionError,
   MatchResultNotFoundError,
@@ -62,6 +63,7 @@ export function statusForPredictionsError(err: unknown): number | null {
     err instanceof GeoUnavailableError ||
     err instanceof InvalidPredictionScoreError ||
     err instanceof InvalidGoalMinuteError ||
+    err instanceof InvalidOfficialGoalMinuteError ||
     err instanceof InvalidFirstTeamError ||
     err instanceof InvalidGoalscorerSelectionError ||
     err instanceof InvalidPrizeTierDimensionCountError

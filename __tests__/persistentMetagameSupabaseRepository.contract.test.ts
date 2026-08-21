@@ -75,6 +75,60 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
     expect(second.alreadyRecorded).toBe(true);
   });
 
+  it("Predictions-v2: correct_dimension_count/correct_dimension_keys round-trip through the real record_experience_summary_atomically RPC and table", async () => {
+    const gamingMemberId = await createRealGamingMember("MetagameDimensionFacts");
+    const idempotencyKey = `dimfacts-${randomUUID()}`;
+    const { experienceSummaryId } = await recordExperienceSummary(repo, {
+      gamingMemberId,
+      experienceKey: "METAGAME_CONTRACT",
+      categoryKey: CATEGORY,
+      activityClassification: "RANKED",
+      authorityTier: "ADMIN_FINALIZED",
+      occurredAt: new Date().toISOString(),
+      finalizedAt: new Date().toISOString(),
+      meaningfulParticipation: true,
+      performanceBandKey: "CORRECT_2_OF_4",
+      sourceReference: idempotencyKey,
+      rulesetVersion: "predictions-v2",
+      supersedesExperienceSummaryId: null,
+      idempotencyKey,
+      evidence: {},
+      correctDimensionCount: 2,
+      correctDimensionKeys: ["EXACT_SCORELINE", "ANY_GOAL_MINUTE"],
+    });
+    const summary = await repo.getExperienceSummary(experienceSummaryId);
+    expect(summary!.correctDimensionCount).toBe(2);
+    expect(summary!.correctDimensionKeys).toEqual(["EXACT_SCORELINE", "ANY_GOAL_MINUTE"]);
+  });
+
+  it("Predictions-v2: the real 0095 CHECK constraint rejects a cardinality-inconsistent count/keys pair", async () => {
+    const gamingMemberId = await createRealGamingMember("MetagameDimensionFactsInvalid");
+    const idempotencyKey = `dimfacts-invalid-${randomUUID()}`;
+    await expect(
+      recordExperienceSummary(repo, {
+        gamingMemberId,
+        experienceKey: "METAGAME_CONTRACT",
+        categoryKey: CATEGORY,
+        activityClassification: "RANKED",
+        authorityTier: "ADMIN_FINALIZED",
+        occurredAt: new Date().toISOString(),
+        finalizedAt: new Date().toISOString(),
+        meaningfulParticipation: true,
+        performanceBandKey: "CORRECT_1_OF_4",
+        sourceReference: idempotencyKey,
+        rulesetVersion: "predictions-v2",
+        supersedesExperienceSummaryId: null,
+        idempotencyKey,
+        evidence: {},
+        // count says 1, but two keys are supplied — the real table CHECK
+        // constraint (0095) must reject this, not merely the in-memory
+        // mirror's own runtime validation.
+        correctDimensionCount: 1,
+        correctDimensionKeys: ["EXACT_SCORELINE", "ANY_GOAL_MINUTE"],
+      })
+    ).rejects.toThrow();
+  });
+
   it("NO CONFIGURATION: zero policy/rule rows against the real database — no error, zero XP events, a valid Summary still records", async () => {
     const gamingMemberId = await createRealGamingMember("MetagameNoPolicy");
     const { experienceSummaryId, alreadyRecorded } = await recordExperienceSummary(repo, {

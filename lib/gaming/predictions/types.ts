@@ -70,7 +70,7 @@ export interface PrizeTierRecord {
 }
 
 /**
- * predictedGoalscorerPlayerId / predictedGoalMinute /
+ * predictedGoalscorerPlayerId / predictedGoalMinuteRegulation /
  * predictedFirstTeamToScore are each independently nullable — every
  * Prediction answers all four dimensions atomically at submission time
  * (never progressively), so null is never ambiguous with "unanswered":
@@ -79,6 +79,18 @@ export interface PrizeTierRecord {
  * predictedHomeScore/predictedAwayScore — a 4-3 predicted scoreline
  * still carries exactly one goalscorer pick, one minute pick, and one
  * first-team pick.
+ *
+ * predictedGoalMinuteRegulation / predictedGoalMinuteStoppage —
+ * Predictions-v2. The same (regulation, stoppage) structural primitive
+ * official_goal_events already uses, never a flattened elapsed-minute
+ * integer: 0056's own original design summed regulation+stoppage for
+ * comparison, which silently collided first-half stoppage with an
+ * unrelated ordinary minute (45+10 and ordinary 55 both summed to 55).
+ * "No Goal" is both fields null together; stoppage is only ever
+ * non-null alongside a regulation minute of 45 or 90 (stoppage time is
+ * only added at the end of a half) — enforced by
+ * upsert_prediction_atomically and the predictions table's own CHECK
+ * constraints (0094), not merely a TypeScript convention.
  */
 export interface PredictionRecord {
   predictionId: string;
@@ -88,7 +100,8 @@ export interface PredictionRecord {
   predictedHomeScore: number;
   predictedAwayScore: number;
   predictedGoalscorerPlayerId: string | null;
-  predictedGoalMinute: number | null;
+  predictedGoalMinuteRegulation: number | null;
+  predictedGoalMinuteStoppage: number | null;
   predictedFirstTeamToScore: "HOME" | "AWAY" | null;
   geoVerifiedAt: string;
   measuredDistanceMeters: number;
@@ -277,8 +290,19 @@ export class InvalidPredictionScoreError extends Error {
 
 export class InvalidGoalMinuteError extends Error {
   constructor() {
-    super("Predicted goal minute must be between 1 and 120.");
+    super(
+      "Predicted goal minute must be a regulation minute between 1 and 90, with a positive stoppage offset allowed only when the regulation minute is 45 or 90."
+    );
     this.name = "InvalidGoalMinuteError";
+  }
+}
+
+export class InvalidOfficialGoalMinuteError extends Error {
+  constructor() {
+    super(
+      "An official goal event's stoppage offset is only valid when the regulation minute is a period boundary (45, 90, 105, or 120)."
+    );
+    this.name = "InvalidOfficialGoalMinuteError";
   }
 }
 

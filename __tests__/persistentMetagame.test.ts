@@ -103,12 +103,12 @@ describe("Finalized Experience Summary — authorship and idempotency", () => {
     const first = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId, venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     const revised = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId, venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 1,
-      predictedGoalscorerPlayerId: striker.playerId, predictedGoalMinute: 10, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: striker.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
     expect(revised.predictionId).toBe(first.predictionId);
     expect(revised.createdAt).toBe(first.createdAt);
@@ -127,6 +127,274 @@ describe("Finalized Experience Summary — authorship and idempotency", () => {
   });
 });
 
+// --- PREDICTIONS-V2: dimension fact contract --------------------------
+//
+// correct_dimension_count/correct_dimension_keys[] on the Experience
+// Summary must reflect exactly which of the four canonical dimensions
+// were correct, always in the fixed canonical key order
+// (EXACT_SCORELINE, ANY_GOALSCORER, ANY_GOAL_MINUTE,
+// FIRST_TEAM_TO_SCORE), regardless of which dimensions happen to be
+// true. The shared-table CHECK constraint (0095) only enforces
+// cardinality consistency; the exact key set/order is a
+// Predictions-adapter invariant, locked in here.
+
+describe("Predictions-v2 — dimension fact contract", () => {
+  async function setupTwoScorerMatch(repo: InMemoryPredictionsRepository) {
+    const home = await createTeam(repo, { name: "Home FC" });
+    const away = await createTeam(repo, { name: "Away FC" });
+    const scorer = await createPlayer(repo, { teamId: home.teamId, name: "Scorer" });
+    const decoy = await createPlayer(repo, { teamId: home.teamId, name: "Decoy" });
+    const match = await createMatch(repo, { homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Test Cup", kickoffAt: futureIso() });
+    await setMatchActivityClassification(repo, match.matchId, "RANKED");
+    await repo.metagameRepository.createCategoryParticipationPolicy({ categoryKey: "SOCCER_PREDICTIONS", dailyParticipationAllowance: 1000 });
+    await repo.metagameRepository.createGamingXpRule({ categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PARTICIPATION", performanceBandKey: null, points: 1 });
+    const venue = await createVenue(repo, { name: "Test Venue", latitude: VENUE_LAT, longitude: VENUE_LON, radiusMeters: 100 });
+    const activation = await createVenueActivation(repo, { matchId: match.matchId, venueId: venue.venueId });
+    return { home, away, scorer, decoy, match, venue, activation };
+  }
+
+  // Official result is fixed for every case: HOME 1-0 AWAY, sole goal
+  // by `scorer` at ordinary minute 10 — so First Team to Score is HOME.
+  async function finalizeWithPrediction(
+    repo: InMemoryPredictionsRepository,
+    setup: Awaited<ReturnType<typeof setupTwoScorerMatch>>,
+    prediction: {
+      predictedHomeScore: number;
+      predictedAwayScore: number;
+      predictedGoalscorerPlayerId: string | null;
+      predictedGoalMinuteRegulation: number | null;
+      predictedGoalMinuteStoppage: number | null;
+      predictedFirstTeamToScore: "HOME" | "AWAY" | null;
+    }
+  ) {
+    const { match, activation, scorer } = setup;
+    const submitted = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
+      geo: INSIDE, ...prediction,
+    });
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: scorer.playerId, minuteRegulation: 10 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+    const evaluation = await repo.getEvaluation(submitted.predictionId, draft.matchResultId);
+    const summary = await repo.metagameRepository.getExperienceSummary(
+      (await repo.metagameRepository.getExperienceSummaryByIdempotencyKey("SOCCER_PREDICTIONS", evaluation!.evaluationId))!
+        .experienceSummaryId
+    );
+    return { evaluation: evaluation!, summary: summary! };
+  }
+
+  it("0/4 — every dimension wrong", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const setup = await setupTwoScorerMatch(repo);
+    const { summary } = await finalizeWithPrediction(repo, setup, {
+      predictedHomeScore: 3, predictedAwayScore: 3,
+      predictedGoalscorerPlayerId: setup.decoy.playerId,
+      predictedGoalMinuteRegulation: 77, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "AWAY",
+    });
+    expect(summary.correctDimensionCount).toBe(0);
+    expect(summary.correctDimensionKeys).toEqual([]);
+    expect(summary.performanceBandKey).toBe("CORRECT_0_OF_4");
+  });
+
+  it("1/4 — only EXACT_SCORELINE correct", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const setup = await setupTwoScorerMatch(repo);
+    const { summary } = await finalizeWithPrediction(repo, setup, {
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: setup.decoy.playerId,
+      predictedGoalMinuteRegulation: 77, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "AWAY",
+    });
+    expect(summary.correctDimensionCount).toBe(1);
+    expect(summary.correctDimensionKeys).toEqual(["EXACT_SCORELINE"]);
+  });
+
+  it("1/4 — only ANY_GOALSCORER correct", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const setup = await setupTwoScorerMatch(repo);
+    const { summary } = await finalizeWithPrediction(repo, setup, {
+      predictedHomeScore: 3, predictedAwayScore: 3,
+      predictedGoalscorerPlayerId: setup.scorer.playerId,
+      predictedGoalMinuteRegulation: 77, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "AWAY",
+    });
+    expect(summary.correctDimensionCount).toBe(1);
+    expect(summary.correctDimensionKeys).toEqual(["ANY_GOALSCORER"]);
+  });
+
+  it("1/4 — only ANY_GOAL_MINUTE correct", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const setup = await setupTwoScorerMatch(repo);
+    const { summary } = await finalizeWithPrediction(repo, setup, {
+      predictedHomeScore: 3, predictedAwayScore: 3,
+      predictedGoalscorerPlayerId: setup.decoy.playerId,
+      predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "AWAY",
+    });
+    expect(summary.correctDimensionCount).toBe(1);
+    expect(summary.correctDimensionKeys).toEqual(["ANY_GOAL_MINUTE"]);
+  });
+
+  it("1/4 — only FIRST_TEAM_TO_SCORE correct", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const setup = await setupTwoScorerMatch(repo);
+    const { summary } = await finalizeWithPrediction(repo, setup, {
+      predictedHomeScore: 3, predictedAwayScore: 3,
+      predictedGoalscorerPlayerId: setup.decoy.playerId,
+      predictedGoalMinuteRegulation: 77, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME",
+    });
+    expect(summary.correctDimensionCount).toBe(1);
+    expect(summary.correctDimensionKeys).toEqual(["FIRST_TEAM_TO_SCORE"]);
+  });
+
+  it("2/4 — EXACT_SCORELINE and ANY_GOAL_MINUTE correct, keys stay in fixed canonical order (not evaluation order)", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const setup = await setupTwoScorerMatch(repo);
+    const { summary } = await finalizeWithPrediction(repo, setup, {
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: setup.decoy.playerId,
+      predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "AWAY",
+    });
+    expect(summary.correctDimensionCount).toBe(2);
+    expect(summary.correctDimensionKeys).toEqual(["EXACT_SCORELINE", "ANY_GOAL_MINUTE"]);
+  });
+
+  it("3/4 — EXACT_SCORELINE, ANY_GOALSCORER, FIRST_TEAM_TO_SCORE correct", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const setup = await setupTwoScorerMatch(repo);
+    const { summary } = await finalizeWithPrediction(repo, setup, {
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: setup.scorer.playerId,
+      predictedGoalMinuteRegulation: 77, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME",
+    });
+    expect(summary.correctDimensionCount).toBe(3);
+    expect(summary.correctDimensionKeys).toEqual(["EXACT_SCORELINE", "ANY_GOALSCORER", "FIRST_TEAM_TO_SCORE"]);
+  });
+
+  it("4/4 — every dimension correct", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const setup = await setupTwoScorerMatch(repo);
+    const { summary } = await finalizeWithPrediction(repo, setup, {
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: setup.scorer.playerId,
+      predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME",
+    });
+    expect(summary.correctDimensionCount).toBe(4);
+    expect(summary.correctDimensionKeys).toEqual([
+      "EXACT_SCORELINE",
+      "ANY_GOALSCORER",
+      "ANY_GOAL_MINUTE",
+      "FIRST_TEAM_TO_SCORE",
+    ]);
+    expect(summary.performanceBandKey).toBe("CORRECT_4_OF_4");
+  });
+
+  it("correct_dimension_count always equals correct_dimension_keys.length", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const setup = await setupTwoScorerMatch(repo);
+    const { summary } = await finalizeWithPrediction(repo, setup, {
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: setup.scorer.playerId,
+      predictedGoalMinuteRegulation: 77, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "AWAY",
+    });
+    expect(summary.correctDimensionCount).toBe(summary.correctDimensionKeys!.length);
+  });
+});
+
+// --- PREDICTIONS-V2: the explicit corrections proving case ------------
+//
+// A first-half-stoppage goal, recorded as ordinary minute 46 in Result
+// Version 1 and corrected to the true (45, 1) pair in Result Version 2,
+// must flip Goal Minute correctness for an unchanged ordinary-46
+// Prediction — proving the exact real-world consequence of the
+// flattened-minute defect this Slice fixes. Evaluation 1/Summary 1 must
+// survive untouched; Evaluation 2 is a new row; Summary 2 supersedes
+// Summary 1 with different correct_dimension_keys[]; with zero XP
+// configured, no XP event or reversal may appear at any point.
+
+describe("Predictions-v2 — corrections proving case: ordinary 46 vs true 45+1", () => {
+  it("correcting an official goal from ordinary minute 46 to (45, stoppage 1) flips Goal Minute correctness without disturbing the original Evaluation/Summary", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, striker } = await setupRankedMatchNoXpConfig(repo);
+    const gamingMemberId = "gm-correction";
+
+    const prediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId, venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: striker.playerId, predictedGoalMinuteRegulation: 46, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME", geo: INSIDE,
+    });
+
+    // Result Version 1: the goal is (mis)recorded as ordinary minute 46
+    // — matches the Prediction exactly.
+    const draft1 = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: striker.playerId, minuteRegulation: 46 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft1.matchResultId, "gm-admin");
+
+    const evaluation1 = await repo.getEvaluation(prediction.predictionId, draft1.matchResultId);
+    expect(evaluation1!.goalMinuteCorrect).toBe(true);
+    expect(evaluation1!.correctDimensionCount).toBe(4);
+    const summary1 = await repo.metagameRepository.getExperienceSummary(
+      (await repo.metagameRepository.getExperienceSummaryByIdempotencyKey("SOCCER_PREDICTIONS", evaluation1!.evaluationId))!
+        .experienceSummaryId
+    );
+    expect(summary1!.correctDimensionKeys).toContain("ANY_GOAL_MINUTE");
+
+    // Result Version 2: corrected to the true (45, stoppage 1) pair —
+    // the Prediction itself is NOT re-submitted, so it remains ordinary
+    // 46. Under the old flattened scheme (46 == 45+1's sum) this
+    // correction would have been invisible to settlement.
+    const correctionDraft = await startResultCorrection(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: striker.playerId, minuteRegulation: 45, minuteStoppage: 1 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    const correctionResult = await correctMatchResult(repo, correctionDraft.matchResultId, "gm-admin");
+
+    // Evaluation 1 / Summary 1 remain untouched — the immutable
+    // evidence trail is never mutated or deleted.
+    const evaluation1After = await repo.getEvaluation(prediction.predictionId, draft1.matchResultId);
+    expect(evaluation1After).toEqual(evaluation1);
+
+    const evaluation2 = await repo.getEvaluation(prediction.predictionId, correctionResult.matchResultId);
+    expect(evaluation2).not.toBeNull();
+    expect(evaluation2!.evaluationId).not.toBe(evaluation1!.evaluationId);
+    expect(evaluation2!.goalMinuteCorrect).toBe(false); // the exact defect this fixes
+    expect(evaluation2!.scorelineCorrect).toBe(true);
+    expect(evaluation2!.goalscorerCorrect).toBe(true);
+    expect(evaluation2!.firstTeamToScoreCorrect).toBe(true);
+    expect(evaluation2!.correctDimensionCount).toBe(3);
+
+    const summary2 = await repo.metagameRepository.getExperienceSummary(
+      (await repo.metagameRepository.getExperienceSummaryByIdempotencyKey("SOCCER_PREDICTIONS", evaluation2!.evaluationId))!
+        .experienceSummaryId
+    );
+    expect(summary2!.correctDimensionKeys).toEqual(["EXACT_SCORELINE", "ANY_GOALSCORER", "FIRST_TEAM_TO_SCORE"]);
+    expect(summary2!.correctDimensionKeys).not.toContain("ANY_GOAL_MINUTE");
+    expect(summary2!.supersedesExperienceSummaryId).toBe(summary1!.experienceSummaryId);
+
+    // The current-evaluation read reflects Version 2, not Version 1.
+    const current = await repo.getCurrentEvaluationForPrediction(prediction.predictionId);
+    expect(current!.evaluationId).toBe(evaluation2!.evaluationId);
+
+    // Zero XP configured throughout — no fabricated event or reversal.
+    const events = await repo.metagameRepository.listXpEventsForMember(gamingMemberId);
+    expect(events).toHaveLength(0);
+  });
+});
+
 // --- CLASSIFICATION ---------------------------------------------------
 
 describe("Activity Classification — Match-level, predeclared, locked", () => {
@@ -142,7 +410,7 @@ describe("Activity Classification — Match-level, predeclared, locked", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 0, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+        predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
       })
     ).rejects.toBeInstanceOf(MatchNotClassifiedError);
   });
@@ -153,7 +421,7 @@ describe("Activity Classification — Match-level, predeclared, locked", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     expect(prediction.matchId).toBe(match.matchId);
   });
@@ -172,7 +440,7 @@ describe("Activity Classification — Match-level, predeclared, locked", () => {
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     await expect(setMatchActivityClassification(repo, match.matchId, "CASUAL")).rejects.toBeInstanceOf(
       ActivityClassificationLockedError
@@ -198,7 +466,7 @@ describe("Activity Classification — Match-level, predeclared, locked", () => {
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     await expect(setMatchActivityClassification(repo, match.matchId, "RANKED")).rejects.toBeInstanceOf(
       ActivityClassificationLockedError
@@ -410,7 +678,7 @@ describe("Missing-policy boundary — absence of configuration is never an error
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId, venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 1,
-      predictedGoalscorerPlayerId: striker.playerId, predictedGoalMinute: 10, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: striker.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
 
     const draft = await saveDraftResult(repo, { matchId: match.matchId, homeScore: 2, awayScore: 1, officialGoalEvents: [{ scorerPlayerId: striker.playerId, minuteRegulation: 10 }], enteredByGamingMemberId: "gm-admin" });

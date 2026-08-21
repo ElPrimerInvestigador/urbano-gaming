@@ -108,7 +108,8 @@ export interface PredictionsRepository {
     predictedHomeScore: number;
     predictedAwayScore: number;
     predictedGoalscorerPlayerId: string | null;
-    predictedGoalMinute: number | null;
+    predictedGoalMinuteRegulation: number | null;
+    predictedGoalMinuteStoppage: number | null;
     predictedFirstTeamToScore: "HOME" | "AWAY" | null;
     geoVerifiedAt: string;
     measuredDistanceMeters: number;

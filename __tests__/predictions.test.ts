@@ -19,6 +19,8 @@ import {
 } from "../lib/gaming/predictions/adminCatalog";
 import {
   InvalidGoalscorerSelectionError,
+  InvalidGoalMinuteError,
+  InvalidOfficialGoalMinuteError,
   VenueActivationImmutableError,
   KickoffPassedError,
   GeoNotEligibleError,
@@ -26,6 +28,7 @@ import {
   MatchCancelledError,
   QualificationSupersededError,
 } from "../lib/gaming/predictions/types";
+import { cancelMatch } from "../lib/gaming/predictions/adminCatalog";
 import { haversineDistanceMeters, evaluateGeoEligibility } from "../lib/gaming/predictions/geolocation";
 
 const VENUE_LAT = 10.0;
@@ -98,7 +101,7 @@ describe("Scoreline dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 1,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 20, predictedFirstTeamToScore: "HOME",
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 20, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME",
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -117,7 +120,7 @@ describe("Scoreline dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 3, predictedAwayScore: 1,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 20, predictedFirstTeamToScore: "HOME",
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 20, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME",
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -141,7 +144,7 @@ describe("Goalscorer dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: null, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -160,7 +163,7 @@ describe("Goalscorer dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: null, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -179,7 +182,7 @@ describe("Goalscorer dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: null, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -201,7 +204,7 @@ describe("Goalscorer dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -219,7 +222,7 @@ describe("Goalscorer dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -240,7 +243,7 @@ describe("Goal Minute dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: 67, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: 67, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -259,7 +262,7 @@ describe("Goal Minute dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: 30, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: 30, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -272,13 +275,13 @@ describe("Goal Minute dimension", () => {
     expect(evaluation!.goalMinuteCorrect).toBe(false);
   });
 
-  it("stoppage-time minute (45+2) is compared by effective total elapsed minute", async () => {
+  it("first-half stoppage (45+2) matches only the identical (regulation, stoppage) pair, never a summed elapsed minute", async () => {
     const repo = new InMemoryPredictionsRepository();
     const { match, activation, mbappe } = await setupMatchAndVenue(repo);
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: 47, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: 45, predictedGoalMinuteStoppage: 2, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -291,13 +294,59 @@ describe("Goal Minute dimension", () => {
     expect(evaluation!.goalMinuteCorrect).toBe(true);
   });
 
+  it("the exact defect this fixes: a first-half-stoppage goal (45+10) does NOT satisfy a prediction of ordinary minute 55, despite summing to the same integer", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, mbappe } = await setupMatchAndVenue(repo);
+    const prediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: 55, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
+      geo: INSIDE,
+    });
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 45, minuteStoppage: 10 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+    const evaluation = await repo.getCurrentEvaluationForPrediction(prediction.predictionId);
+    expect(evaluation!.goalMinuteCorrect).toBe(false);
+  });
+
+  it("second-half stoppage (90+7) matches only (90, 7), not ordinary 90 or a different stoppage offset", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, mbappe } = await setupMatchAndVenue(repo);
+    const predictionExact = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-exact", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: 90, predictedGoalMinuteStoppage: 7, predictedFirstTeamToScore: null,
+      geo: INSIDE,
+    });
+    const predictionOrdinary = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-ordinary", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: 90, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
+      geo: INSIDE,
+    });
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 90, minuteStoppage: 7 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+    const evaluationExact = await repo.getCurrentEvaluationForPrediction(predictionExact.predictionId);
+    const evaluationOrdinary = await repo.getCurrentEvaluationForPrediction(predictionOrdinary.predictionId);
+    expect(evaluationExact!.goalMinuteCorrect).toBe(true);
+    expect(evaluationOrdinary!.goalMinuteCorrect).toBe(false);
+  });
+
   it("No Goal is correct only when the official match had zero goals", async () => {
     const repo = new InMemoryPredictionsRepository();
     const { match, activation } = await setupMatchAndVenue(repo);
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -317,7 +366,7 @@ describe("First Team to Score dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 1,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: "HOME",
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME",
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -339,7 +388,7 @@ describe("First Team to Score dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 1,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: "AWAY",
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "AWAY",
       geo: INSIDE,
     });
     // Inserted Home-first (ordinal 1) but Away's goal has the earlier
@@ -364,7 +413,7 @@ describe("First Team to Score dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -384,7 +433,7 @@ describe("First Team to Score dimension", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 1,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: "AWAY",
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "AWAY",
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -405,7 +454,7 @@ describe("Independence of the four dimensions", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 1,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 70, predictedFirstTeamToScore: "AWAY",
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 70, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "AWAY",
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -439,7 +488,7 @@ describe("Roster validation", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 0, predictedAwayScore: 1,
-        predictedGoalscorerPlayerId: lewa.playerId, predictedGoalMinute: 10, predictedFirstTeamToScore: "AWAY",
+        predictedGoalscorerPlayerId: lewa.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "AWAY",
         geo: INSIDE,
       })
     ).resolves.toBeTruthy();
@@ -454,7 +503,7 @@ describe("Roster validation", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 1, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: outsider.playerId, predictedGoalMinute: 10, predictedFirstTeamToScore: "HOME",
+        predictedGoalscorerPlayerId: outsider.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME",
         geo: INSIDE,
       })
     ).rejects.toBeInstanceOf(InvalidGoalscorerSelectionError);
@@ -467,7 +516,7 @@ describe("Roster validation", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 1, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: "does-not-exist", predictedGoalMinute: 10, predictedFirstTeamToScore: "HOME",
+        predictedGoalscorerPlayerId: "does-not-exist", predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME",
         geo: INSIDE,
       })
     ).rejects.toBeInstanceOf(InvalidGoalscorerSelectionError);
@@ -481,7 +530,7 @@ describe("Roster validation", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 1, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 10, predictedFirstTeamToScore: "HOME",
+        predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME",
         geo: INSIDE,
       })
     ).rejects.toBeInstanceOf(InvalidGoalscorerSelectionError);
@@ -493,7 +542,7 @@ describe("Roster validation", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 10, predictedFirstTeamToScore: "HOME",
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME",
       geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
@@ -521,7 +570,7 @@ describe("Prediction uniqueness — one per Match per Gaming Member, globally", 
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
       geo: INSIDE,
     });
 
@@ -529,7 +578,7 @@ describe("Prediction uniqueness — one per Match per Gaming Member, globally", 
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation2.venueActivationId,
         predictedHomeScore: 1, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null,
+        predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null,
         geo: INSIDE,
       })
     ).rejects.toBeInstanceOf(VenueActivationImmutableError);
@@ -547,12 +596,12 @@ describe("Prediction uniqueness — one per Match per Gaming Member, globally", 
     await submitPrediction(repo, {
       matchId: matchA.matchId, gamingMemberId: "gm-1", venueActivationId: activationA.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     const predB = await submitPrediction(repo, {
       matchId: matchB.matchId, gamingMemberId: "gm-1", venueActivationId: activationB.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     expect(predB.matchId).toBe(matchB.matchId);
   });
@@ -563,12 +612,12 @@ describe("Prediction uniqueness — one per Match per Gaming Member, globally", 
     const first = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 1, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 1, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
     const second = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 2, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 2, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
     expect(second.predictionId).toBe(first.predictionId);
     expect(second.predictedHomeScore).toBe(2);
@@ -595,7 +644,7 @@ describe("Geolocation eligibility", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 0, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: null,
+        predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: null,
       })
     ).rejects.toBeInstanceOf(GeoUnavailableError);
   });
@@ -607,7 +656,7 @@ describe("Geolocation eligibility", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 0, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: FAR_AWAY,
+        predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: FAR_AWAY,
       })
     ).rejects.toBeInstanceOf(GeoNotEligibleError);
   });
@@ -618,13 +667,13 @@ describe("Geolocation eligibility", () => {
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     await expect(
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 1, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: FAR_AWAY,
+        predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: FAR_AWAY,
       })
     ).rejects.toBeInstanceOf(GeoNotEligibleError);
   });
@@ -635,7 +684,7 @@ describe("Geolocation eligibility", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     expect(Object.keys(prediction)).not.toContain("latitude");
     expect(Object.keys(prediction)).not.toContain("longitude");
@@ -655,7 +704,7 @@ describe("Deadline enforcement — kickoff lock", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 0, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+        predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
       })
     ).resolves.toBeTruthy();
   });
@@ -667,7 +716,7 @@ describe("Deadline enforcement — kickoff lock", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 0, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+        predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
       })
     ).rejects.toBeInstanceOf(KickoffPassedError);
   });
@@ -680,7 +729,7 @@ describe("Deadline enforcement — kickoff lock", () => {
       submitPrediction(repo, {
         matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
         predictedHomeScore: 0, predictedAwayScore: 0,
-        predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+        predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
       })
     ).rejects.toBeInstanceOf(MatchCancelledError);
   });
@@ -693,7 +742,7 @@ describe("Result draft / finalization boundary", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 1, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 1, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
     await saveDraftResult(repo, {
       matchId: match.matchId, homeScore: 1, awayScore: 0,
@@ -710,7 +759,7 @@ describe("Result draft / finalization boundary", () => {
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
       matchId: match.matchId, homeScore: 0, awayScore: 0, officialGoalEvents: [],
@@ -743,7 +792,7 @@ describe("Result correction — supersession, compensation, no destroyed evidenc
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 20, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 20, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
 
     const draft = await saveDraftResult(repo, {
@@ -800,7 +849,7 @@ describe("Result correction — supersession, compensation, no destroyed evidenc
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 20, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 20, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
       matchId: match.matchId, homeScore: 2, awayScore: 0,
@@ -850,7 +899,7 @@ describe("Gaming XP (progression events)", () => {
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, { matchId: match.matchId, homeScore: 0, awayScore: 0, officialGoalEvents: [], enteredByGamingMemberId: "gm-admin" });
     await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
@@ -865,7 +914,7 @@ describe("Gaming XP (progression events)", () => {
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, { matchId: match.matchId, homeScore: 0, awayScore: 0, officialGoalEvents: [], enteredByGamingMemberId: "gm-admin" });
     await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
@@ -883,7 +932,7 @@ describe("Gaming XP (progression events)", () => {
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-alex", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 1, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 1, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
       matchId: match.matchId, homeScore: 1, awayScore: 0,
@@ -905,7 +954,7 @@ describe("Prize tiers and qualification", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, { matchId: match.matchId, homeScore: 0, awayScore: 0, officialGoalEvents: [], enteredByGamingMemberId: "gm-admin" });
     await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
@@ -926,7 +975,7 @@ describe("Prize tiers and qualification", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 5, predictedFirstTeamToScore: "AWAY", geo: INSIDE,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 5, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "AWAY", geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
       matchId: match.matchId, homeScore: 1, awayScore: 0,
@@ -947,7 +996,7 @@ describe("Prize tiers and qualification", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 0, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: null, predictedGoalMinute: null, predictedFirstTeamToScore: null, geo: INSIDE,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: null, geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, { matchId: match.matchId, homeScore: 0, awayScore: 0, officialGoalEvents: [], enteredByGamingMemberId: "gm-admin" });
     await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
@@ -968,7 +1017,7 @@ describe("Prize tiers and qualification", () => {
     const prediction = await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 2, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 20, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 20, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
     const draft = await saveDraftResult(repo, {
       matchId: match.matchId, homeScore: 2, awayScore: 0,
@@ -1001,9 +1050,348 @@ describe("Ownership / privacy", () => {
     await submitPrediction(repo, {
       matchId: match.matchId, gamingMemberId: "gm-alex", venueActivationId: activation.venueActivationId,
       predictedHomeScore: 1, predictedAwayScore: 0,
-      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinute: 1, predictedFirstTeamToScore: "HOME", geo: INSIDE,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 1, predictedGoalMinuteStoppage: null, predictedFirstTeamToScore: "HOME", geo: INSIDE,
     });
     const jordanView = await repo.getPredictionForMember(match.matchId, "gm-jordan");
     expect(jordanView).toBeNull();
+  });
+});
+
+// --- PREDICTIONS-V2: Goal-Time shape validation ---------------------
+
+describe("Predictions-v2 — Goal-Time validation", () => {
+  async function attemptSubmit(
+    repo: InMemoryPredictionsRepository,
+    activationId: string,
+    matchId: string,
+    regulation: number | null,
+    stoppage: number | null
+  ) {
+    return submitPrediction(repo, {
+      matchId, gamingMemberId: "gm-1", venueActivationId: activationId,
+      predictedHomeScore: 0, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: null,
+      predictedGoalMinuteRegulation: regulation, predictedGoalMinuteStoppage: stoppage,
+      predictedFirstTeamToScore: null, geo: INSIDE,
+    });
+  }
+
+  it("ordinary regulation minutes 1-90 are accepted", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation } = await setupMatchAndVenue(repo);
+    const p1 = await attemptSubmit(repo, activation.venueActivationId, match.matchId, 1, null);
+    expect(p1.predictedGoalMinuteRegulation).toBe(1);
+    const repo2 = new InMemoryPredictionsRepository();
+    const { match: match2, activation: activation2 } = await setupMatchAndVenue(repo2);
+    const p90 = await attemptSubmit(repo2, activation2.venueActivationId, match2.matchId, 90, null);
+    expect(p90.predictedGoalMinuteRegulation).toBe(90);
+  });
+
+  it("null/null is accepted as No Goal", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation } = await setupMatchAndVenue(repo);
+    const p = await attemptSubmit(repo, activation.venueActivationId, match.matchId, null, null);
+    expect(p.predictedGoalMinuteRegulation).toBeNull();
+    expect(p.predictedGoalMinuteStoppage).toBeNull();
+  });
+
+  it("regulation null with a non-null stoppage is rejected", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation } = await setupMatchAndVenue(repo);
+    await expect(attemptSubmit(repo, activation.venueActivationId, match.matchId, null, 1)).rejects.toBeInstanceOf(
+      InvalidGoalMinuteError
+    );
+  });
+
+  it("stoppage with a base minute other than 45 or 90 is rejected", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation } = await setupMatchAndVenue(repo);
+    await expect(attemptSubmit(repo, activation.venueActivationId, match.matchId, 46, 1)).rejects.toBeInstanceOf(
+      InvalidGoalMinuteError
+    );
+  });
+
+  it("zero or negative stoppage is rejected", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation } = await setupMatchAndVenue(repo);
+    await expect(attemptSubmit(repo, activation.venueActivationId, match.matchId, 45, 0)).rejects.toBeInstanceOf(
+      InvalidGoalMinuteError
+    );
+    const repo2 = new InMemoryPredictionsRepository();
+    const { match: match2, activation: activation2 } = await setupMatchAndVenue(repo2);
+    await expect(
+      attemptSubmit(repo2, activation2.venueActivationId, match2.matchId, 45, -1)
+    ).rejects.toBeInstanceOf(InvalidGoalMinuteError);
+  });
+
+  it("a regulation minute above 90 is rejected — extra time is outside the canonical prediction boundary", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation } = await setupMatchAndVenue(repo);
+    await expect(attemptSubmit(repo, activation.venueActivationId, match.matchId, 91, null)).rejects.toBeInstanceOf(
+      InvalidGoalMinuteError
+    );
+  });
+
+  it("no artificial stoppage-offset ceiling is imposed — a large positive offset at a valid boundary minute is accepted", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation } = await setupMatchAndVenue(repo);
+    const p = await attemptSubmit(repo, activation.venueActivationId, match.matchId, 90, 50);
+    expect(p.predictedGoalMinuteStoppage).toBe(50);
+  });
+});
+
+// --- PREDICTIONS-V2: own goal rules -----------------------------------
+
+describe("Predictions-v2 — own goal rules", () => {
+  it("an own goal by the predicted player does NOT satisfy Any Goalscorer", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, vini } = await setupMatchAndVenue(repo);
+    const prediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 0, predictedAwayScore: 1,
+      predictedGoalscorerPlayerId: vini.playerId, predictedGoalMinuteRegulation: 30, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: null, geo: INSIDE,
+    });
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 0, awayScore: 1,
+      officialGoalEvents: [{ scorerPlayerId: vini.playerId, minuteRegulation: 30, isOwnGoal: true }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+    const evaluation = await repo.getCurrentEvaluationForPrediction(prediction.predictionId);
+    expect(evaluation!.goalscorerCorrect).toBe(false);
+  });
+
+  it("the same own goal DOES satisfy a matching Any Goal Minute prediction", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, vini } = await setupMatchAndVenue(repo);
+    const prediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 0, predictedAwayScore: 1,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: 30, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: null, geo: INSIDE,
+    });
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 0, awayScore: 1,
+      officialGoalEvents: [{ scorerPlayerId: vini.playerId, minuteRegulation: 30, isOwnGoal: true }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+    const evaluation = await repo.getCurrentEvaluationForPrediction(prediction.predictionId);
+    expect(evaluation!.goalMinuteCorrect).toBe(true);
+  });
+});
+
+// --- PREDICTIONS-V2: regulation-time boundary (extra time excluded) --
+
+describe("Predictions-v2 — regulation-time boundary", () => {
+  it("an extra-time official goal (minuteRegulation > 90) does not satisfy Goalscorer, Goal Minute, or First Team, and does not invalidate a scoreless-regulation No Goal/No Goalscorer/No Team prediction", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, mbappe } = await setupMatchAndVenue(repo);
+    const prediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 0, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: null, geo: INSIDE,
+    });
+    // Only goal in the match happened in extra time (minute 101) — zero
+    // *regulation-time* goals, so every No-Goal/No-Goalscorer/No-Team
+    // pick must still settle as correct, and the extra-time goal must
+    // not satisfy anyone predicting that exact player/minute either.
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 101 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+    const evaluation = await repo.getCurrentEvaluationForPrediction(prediction.predictionId);
+    expect(evaluation!.goalscorerCorrect).toBe(true); // No Goalscorer, zero eligible goals
+    expect(evaluation!.goalMinuteCorrect).toBe(true); // No Goal, zero eligible goals
+    expect(evaluation!.firstTeamToScoreCorrect).toBe(true); // No Team, zero eligible goals
+    expect(evaluation!.scorelineCorrect).toBe(false); // Exact Scoreline is unaffected by this predicate — 1-0 was really entered
+  });
+
+  it("a prediction naming the extra-time scorer/minute is NOT satisfied by that extra-time goal", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, mbappe } = await setupMatchAndVenue(repo);
+    const prediction = await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 90, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME", geo: INSIDE,
+    });
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 101 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+    const evaluation = await repo.getCurrentEvaluationForPrediction(prediction.predictionId);
+    expect(evaluation!.goalscorerCorrect).toBe(false);
+    expect(evaluation!.goalMinuteCorrect).toBe(false);
+    expect(evaluation!.firstTeamToScoreCorrect).toBe(false); // NO_GOAL derived (zero eligible goals), not HOME
+  });
+});
+
+// --- PREDICTIONS-V2: cancelled/abandoned Match settlement prohibition -
+
+describe("Predictions-v2 — cancelled/abandoned Match cannot produce a settlement", () => {
+  it("a Match cancelled before kickoff cannot be finalized", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, mbappe } = await setupMatchAndVenue(repo);
+    await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME", geo: INSIDE,
+    });
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 10 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await cancelMatch(repo, match.matchId);
+
+    await expect(finalizeMatchResult(repo, draft.matchResultId, "gm-admin")).rejects.toBeInstanceOf(
+      MatchCancelledError
+    );
+
+    const evaluation = await repo.getCurrentEvaluationForPrediction(
+      (await repo.getPredictionForMember(match.matchId, "gm-1"))!.predictionId
+    );
+    expect(evaluation).toBeNull();
+    const summaries = await repo.metagameRepository.listXpEventsForMember("gm-1");
+    expect(summaries).toHaveLength(0);
+  });
+
+  it("a Match cancelled with a draft Result already entered still cannot be finalized", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, mbappe } = await setupMatchAndVenue(repo);
+    await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME", geo: INSIDE,
+    });
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 10 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    // cancelMatch has no timing precondition — a draft Result already
+    // exists here, matching the Founder's own decision that a single
+    // field serves both "cancelled before kickoff" and "abandoned
+    // mid-play" (finalization is what's blocked, not the draft itself).
+    await cancelMatch(repo, match.matchId);
+
+    await expect(finalizeMatchResult(repo, draft.matchResultId, "gm-admin")).rejects.toBeInstanceOf(
+      MatchCancelledError
+    );
+  });
+
+  it("a correction cannot finalize after the Match has been cancelled", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, activation, mbappe } = await setupMatchAndVenue(repo);
+    await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: "gm-1", venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME", geo: INSIDE,
+    });
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 10 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+
+    const correctionDraft = await startResultCorrection(repo, {
+      matchId: match.matchId, homeScore: 2, awayScore: 0,
+      officialGoalEvents: [
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 10 },
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 50 },
+      ],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await cancelMatch(repo, match.matchId);
+
+    await expect(correctMatchResult(repo, correctionDraft.matchResultId, "gm-admin")).rejects.toBeInstanceOf(
+      MatchCancelledError
+    );
+  });
+});
+
+// --- PREDICTIONS-V2 ACCEPTANCE GATE: official Goal-Time boundary -----
+//
+// 0058 constrained minute_regulation (1-120) and minute_stoppage
+// (null or > 0) independently, but never their relationship — a
+// stoppage offset attached to a non-boundary minute like (46, 1) was
+// writable and, worse, would silently defeat the structural Goal
+// Minute comparison for an otherwise-correct ordinary-46 prediction
+// (46 !== null for stoppage). 0100 closes this at the database level;
+// this block proves the same rule is enforced here, at the single
+// shared adminCatalog.ts entry point both saveDraftResult and
+// startResultCorrection go through, regardless of repository backend.
+
+describe("Predictions-v2 — official Goal-Time boundary validation (0100)", () => {
+  it("a non-boundary stoppage tuple (46, 1) is rejected on first-time draft entry", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, mbappe } = await setupMatchAndVenue(repo);
+    await expect(
+      saveDraftResult(repo, {
+        matchId: match.matchId, homeScore: 1, awayScore: 0,
+        officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 46, minuteStoppage: 1 }],
+        enteredByGamingMemberId: "gm-admin",
+      })
+    ).rejects.toBeInstanceOf(InvalidOfficialGoalMinuteError);
+  });
+
+  it("a non-boundary stoppage tuple is also rejected on a correction", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, mbappe } = await setupMatchAndVenue(repo);
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 10 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    await finalizeMatchResult(repo, draft.matchResultId, "gm-admin");
+
+    await expect(
+      startResultCorrection(repo, {
+        matchId: match.matchId, homeScore: 1, awayScore: 0,
+        officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 70, minuteStoppage: 2 }],
+        enteredByGamingMemberId: "gm-admin",
+      })
+    ).rejects.toBeInstanceOf(InvalidOfficialGoalMinuteError);
+  });
+
+  it("legal period-boundary stoppage tuples — including extra-time (105, 120) — are all accepted", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, mbappe } = await setupMatchAndVenue(repo);
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 4, awayScore: 0,
+      officialGoalEvents: [
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 45, minuteStoppage: 2 },
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 90, minuteStoppage: 7 },
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 105, minuteStoppage: 1 },
+        { scorerPlayerId: mbappe.playerId, minuteRegulation: 120, minuteStoppage: 3 },
+      ],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    const events = await repo.listGoalEventsForResult(draft.matchResultId);
+    expect(events).toHaveLength(4);
+  });
+
+  it("a null stoppage is always accepted regardless of minute, including extra time", async () => {
+    const repo = new InMemoryPredictionsRepository();
+    const { match, mbappe } = await setupMatchAndVenue(repo);
+    const draft = await saveDraftResult(repo, {
+      matchId: match.matchId, homeScore: 1, awayScore: 0,
+      officialGoalEvents: [{ scorerPlayerId: mbappe.playerId, minuteRegulation: 101 }],
+      enteredByGamingMemberId: "gm-admin",
+    });
+    const events = await repo.listGoalEventsForResult(draft.matchResultId);
+    expect(events).toHaveLength(1);
+    expect(events[0].minuteStoppage).toBeNull();
   });
 });

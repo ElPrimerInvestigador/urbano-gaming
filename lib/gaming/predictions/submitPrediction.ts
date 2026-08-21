@@ -14,12 +14,13 @@ import { evaluateGeoEligibility } from "./geolocation";
  * against the specific Venue this Activation belongs to.
  *
  * The four Prediction dimensions are independent: predictedGoalscorer-
- * PlayerId, predictedGoalMinute, and predictedFirstTeamToScore are each
- * passed through untouched (a player id, a plain integer, and an enum
- * — none need normalization) and each nullable, with null meaning the
- * member deliberately chose "No Goal" for that dimension. Roster
- * membership/activity validation happens inside
- * upsert_prediction_atomically itself, not here.
+ * PlayerId, predictedGoalMinuteRegulation/predictedGoalMinuteStoppage,
+ * and predictedFirstTeamToScore are each passed through untouched (a
+ * player id, a (regulation, stoppage) integer pair, and an enum — none
+ * need normalization) and each nullable, with null meaning the member
+ * deliberately chose "No Goal" for that dimension. Roster membership/
+ * activity validation and Goal-Minute shape validation both happen
+ * inside upsert_prediction_atomically itself, not here.
  *
  * geo === null (no reported position at all — permission denied, or
  * the browser could not produce a fix) fails honestly with
@@ -34,7 +35,8 @@ export async function submitPrediction(
     predictedHomeScore: number;
     predictedAwayScore: number;
     predictedGoalscorerPlayerId: string | null;
-    predictedGoalMinute: number | null;
+    predictedGoalMinuteRegulation: number | null;
+    predictedGoalMinuteStoppage: number | null;
     predictedFirstTeamToScore: "HOME" | "AWAY" | null;
     geo: GeoSubmission | null;
   }
@@ -67,7 +69,8 @@ export async function submitPrediction(
     predictedHomeScore: input.predictedHomeScore,
     predictedAwayScore: input.predictedAwayScore,
     predictedGoalscorerPlayerId: input.predictedGoalscorerPlayerId,
-    predictedGoalMinute: input.predictedGoalMinute,
+    predictedGoalMinuteRegulation: input.predictedGoalMinuteRegulation,
+    predictedGoalMinuteStoppage: input.predictedGoalMinuteStoppage,
     predictedFirstTeamToScore: input.predictedFirstTeamToScore,
     geoVerifiedAt: new Date().toISOString(),
     measuredDistanceMeters: geoResult.measuredDistanceMeters,

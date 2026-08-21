@@ -219,6 +219,16 @@ function haversineMeters(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+// Predictions-v2: the single shared display-format helper for a
+// (regulation, stoppage) Goal-Time pair — used for both the authoring
+// form's own state and the finalized-result recap, so the two views
+// cannot semantically diverge. Regulation null means No Goal.
+// Stoppage is only ever non-null when regulation is 45 or 90.
+function formatGoalMinute(regulation, stoppage) {
+  if (regulation === null || regulation === undefined) return "No Goal";
+  return stoppage ? `${regulation}+${stoppage}'` : `${regulation}'`;
+}
+
 function findPlayerName(match, playerId) {
   if (!playerId) return null;
   const pools = [
@@ -275,7 +285,7 @@ async function renderMatch(match) {
     const ev = mine.evaluation;
     const pred = mine.prediction;
     const scorerName = findPlayerName(match, pred.predictedGoalscorerPlayerId) || "No Goalscorer";
-    const minuteLabel = pred.predictedGoalMinute === null ? "No Goal" : `${pred.predictedGoalMinute}'`;
+    const minuteLabel = formatGoalMinute(pred.predictedGoalMinuteRegulation, pred.predictedGoalMinuteStoppage);
     const firstTeamLabel =
       pred.predictedFirstTeamToScore === "HOME" ? homeTeamName :
       pred.predictedFirstTeamToScore === "AWAY" ? awayTeamName : "No Goal";
@@ -341,7 +351,12 @@ async function renderMatch(match) {
     </div>
     <div class="field">
       <label>At what minute will any goal be scored?</label>
-      <input type="number" min="1" max="120" id="goal-minute-${match.matchId}" placeholder="No Goal — leave blank" value="${mine.prediction && mine.prediction.predictedGoalMinute !== null ? mine.prediction.predictedGoalMinute : ""}" />
+      <div class="score-row">
+        <input type="number" min="1" max="90" id="goal-minute-regulation-${match.matchId}" placeholder="No Goal — leave blank" value="${mine.prediction && mine.prediction.predictedGoalMinuteRegulation !== null ? mine.prediction.predictedGoalMinuteRegulation : ""}" />
+        <span class="score-vs">+</span>
+        <input type="number" min="1" id="goal-minute-stoppage-${match.matchId}" placeholder="stoppage" value="${mine.prediction && mine.prediction.predictedGoalMinuteStoppage !== null && mine.prediction.predictedGoalMinuteStoppage !== undefined ? mine.prediction.predictedGoalMinuteStoppage : ""}" disabled />
+      </div>
+      <p class="msg" id="goal-minute-hint-${match.matchId}">Stoppage time only applies at minute 45 or 90.</p>
     </div>
     <div class="field">
       <label>Who scores first?</label>
@@ -360,6 +375,22 @@ async function renderMatch(match) {
   if (mine.prediction && mine.prediction.predictedGoalscorerPlayerId) {
     goalscorerSelect.value = mine.prediction.predictedGoalscorerPlayerId;
   }
+
+  // Stoppage offset is only meaningful at the two regulation-time
+  // boundaries (45, 90) — matches the 0094 CHECK constraint exactly.
+  // Disabling (rather than hiding) the field at every other minute
+  // keeps the control always visible while making an invalid
+  // combination impossible to submit from this form.
+  const regulationInput = form.querySelector(`#goal-minute-regulation-${match.matchId}`);
+  const stoppageInput = form.querySelector(`#goal-minute-stoppage-${match.matchId}`);
+  function syncStoppageAvailability() {
+    const regulation = parseInt(regulationInput.value, 10);
+    const atBoundary = regulation === 45 || regulation === 90;
+    stoppageInput.disabled = !atBoundary;
+    if (!atBoundary) stoppageInput.value = "";
+  }
+  syncStoppageAvailability();
+  regulationInput.addEventListener("input", syncStoppageAvailability);
 
   const firstTeamToggle = form.querySelector(`#first-team-toggle-${match.matchId}`);
   let selectedFirstTeam = mine.prediction ? mine.prediction.predictedFirstTeamToScore : null;
@@ -417,8 +448,10 @@ async function renderMatch(match) {
       return;
     }
 
-    const goalMinuteRaw = form.querySelector(`#goal-minute-${match.matchId}`).value;
-    const predictedGoalMinute = goalMinuteRaw.trim() === "" ? null : parseInt(goalMinuteRaw, 10);
+    const regulationRaw = regulationInput.value;
+    const predictedGoalMinuteRegulation = regulationRaw.trim() === "" ? null : parseInt(regulationRaw, 10);
+    const stoppageRaw = stoppageInput.disabled ? "" : stoppageInput.value;
+    const predictedGoalMinuteStoppage = stoppageRaw.trim() === "" ? null : parseInt(stoppageRaw, 10);
 
     const result = await authedFetch(`/api/gaming/predictions/matches/${match.matchId}/predict`, {
       method: "POST",
@@ -427,7 +460,8 @@ async function renderMatch(match) {
         predictedHomeScore: parseInt(form.querySelector(`#home-score-${match.matchId}`).value, 10) || 0,
         predictedAwayScore: parseInt(form.querySelector(`#away-score-${match.matchId}`).value, 10) || 0,
         predictedGoalscorerPlayerId: goalscorerSelect.value || null,
-        predictedGoalMinute: Number.isFinite(predictedGoalMinute) ? predictedGoalMinute : null,
+        predictedGoalMinuteRegulation: Number.isFinite(predictedGoalMinuteRegulation) ? predictedGoalMinuteRegulation : null,
+        predictedGoalMinuteStoppage: Number.isFinite(predictedGoalMinuteStoppage) ? predictedGoalMinuteStoppage : null,
         predictedFirstTeamToScore: selectedFirstTeam,
         latitude: freshPosition.latitude,
         longitude: freshPosition.longitude,

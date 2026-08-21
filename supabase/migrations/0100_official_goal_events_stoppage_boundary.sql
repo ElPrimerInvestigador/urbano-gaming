@@ -1,0 +1,52 @@
+-- Migration: 0100_official_goal_events_stoppage_boundary
+-- Soccer Predictions v2 acceptance gate — canonical official-goal
+-- timestamp audit (bounded correctness fix).
+--
+-- 0058 constrained official_goal_events.minute_regulation to 1-120 and
+-- minute_stoppage to "null or > 0", but never constrained the
+-- *relationship* between the two fields. That gap allowed
+-- semantically-invalid tuples such as (46, 1), (55, 3), or (70, 2) —
+-- a non-null stoppage offset attached to a minute that is not itself
+-- a period boundary. Stoppage time is only ever added at the end of a
+-- period; "minute 46 plus 1 minute of its own stoppage" does not
+-- correspond to any real football event.
+--
+-- This is not cosmetic: 0098/0099's Goal Minute comparison is
+-- structural (regulation equality AND stoppage IS NOT DISTINCT FROM),
+-- never a summed elapsed minute. An official event mis-recorded as
+-- (46, 1) would silently fail to match a Prediction correctly naming
+-- ordinary minute 46 (predicted_goal_minute_stoppage: null), because
+-- stoppage 1 is not null — an admin data-entry slip that this
+-- constraint now rejects at write time instead of silently corrupting
+-- settlement.
+--
+-- For the currently modeled football structure, the legitimate period
+-- boundaries where stoppage time can be added are 45 (end of first
+-- half), 90 (end of second half), 105 (end of first extra-time
+-- period), and 120 (end of second extra-time period). This deliberately
+-- widens the equivalent boundary already applied to predictions
+-- (0094, restricted to 45/90 only) to also include 105/120, because
+-- official evidence must retain the ability to record genuine
+-- extra-time stoppage operationally even though Predictions-v2
+-- settlement reads only regulation-time events (minute_regulation
+-- between 1 and 90 — see 0098/0099's own regulation-time-eligibility
+-- comment). This migration does not change that settlement scope in
+-- any way: a (105, 2) event remains fully excluded from all four
+-- Prediction dimensions, exactly as before, and remains a legal row.
+--
+-- No maximum stoppage offset is introduced, matching every other
+-- stoppage constraint in this schema (0058, 0094) — there is no
+-- Product-authorized ceiling.
+--
+-- minute_regulation is already `not null` on this table (0058), so
+-- unlike 0094's equivalent constraint on the nullable predictions
+-- side, no extra "is not null" guard is needed here to avoid the
+-- classic `NULL IN (...)` -> NULL (not FALSE) gotcha.
+--
+-- Production holds zero official_goal_events rows (independently
+-- reconfirmed immediately before this migration was authored) — this
+-- is a clean additive constraint, not a backfill.
+
+alter table official_goal_events
+  add constraint official_goal_events_minute_stoppage_requires_boundary
+  check (minute_stoppage is null or minute_regulation in (45, 90, 105, 120));
