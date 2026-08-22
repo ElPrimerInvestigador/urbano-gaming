@@ -154,3 +154,7 @@ Verified against production, without manufacturing any auth: `soccer-predictions
 No SMTP configured; no production Supabase Auth setting changed; no fake or manufactured member/admin account was created to force a proving case, per explicit instruction.
 
 Classification: **DEPLOYED. LOCAL VALIDATION COMPLETE. PRODUCTION END-TO-END VALIDATION PENDING SMTP** — this remains accurate even post-deployment, since every write path requires a completed Supabase Auth OTP sign-in, which requires SMTP.
+
+## Superseded by Soccer Predictions v2 (2026-08-21)
+
+The flattened `predicted_goal_minute` field this record documents (and the `upsert_prediction_atomically` signature that carried it) was replaced, not extended, by a genuinely breaking schema/RPC change — see `SOCCER_PREDICTIONS_V2_IMPLEMENTATION_RECORD.md` for the full defect, fix, and production deployment record. Production migration ceiling is now `0100` (was `0066` at this record's own deployment); commit `27ac429` is live. This record's own evidence remains historically accurate for the event it describes and is not rewritten; it no longer describes the currently-deployed schema.
