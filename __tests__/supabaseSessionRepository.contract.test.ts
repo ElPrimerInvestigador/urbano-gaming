@@ -9,6 +9,10 @@ import type { ParticipantRecord } from "../lib/session/db/sessionRepository";
 import {
   RoomCodeCollisionError,
   PredecessorAlreadyHasSuccessorError,
+  InvalidCapabilityKeyError,
+  CapabilitiesLockedError,
+  SessionCapabilitiesNotDeclaredError,
+  CapabilityNotAuthorizedError,
   type SessionRecord,
 } from "../lib/session/types";
 const env = loadEnv("development", process.cwd(), "");
@@ -61,6 +65,7 @@ function buildSessionRecord(
     predecessorSessionId: null,
     createdAt: now,
     updatedAt: now,
+    declaredCapabilities: [],
     ...overrides,
   };
 }
@@ -235,6 +240,12 @@ describe("SupabaseSessionRepository contract — full lifecycle against live Pos
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
     await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     // JOIN_SESSION
     const participant = buildParticipantRecord(session.sessionId);
@@ -412,6 +423,12 @@ describe("SupabaseSessionRepository contract — AWARD_POINTS against live Postg
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
     await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const participant = buildParticipantRecord(session.sessionId);
     await repository.joinParticipant(participant, buildJoinedEvent(participant));
@@ -507,6 +524,12 @@ describe("SupabaseSessionRepository contract — AWARD_POINTS against live Postg
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
     await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const participant = buildParticipantRecord(session.sessionId);
     await repository.joinParticipant(participant, buildJoinedEvent(participant));
@@ -563,6 +586,12 @@ describe("SupabaseSessionRepository contract — AWARD_POINTS against live Postg
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
     await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const participant = buildParticipantRecord(session.sessionId);
     await repository.joinParticipant(participant, buildJoinedEvent(participant));
@@ -627,6 +656,12 @@ describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+e
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
     await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const alex = buildParticipantRecord(session.sessionId, { displayName: "Alex-MC" });
     const jordan = buildParticipantRecord(session.sessionId, { displayName: "Jordan-MC" });
@@ -692,6 +727,12 @@ describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+e
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
     await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const alex = buildParticipantRecord(session.sessionId, { displayName: "Alex-MC-retry" });
     await repository.joinParticipant(alex, buildJoinedEvent(alex));
@@ -761,6 +802,12 @@ describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+e
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
     await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const alex = buildParticipantRecord(session.sessionId, { displayName: "Alex-MC-wrong" });
     await repository.joinParticipant(alex, buildJoinedEvent(alex));
@@ -813,6 +860,12 @@ describe("SupabaseSessionRepository contract — Multiple Choice atomic reveal+e
     const session = buildSessionRecord();
     createdSessionIds.push(session.sessionId);
     await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const alex = buildParticipantRecord(session.sessionId, { displayName: "Alex-OR-untouched" });
     await repository.joinParticipant(alex, buildJoinedEvent(alex));
@@ -955,5 +1008,215 @@ describe("SupabaseSessionRepository contract — Session Continuity (predecessor
 
     const stored = await repository.getSessionById(selfReferencing.sessionId);
     expect(stored).toBeNull();
+  });
+});
+
+describe("SupabaseSessionRepository contract — Session Capability Architecture v1 against live Postgres", () => {
+  it("persistence round-trip: create_session_atomically assigns an empty declared set, set_session_capabilities_atomically writes and reads back a real declared set", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const fresh = await repository.getSessionById(session.sessionId);
+    expect(fresh?.declaredCapabilities).toEqual([]);
+
+    const result = await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "QUIZ",
+      "VOTING",
+    ]);
+    expect(result.declaredCapabilities).toEqual(["QUIZ", "VOTING"]);
+    expect(result.locked).toBe(false);
+
+    const reread = await repository.getSessionById(session.sessionId);
+    expect(reread?.declaredCapabilities).toEqual(["QUIZ", "VOTING"]);
+  });
+
+  it("rejects an invalid capability key with a real database round-trip, not merely a client-side guess", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    await expect(
+      repository.setSessionCapabilities(session.sessionId, session.hostToken, ["MULTIPLE_CHOICE"])
+    ).rejects.toBeInstanceOf(InvalidCapabilityKeyError);
+  });
+
+  it("legacy NULL distinction: a row with declared_capabilities left NULL (simulating a pre-migration session) is read back as null, not an empty array", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    // Directly force the column back to NULL — the only way a real
+    // LEGACY_UNDECLARED row can exist is one that predates this
+    // migration; there is no legitimate write path that produces NULL
+    // for a session created after it.
+    const { error } = await cleanupClient
+      .from("sessions")
+      .update({ declared_capabilities: null })
+      .eq("session_id", session.sessionId);
+    expect(error).toBeNull();
+
+    const reread = await repository.getSessionById(session.sessionId);
+    expect(reread?.declaredCapabilities).toBeNull();
+  });
+
+  it("atomic first-join lock: join_participant_atomically rejects a session with no declared capabilities, succeeds once declared, and locks the set from that moment on", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const early = buildParticipantRecord(session.sessionId);
+    await expect(
+      repository.joinParticipant(early, buildJoinedEvent(early))
+    ).rejects.toBeInstanceOf(SessionCapabilitiesNotDeclaredError);
+
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, ["QUIZ"]);
+
+    const alex = buildParticipantRecord(session.sessionId, { displayName: "CapabilityLockAlex" });
+    await repository.joinParticipant(alex, buildJoinedEvent(alex));
+
+    await expect(
+      repository.setSessionCapabilities(session.sessionId, session.hostToken, ["VOTING"])
+    ).rejects.toBeInstanceOf(CapabilitiesLockedError);
+
+    const reread = await repository.getSessionById(session.sessionId);
+    expect(reread?.declaredCapabilities).toEqual(["QUIZ"]);
+  });
+
+  it("genuine concurrent race — JOIN_SESSION vs SET_SESSION_CAPABILITIES for the same session, fired truly concurrently — resolves to exactly one internally-consistent outcome, never a corrupted or contradictory final state", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, ["QUIZ"]);
+
+    const participant = buildParticipantRecord(session.sessionId, { displayName: "RaceParticipant" });
+
+    const [joinResult, capabilityResult] = await Promise.allSettled([
+      repository.joinParticipant(participant, buildJoinedEvent(participant)),
+      repository.setSessionCapabilities(session.sessionId, session.hostToken, ["VOTING"]),
+    ]);
+
+    // The join was always against a session with a non-empty declared
+    // set (QUIZ initially, or VOTING if the capability update won the
+    // race and committed first) — real Postgres row-locking on the
+    // same sessions row (both functions take `for update` on it)
+    // guarantees the join always sees a fully-committed, consistent
+    // state either way, so it must always succeed.
+    expect(joinResult.status).toBe("fulfilled");
+
+    const reread = await repository.getSessionById(session.sessionId);
+
+    if (capabilityResult.status === "fulfilled") {
+      // The capability update won the race (committed before the
+      // join's own lock acquisition) — the final stored value must be
+      // exactly what it wrote, and the join proceeded against that
+      // already-locked value.
+      expect(reread?.declaredCapabilities).toEqual(["VOTING"]);
+    } else {
+      // The join won the race — the capability update, once it
+      // resumed, correctly observed real participant evidence and
+      // rejected the change, leaving the original declaration intact.
+      expect(capabilityResult.reason).toBeInstanceOf(CapabilitiesLockedError);
+      expect(reread?.declaredCapabilities).toEqual(["QUIZ"]);
+    }
+
+    const participants = await repository.getParticipantsForSession(session.sessionId);
+    expect(participants).toHaveLength(1);
+  });
+
+  it("two concurrent pre-lock capability updates serialize cleanly — the final value is exactly one of the two attempted sets, never a corrupted hybrid", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+
+    const [first, second] = await Promise.allSettled([
+      repository.setSessionCapabilities(session.sessionId, session.hostToken, ["QUIZ"]),
+      repository.setSessionCapabilities(session.sessionId, session.hostToken, ["VOTING", "OPEN_RESPONSE"]),
+    ]);
+
+    expect(first.status).toBe("fulfilled");
+    expect(second.status).toBe("fulfilled");
+
+    const reread = await repository.getSessionById(session.sessionId);
+    const finalValue = reread?.declaredCapabilities ?? [];
+    const isFirstSet = finalValue.length === 1 && finalValue[0] === "QUIZ";
+    const isSecondSet =
+      finalValue.length === 2 && finalValue[0] === "OPEN_RESPONSE" && finalValue[1] === "VOTING";
+
+    expect(isFirstSet || isSecondSet).toBe(true);
+  });
+
+  it("QUIZ and TRIVIA are enforced as genuinely separate capabilities against real Postgres: a QUIZ-only session's ad-hoc Trivia attempt is rejected server-side", async () => {
+    const session = buildSessionRecord();
+    createdSessionIds.push(session.sessionId);
+    await repository.createSession(session, buildInitialEvent(session));
+    await repository.setSessionCapabilities(session.sessionId, session.hostToken, ["QUIZ"]);
+
+    const alex = buildParticipantRecord(session.sessionId, { displayName: "QuizTriviaAlex" });
+    await repository.joinParticipant(alex, buildJoinedEvent(alex));
+    await repository.lockLobby(session.sessionId, session.hostToken, {
+      sessionId: session.sessionId,
+      eventType: "LOBBY_LOCKED",
+      payload: {},
+    });
+
+    await expect(
+      repository.startSession(session.sessionId, session.hostToken, {
+        engineType: "OPEN_RESPONSE",
+        promptText: "Undeclared capability attempt",
+      })
+    ).rejects.toBeInstanceOf(CapabilityNotAuthorizedError);
+
+    await repository.createPreparedQuestions(session.sessionId, [
+      { promptText: "2+2?", options: ["3", "4"], correctOptionIndex: 1, pointsForCorrect: 10 },
+    ]);
+    const preparedQuestions = await repository.getPreparedQuestionsForSession(session.sessionId);
+
+    await expect(
+      repository.startSession(session.sessionId, session.hostToken, {
+        engineType: "MULTIPLE_CHOICE",
+        preparedQuestionId: preparedQuestions[0].preparedQuestionId,
+      })
+    ).rejects.toBeInstanceOf(CapabilityNotAuthorizedError);
+
+    // The declared QUIZ capability itself works cleanly.
+    const quizResult = await repository.startQuiz(session.sessionId, session.hostToken, 60);
+    expect(quizResult.interactionInstanceIds).toHaveLength(1);
+  });
+
+  it("prepared-question authoring against real Postgres: rejected for a VOTING-only session, allowed for TRIVIA-only, allowed for QUIZ-only", async () => {
+    const votingOnly = buildSessionRecord();
+    createdSessionIds.push(votingOnly.sessionId);
+    await repository.createSession(votingOnly, buildInitialEvent(votingOnly));
+    await repository.setSessionCapabilities(votingOnly.sessionId, votingOnly.hostToken, ["VOTING"]);
+
+    await expect(
+      repository.createPreparedQuestions(votingOnly.sessionId, [
+        { promptText: "Bypass?", options: ["A", "B"], correctOptionIndex: 0, pointsForCorrect: 10 },
+      ])
+    ).rejects.toBeInstanceOf(CapabilityNotAuthorizedError);
+
+    const votingOnlyRows = await repository.getPreparedQuestionsForSession(votingOnly.sessionId);
+    expect(votingOnlyRows).toHaveLength(0);
+
+    const triviaOnly = buildSessionRecord();
+    createdSessionIds.push(triviaOnly.sessionId);
+    await repository.createSession(triviaOnly, buildInitialEvent(triviaOnly));
+    await repository.setSessionCapabilities(triviaOnly.sessionId, triviaOnly.hostToken, ["TRIVIA"]);
+
+    const triviaPrepared = await repository.createPreparedQuestions(triviaOnly.sessionId, [
+      { promptText: "2+2?", options: ["3", "4"], correctOptionIndex: 1, pointsForCorrect: 10 },
+    ]);
+    expect(triviaPrepared).toHaveLength(1);
+
+    const quizOnly = buildSessionRecord();
+    createdSessionIds.push(quizOnly.sessionId);
+    await repository.createSession(quizOnly, buildInitialEvent(quizOnly));
+    await repository.setSessionCapabilities(quizOnly.sessionId, quizOnly.hostToken, ["QUIZ"]);
+
+    const quizPrepared = await repository.createPreparedQuestions(quizOnly.sessionId, [
+      { promptText: "2+2?", options: ["3", "4"], correctOptionIndex: 1, pointsForCorrect: 10 },
+    ]);
+    expect(quizPrepared).toHaveLength(1);
   });
 });

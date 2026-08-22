@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { submitResponse } from "../lib/session/submitResponse";
 import { startSession } from "../lib/session/startSession";
@@ -210,6 +211,7 @@ describe("Participant linkage — JOIN_SESSION with a Gaming Member", () => {
   it("Guest join leaves gamingMemberId null — the exact pre-Identity-Foundation path, unchanged", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const result = await joinSession(repo, session.roomCode, "GuestOnly");
 
@@ -219,6 +221,7 @@ describe("Participant linkage — JOIN_SESSION with a Gaming Member", () => {
   it("an authenticated join links the correct Gaming Member to the new Participant", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const result = await joinSession(
       repo,
@@ -237,6 +240,7 @@ describe("Participant linkage — JOIN_SESSION with a Gaming Member", () => {
   it("rejects a second Participant for the same Gaming Member in the same Session", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await joinSession(repo, session.roomCode, "FirstJoin", "gm-dup");
 
@@ -248,7 +252,9 @@ describe("Participant linkage — JOIN_SESSION with a Gaming Member", () => {
   it("permits the same Gaming Member to join a DIFFERENT Session", async () => {
     const repo = new InMemorySessionRepository();
     const sessionA = await createSession(repo);
+    await setSessionCapabilities(repo, sessionA.sessionId, sessionA.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     const sessionB = await createSession(repo);
+    await setSessionCapabilities(repo, sessionB.sessionId, sessionB.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const resultA = await joinSession(
       repo,
@@ -271,6 +277,7 @@ describe("Participant linkage — JOIN_SESSION with a Gaming Member", () => {
   it("Guests and an authenticated member coexist freely in the same Session", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await joinSession(repo, session.roomCode, "GuestOne");
     await joinSession(repo, session.roomCode, "GuestTwo");
@@ -294,6 +301,7 @@ describe("Participant linkage — JOIN_SESSION with a Gaming Member", () => {
   it("an authenticated member's display name collision with an existing participant uses the existing DisplayNameTakenError — never a silent rename", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await joinSession(repo, session.roomCode, "Taken");
 
@@ -305,6 +313,7 @@ describe("Participant linkage — JOIN_SESSION with a Gaming Member", () => {
   it("legacy flat Guest call (3-arg, no gamingMemberId) behaves byte-identically to before this phase", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const result = await joinSession(repo, session.roomCode, "LegacyCaller");
 
@@ -318,6 +327,7 @@ describe("Existing gameplay regression — Gaming Member linkage does not alter 
   it("an authenticated Participant still submits responses using participantId, exactly like a Guest", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     const member = await joinSession(
       repo,
       session.roomCode,

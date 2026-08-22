@@ -8,6 +8,7 @@ import {
   LobbyNotOpenError,
   EmptyDisplayNameError,
   DisplayNameTooLongError,
+  SessionCapabilitiesNotDeclaredError,
 } from "./types";
 
 /**
@@ -102,6 +103,17 @@ export async function joinSession(
 
   if (session.state !== "LOBBY_OPEN") {
     throw new LobbyNotOpenError(session.state);
+  }
+
+  // Session Capability Architecture v1: a Session must have declared
+  // at least one gameplay capability before it will accept its first
+  // real participant — mirrors MATCH_NOT_CLASSIFIED's identical
+  // evidence-precondition boundary. The repository's joinParticipant
+  // call is the authoritative re-check (see module note above); this
+  // is the same fast-path convenience every other precondition here
+  // already gets.
+  if ((session.declaredCapabilities ?? []).length === 0) {
+    throw new SessionCapabilitiesNotDeclaredError();
   }
 
   const now = new Date().toISOString();

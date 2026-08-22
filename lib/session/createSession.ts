@@ -37,6 +37,7 @@ export async function createSession(
       predecessorSessionId: null,
       createdAt: now,
       updatedAt: now,
+      declaredCapabilities: [],
     };
 
     try {

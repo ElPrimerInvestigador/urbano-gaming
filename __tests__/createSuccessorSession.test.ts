@@ -162,6 +162,7 @@ describe("CREATE_SUCCESSOR_SESSION", () => {
           predecessorSessionId: predecessor.sessionId,
           createdAt: now,
           updatedAt: now,
+          declaredCapabilities: [],
         },
         {
           sessionId: "33333333-3333-3333-3333-333333333333",

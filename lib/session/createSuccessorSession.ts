@@ -92,6 +92,7 @@ export async function createSuccessorSession(
       predecessorSessionId,
       createdAt: now,
       updatedAt: now,
+      declaredCapabilities: [],
     };
 
     try {

@@ -60,6 +60,7 @@ function buildSessionRecord(overrides: Partial<SessionRecord> = {}): SessionReco
     predecessorSessionId: null,
     createdAt: now,
     updatedAt: now,
+    declaredCapabilities: [],
     ...overrides,
   };
 }
@@ -101,6 +102,12 @@ async function setupLockedSessionWithQuestions(displayNames: string[] = ["Alex",
   const session = buildSessionRecord();
   createdSessionIds.push(session.sessionId);
   await repository.createSession(session, buildInitialEvent(session));
+  await repository.setSessionCapabilities(session.sessionId, session.hostToken, [
+    "OPEN_RESPONSE",
+    "VOTING",
+    "TRIVIA",
+    "QUIZ",
+  ]);
 
   const participants: ParticipantRecord[] = [];
   for (const displayName of displayNames) {

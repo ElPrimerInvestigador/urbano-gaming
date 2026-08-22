@@ -45,6 +45,10 @@ import {
   QuizExpiryNotReachedError,
   InvalidOptionSelectionError,
   GamingMemberAlreadyInSessionError,
+  InvalidCapabilityKeyError,
+  CapabilitiesLockedError,
+  SessionCapabilitiesNotDeclaredError,
+  CapabilityNotAuthorizedError,
 } from "../types";
 import type {
   SessionEventRecord,
@@ -186,6 +190,14 @@ export class SupabaseSessionRepository implements SessionRepository {
       }
 
       if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_CAPABILITIES_NOT_DECLARED")
+      ) {
+        throw new SessionCapabilitiesNotDeclaredError();
+      }
+
+      if (
         error.code === "23505" &&
         error.message.includes(
           "participants_session_display_name_unique"
@@ -229,6 +241,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       predecessorSessionId: data.predecessor_session_id,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
+      declaredCapabilities: data.declared_capabilities,
     };
   }
 
@@ -253,6 +266,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       predecessorSessionId: data.predecessor_session_id,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
+      declaredCapabilities: data.declared_capabilities,
     };
   }
 
@@ -283,6 +297,7 @@ export class SupabaseSessionRepository implements SessionRepository {
       predecessorSessionId: data.predecessor_session_id,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
+      declaredCapabilities: data.declared_capabilities,
     };
   }
 
@@ -331,6 +346,64 @@ export class SupabaseSessionRepository implements SessionRepository {
     return {
       state: row.state as SessionState,
       stateVersion: row.state_version,
+    };
+  }
+
+  async setSessionCapabilities(
+    sessionId: string,
+    hostToken: string,
+    capabilities: string[]
+  ): Promise<{ declaredCapabilities: string[]; locked: boolean }> {
+    const { data, error } = await this.client.rpc(
+      "set_session_capabilities_atomically",
+      {
+        p_session_id: sessionId,
+        p_host_token: hostToken,
+        p_capabilities: capabilities,
+      }
+    );
+
+    if (error) {
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("INVALID_CAPABILITY_KEY")
+      ) {
+        throw new InvalidCapabilityKeyError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("SESSION_NOT_FOUND")
+      ) {
+        throw new SessionNotFoundError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("HOST_TOKEN_MISMATCH")
+      ) {
+        throw new HostTokenMismatchError();
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("CAPABILITIES_LOCKED")
+      ) {
+        throw new CapabilitiesLockedError();
+      }
+
+      throw error;
+    }
+
+    const row = Array.isArray(data) ? data[0] : data;
+
+    return {
+      declaredCapabilities: row.declared_capabilities,
+      locked: row.locked,
     };
   }
 
@@ -544,6 +617,15 @@ export class SupabaseSessionRepository implements SessionRepository {
         error.message.includes("LOBBY_NOT_LOCKED")
       ) {
         throw new LobbyNotLockedError(extractStateFromGuardMessage(error.message));
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("CAPABILITY_NOT_AUTHORIZED")
+      ) {
+        const match = error.message.match(/declared the (\w+) capability/);
+        throw new CapabilityNotAuthorizedError(match ? match[1] : undefined);
       }
 
       if (
@@ -929,6 +1011,26 @@ export class SupabaseSessionRepository implements SessionRepository {
       pointsForCorrect: number;
     }>
   ): Promise<PreparedQuestionRecord[]> {
+    // Session Capability Architecture v1: authoritative re-check,
+    // independent of the domain layer's own fast-path — see
+    // prepareQuestions.ts's comment for why "QUIZ or TRIVIA," not
+    // either alone. No new atomic function is introduced here — this
+    // method already accepts the same small, documented non-atomic
+    // window every other check in this method tolerates (ordinal
+    // assignment); a plain read-then-insert is consistent with that
+    // existing, accepted design.
+    const session = await this.getSessionById(sessionId);
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+    const declaredCapabilities = session.declaredCapabilities ?? [];
+    if (
+      !declaredCapabilities.includes("QUIZ") &&
+      !declaredCapabilities.includes("TRIVIA")
+    ) {
+      throw new CapabilityNotAuthorizedError("QUIZ or TRIVIA");
+    }
+
     const { data: existing, error: existingError } = await this.client
       .from("prepared_questions")
       .select("ordinal")
@@ -1201,6 +1303,14 @@ export class SupabaseSessionRepository implements SessionRepository {
         error.message.includes("LOBBY_NOT_LOCKED")
       ) {
         throw new LobbyNotLockedError(extractStateFromGuardMessage(error.message));
+      }
+
+      if (
+        error.code === "P0001" &&
+        typeof error.message === "string" &&
+        error.message.includes("CAPABILITY_NOT_AUTHORIZED")
+      ) {
+        throw new CapabilityNotAuthorizedError("QUIZ");
       }
 
       if (

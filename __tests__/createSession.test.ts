@@ -76,6 +76,7 @@ describe("CREATE_SESSION", () => {
           predecessorSessionId: null,
           createdAt: now,
           updatedAt: now,
+          declaredCapabilities: [],
         },
         {
           sessionId: duplicateSessionId,
@@ -117,6 +118,7 @@ describe("CREATE_SESSION", () => {
           predecessorSessionId: null,
           createdAt: now,
           updatedAt: now,
+          declaredCapabilities: [],
         },
         {
           sessionId: reusedSessionId,

@@ -1,0 +1,44 @@
+-- Migration: 0108_add_declared_capabilities_to_sessions
+-- Session Capability Architecture v1 (Product/Session_Capability_Architecture.md, ADR-036).
+--
+-- A Session's own declared gameplay-capability snapshot. Nullable, no
+-- default, mirroring this repository's own established convention for
+-- a fact that is genuinely absent before it is ever declared
+-- (activity_classification, 0082) rather than defaulting to an empty
+-- value that would be indistinguishable from "declared empty on
+-- purpose":
+--
+--   NULL       = LEGACY_UNDECLARED — a Session created before this
+--                column existed. Its historical Interaction Instance
+--                evidence remains fully authoritative; this column
+--                concerns future authorization only.
+--   '{}'       = a post-migration Session that has not yet declared
+--                any capability (freely editable — see 0109) OR one
+--                that was deliberately locked in that state.
+--   non-empty  = the declared, authorized capability set.
+--
+-- Ordering carries no semantic meaning — this is a set, not a
+-- sequence — so the sole write path (0109) always stores it
+-- deduplicated and canonically sorted, making `is distinct from`
+-- comparisons order-independent by construction rather than requiring
+-- a set-comparison at every read site.
+--
+-- No CHECK constraint restricts array element values here, mirroring
+-- activity_classification's own precedent (0082): the allowed
+-- capability_key vocabulary is validated once, authoritatively, inside
+-- set_session_capabilities_atomically (0109), not at the column level.
+--
+-- Locking (immutable once real participant evidence exists) is
+-- enforced inside 0109's own atomic function, via a live
+-- exists(select 1 from participants ...) check — never a persisted
+-- lock flag — matching set_match_activity_classification_atomically
+-- and set_match_xp_eligibility_atomically's identical precedent.
+--
+-- Production holds zero real end-user Sessions (independently
+-- reconfirmed immediately before this migration was authored — all
+-- existing rows are Guest-only regression/test artifacts, since zero
+-- gaming_members have ever existed) — this is a clean additive
+-- column, not a backfill.
+
+alter table sessions
+  add column declared_capabilities text[] null;

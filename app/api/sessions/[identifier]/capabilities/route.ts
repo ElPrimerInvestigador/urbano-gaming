@@ -1,27 +1,24 @@
 import { NextResponse } from "next/server";
-import { startQuiz } from "@/lib/session/startQuiz";
+import { setSessionCapabilities } from "@/lib/session/setSessionCapabilities";
 import { SupabaseSessionRepository } from "@/lib/session/db/supabaseSessionRepository";
 import {
   SessionNotFoundError,
   HostTokenMismatchError,
-  LobbyNotLockedError,
-  PreviousInteractionNotRevealedError,
-  EmptyQuizQuestionSetError,
-  InvalidQuizDurationError,
-  CapabilityNotAuthorizedError,
+  InvalidCapabilityKeyError,
+  CapabilitiesLockedError,
 } from "@/lib/session/types";
 
 /**
- * POST /api/sessions/[identifier]/start-quiz — START_QUIZ
+ * POST /api/sessions/[identifier]/capabilities — SET_SESSION_CAPABILITIES
  *
- * Quiz Experience (self-paced, independent participant progression —
- * distinct from Trivia). Host-authenticated only. Dedicated route, not
- * a variant of /start — see startQuiz.ts's own comment for why this
- * platform's implementation-readiness design chose a dedicated command
- * rather than generalizing START_SESSION.
+ * Session Capability Architecture v1. The dynamic segment is named
+ * [identifier] (not [sessionId]) for the same reason every sibling
+ * route at this path position shares it — see /lock's own doc
+ * comment. For this route, the value is the session id.
  *
- * Route is thin by design, mirroring every other command route in this
- * app: header/body extraction only. All logic lives in startQuiz(),
+ * Host-authenticated only, via the host token issued at CREATE_SESSION.
+ * Route is thin by design, mirroring /lock: transport concerns only.
+ * All logic lives in setSessionCapabilities(), which is
  * transport-agnostic and unit-tested independent of this route.
  */
 export async function POST(
@@ -41,11 +38,11 @@ export async function POST(
   }
 
   let hostToken: unknown;
-  let durationSeconds: unknown;
+  let capabilities: unknown;
   try {
     const body = (await request.json()) as Record<string, unknown>;
     hostToken = body?.hostToken;
-    durationSeconds = body?.durationSeconds;
+    capabilities = body?.capabilities;
   } catch {
     return NextResponse.json(
       { error: "Request body must be valid JSON." },
@@ -60,9 +57,12 @@ export async function POST(
     );
   }
 
-  if (typeof durationSeconds !== "number") {
+  if (
+    !Array.isArray(capabilities) ||
+    !capabilities.every((c) => typeof c === "string")
+  ) {
     return NextResponse.json(
-      { error: "durationSeconds is required and must be a number." },
+      { error: "capabilities is required and must be an array of strings." },
       { status: 400 }
     );
   }
@@ -70,7 +70,12 @@ export async function POST(
   const repo = new SupabaseSessionRepository(supabaseUrl, supabaseServiceKey);
 
   try {
-    const result = await startQuiz(repo, sessionId, hostToken, durationSeconds);
+    const result = await setSessionCapabilities(
+      repo,
+      sessionId,
+      hostToken,
+      capabilities
+    );
     return NextResponse.json(result, { status: 200 });
   } catch (err) {
     if (err instanceof SessionNotFoundError) {
@@ -79,23 +84,17 @@ export async function POST(
     if (err instanceof HostTokenMismatchError) {
       return NextResponse.json({ error: err.message }, { status: 403 });
     }
-    if (err instanceof CapabilityNotAuthorizedError) {
-      return NextResponse.json({ error: err.message }, { status: 403 });
-    }
-    if (
-      err instanceof LobbyNotLockedError ||
-      err instanceof PreviousInteractionNotRevealedError
-    ) {
-      return NextResponse.json({ error: err.message }, { status: 409 });
-    }
-    if (
-      err instanceof EmptyQuizQuestionSetError ||
-      err instanceof InvalidQuizDurationError
-    ) {
+    if (err instanceof InvalidCapabilityKeyError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
+    if (err instanceof CapabilitiesLockedError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
 
-    console.error("START_QUIZ failed:", err);
-    return NextResponse.json({ error: "Failed to start Quiz." }, { status: 500 });
+    console.error("SET_SESSION_CAPABILITIES failed:", err);
+    return NextResponse.json(
+      { error: "Failed to set session capabilities." },
+      { status: 500 }
+    );
   }
 }

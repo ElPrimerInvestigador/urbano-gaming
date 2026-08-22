@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
 import { startSession } from "../lib/session/startSession";
@@ -19,6 +20,7 @@ import {
 
 async function setupActiveSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
+  await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
   const participant = await joinSession(repo, session.roomCode, "Alex");
   await lockLobby(repo, session.sessionId, session.hostToken);
   const interaction = await startSession(repo, session.sessionId, session.hostToken, {
@@ -96,6 +98,7 @@ describe("SUBMIT_RESPONSE", () => {
     const repo = new InMemorySessionRepository();
     const { session: sessionA } = await setupActiveSession(repo);
     const sessionB = await createSession(repo);
+    await setSessionCapabilities(repo, sessionB.sessionId, sessionB.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     const participantOfB = await joinSession(repo, sessionB.roomCode, "Jordan");
 
     await expect(
@@ -106,6 +109,7 @@ describe("SUBMIT_RESPONSE", () => {
   it("rejects submitting before any interaction has started (LOBBY_LOCKED)", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     const participant = await joinSession(repo, session.roomCode, "Alex");
     await lockLobby(repo, session.sessionId, session.hostToken);
 
@@ -153,6 +157,7 @@ describe("SUBMIT_RESPONSE", () => {
   it("does not affect other participants' submissions", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     const alex = await joinSession(repo, session.roomCode, "Alex");
     const jordan = await joinSession(repo, session.roomCode, "Jordan");
     await lockLobby(repo, session.sessionId, session.hostToken);
@@ -191,6 +196,7 @@ describe("SUBMIT_RESPONSE", () => {
     it("in-memory proof: submitResponse independently rejects a session that is not PROMPT_ACTIVE, even when called directly", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       const participant = await joinSession(repo, session.roomCode, "Alex");
 
       await expect(

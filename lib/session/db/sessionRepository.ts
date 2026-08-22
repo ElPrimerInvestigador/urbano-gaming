@@ -470,6 +470,34 @@ export interface SessionRepository {
   ): Promise<{ state: SessionState; stateVersion: number }>;
 
   /**
+   * Session Capability Architecture v1. Atomically re-verify the host
+   * token, validate every supplied key against the current Product-
+   * approved capability catalog, normalize (dedupe + canonically sort
+   * — order carries no meaning), and either store it (no real
+   * participant has ever joined) or compare it against the already-
+   * locked value (idempotent success on an identical set, rejection on
+   * any change). Persists a SESSION_CAPABILITIES_DECLARED event only
+   * on a genuine write, mirroring lockLobby's identical precedent.
+   *
+   * Implementations must:
+   * - re-verify the host token inside the atomic operation itself;
+   * - throw SessionNotFoundError only when no session exists for the id;
+   * - throw HostTokenMismatchError only on a host-token mismatch;
+   * - throw InvalidCapabilityKeyError only when a supplied key is not
+   *   in SessionCapabilityKey;
+   * - throw CapabilitiesLockedError only when real participant
+   *   evidence already exists and the supplied (normalized) set
+   *   differs from the currently stored one;
+   * - never reject a same-value redeclaration once locked;
+   * - return the authoritative, normalized declared set and lock state.
+   */
+  setSessionCapabilities(
+    sessionId: string,
+    hostToken: string,
+    capabilities: string[]
+  ): Promise<{ declaredCapabilities: string[]; locked: boolean }>;
+
+  /**
    * List all participants for a session, ordered by joinedAt ascending.
    * Not filtered by session state — GET_SESSION must be able to read a
    * session's participant list regardless of its current state.
@@ -868,6 +896,15 @@ export interface SessionRepository {
    * ordinal this method itself assigns), unlike lockLobby or
    * startSession, which race against concurrent calls changing the
    * same state.
+   *
+   * Session Capability Architecture v1. Implementations must re-verify,
+   * authoritatively (never trusting only the domain layer's own
+   * fast-path check), that the target session has declared QUIZ or
+   * TRIVIA (or both) before persisting any row — throwing
+   * CapabilityNotAuthorizedError otherwise. See prepareQuestions.ts's
+   * own comment for why the rule is an "or," not either capability
+   * alone: both QUIZ's and TRIVIA's own activation paths read from
+   * this same table.
    */
   createPreparedQuestions(
     sessionId: string,

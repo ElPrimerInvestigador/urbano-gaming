@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
 import { startSession } from "../lib/session/startSession";
@@ -18,6 +19,7 @@ import {
 
 async function setupClosedSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
+  await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
   const alex = await joinSession(repo, session.roomCode, "Alex");
   const jordan = await joinSession(repo, session.roomCode, "Jordan");
   await lockLobby(repo, session.sessionId, session.hostToken);
@@ -57,6 +59,7 @@ describe("REVEAL_RESULTS", () => {
   it("rejects revealing before submissions are closed (PROMPT_ACTIVE)", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
     await startSession(repo, session.sessionId, session.hostToken, {
       engineType: "OPEN_RESPONSE",

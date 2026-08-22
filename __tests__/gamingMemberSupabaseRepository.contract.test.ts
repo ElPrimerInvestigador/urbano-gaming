@@ -80,6 +80,7 @@ function buildSessionRecord(overrides: Partial<SessionRecord> = {}): SessionReco
     predecessorSessionId: null,
     createdAt: now,
     updatedAt: now,
+    declaredCapabilities: [],
     ...overrides,
   };
 }
@@ -245,6 +246,12 @@ describe("SupabaseGamingRepository contract", () => {
       eventType: "SESSION_CREATED",
       payload: { roomCode: session.roomCode },
     });
+    await sessionRepository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const record = buildParticipantRecord(session.sessionId, {
       gamingMemberId: member.gamingMemberId,
@@ -278,6 +285,12 @@ describe("SupabaseGamingRepository contract", () => {
       eventType: "SESSION_CREATED",
       payload: { roomCode: session.roomCode },
     });
+    await sessionRepository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const first = buildParticipantRecord(session.sessionId, {
       gamingMemberId: member.gamingMemberId,
@@ -315,6 +328,12 @@ describe("SupabaseGamingRepository contract", () => {
       eventType: "SESSION_CREATED",
       payload: { roomCode: session.roomCode },
     });
+    await sessionRepository.setSessionCapabilities(session.sessionId, session.hostToken, [
+      "OPEN_RESPONSE",
+      "VOTING",
+      "TRIVIA",
+      "QUIZ",
+    ]);
 
     const record = buildParticipantRecord(session.sessionId, {
       gamingMemberId: member.gamingMemberId,

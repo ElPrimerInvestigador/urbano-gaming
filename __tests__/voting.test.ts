@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
 import { startSession } from "../lib/session/startSession";
@@ -23,6 +24,7 @@ import {
 
 async function setupLockedSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
+  await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
   const alex = await joinSession(repo, session.roomCode, "Alex");
   const jordan = await joinSession(repo, session.roomCode, "Jordan");
   const sam = await joinSession(repo, session.roomCode, "Sam");
@@ -166,6 +168,7 @@ describe("START_SESSION with a SUBMISSION votingCandidateSource (Open Response c
     const repo = new InMemorySessionRepository();
     const { interaction } = await setupRevealedOpenResponse(repo);
     const otherSession = await createSession(repo);
+    await setSessionCapabilities(repo, otherSession.sessionId, otherSession.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await joinSession(repo, otherSession.roomCode, "Other");
     await lockLobby(repo, otherSession.sessionId, otherSession.hostToken);
 

@@ -496,5 +496,13 @@ export async function getSession(
     votingResults,
     questionProgress,
     currentQuiz,
+    // Session Capability Architecture v1. Derived, not persisted
+    // separately — capabilitiesLocked is computed from the same
+    // participants list already fetched above, identically to
+    // set_session_capabilities_atomically's own live evidence check,
+    // so this is the same one source of truth, not a second one.
+    declaredCapabilities: session.declaredCapabilities ?? [],
+    capabilitiesLocked: participants.length > 0,
+    legacyUndeclared: session.declaredCapabilities === null,
   };
 }

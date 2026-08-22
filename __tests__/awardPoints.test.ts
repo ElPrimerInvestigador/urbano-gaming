@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
 import { startSession } from "../lib/session/startSession";
@@ -23,6 +24,7 @@ import {
 
 async function setupRevealedSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
+  await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
   const alex = await joinSession(repo, session.roomCode, "Alex");
   const jordan = await joinSession(repo, session.roomCode, "Jordan");
   await lockLobby(repo, session.sessionId, session.hostToken);
@@ -244,6 +246,7 @@ describe("AWARD_POINTS", () => {
     it("rejects a new award while the current interaction is still PROMPT_ACTIVE", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       const alex = await joinSession(repo, session.roomCode, "Alex");
       await lockLobby(repo, session.sessionId, session.hostToken);
       const interaction = await startSession(repo, session.sessionId, session.hostToken, {
@@ -267,6 +270,7 @@ describe("AWARD_POINTS", () => {
     it("rejects a new award while the current interaction is SUBMISSIONS_CLOSED", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       const alex = await joinSession(repo, session.roomCode, "Alex");
       await lockLobby(repo, session.sessionId, session.hostToken);
       const interaction = await startSession(repo, session.sessionId, session.hostToken, {
@@ -344,6 +348,7 @@ describe("AWARD_POINTS", () => {
     const repo = new InMemorySessionRepository();
     const { session, interaction } = await setupRevealedSession(repo);
     const otherSession = await createSession(repo);
+    await setSessionCapabilities(repo, otherSession.sessionId, otherSession.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     const outsider = await joinSession(repo, otherSession.roomCode, "Outsider");
 
     await expect(
@@ -432,6 +437,7 @@ describe("AWARD_POINTS", () => {
     it("in-memory proof: awardPoints independently rejects an ineligible interaction, even when called directly", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       const alex = await joinSession(repo, session.roomCode, "Alex");
       await lockLobby(repo, session.sessionId, session.hostToken);
 
@@ -560,6 +566,7 @@ describe("AWARD_POINTS", () => {
     it("currentInteractionInstanceId is null before any interaction has started", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       const result = await getSession(repo, session.sessionId, session.hostToken);
       expect(result.currentInteractionInstanceId).toBeNull();

@@ -9,6 +9,7 @@ import {
   InvalidOptionsError,
   InvalidCorrectOptionIndexError,
   InvalidPointsError,
+  CapabilityNotAuthorizedError,
 } from "./types";
 
 const MAX_PROMPT_TEXT_LENGTH = 1000;
@@ -95,6 +96,22 @@ function resolvePoints(points: number | undefined): number {
  * no concurrent invariant (no state transition is being raced), only
  * an ordinal assignment scoped to a single host's own UI — see
  * SessionRepository.createPreparedQuestions's doc comment.
+ *
+ * Session Capability Architecture v1. `prepared_questions` rows are
+ * Session-owned configuration consumed by two independent activation
+ * paths: START_QUIZ's own dedicated pipeline, and START_SESSION's
+ * ad-hoc MULTIPLE_CHOICE (Trivia) branch — both read from this exact
+ * table (see start_quiz_atomically and start_session_atomically's own
+ * comments). A single authored batch may legitimately be split
+ * between the two if a Session declares both. Authorization here must
+ * therefore follow the real consumption graph, not either capability
+ * alone: this Session must have declared QUIZ or TRIVIA (or both) —
+ * gating on QUIZ alone would incorrectly block legitimate TRIVIA-only
+ * authoring, and leaving this ungated would let a Session that
+ * declares neither accumulate permanently dead, unreachable state,
+ * undermining the capability snapshot's own claim to be a complete,
+ * authoritative statement of what the Session was configured to
+ * support.
  */
 export async function prepareQuestions(
   repo: SessionRepository,
@@ -113,6 +130,14 @@ export async function prepareQuestions(
 
   if (session.state === "SESSION_COMPLETE") {
     throw new SessionAlreadyCompleteError();
+  }
+
+  const declaredCapabilities = session.declaredCapabilities ?? [];
+  if (
+    !declaredCapabilities.includes("QUIZ") &&
+    !declaredCapabilities.includes("TRIVIA")
+  ) {
+    throw new CapabilityNotAuthorizedError("QUIZ or TRIVIA");
   }
 
   const validated = questions.map((question) => {

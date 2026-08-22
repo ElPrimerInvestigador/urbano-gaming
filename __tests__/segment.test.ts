@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
 import { completeSession } from "../lib/session/completeSession";
@@ -32,6 +33,7 @@ import {
  */
 async function setupLockedSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
+  await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
   const alex = await joinSession(repo, session.roomCode, "Alex");
   const jordan = await joinSession(repo, session.roomCode, "Jordan");
   await lockLobby(repo, session.sessionId, session.hostToken);
@@ -338,6 +340,7 @@ describe("Slice 008 — Segment / Turn grouping", () => {
     const segmentsBeforeStart = await repo.getSegmentsForSession(successor.sessionId);
     expect(segmentsBeforeStart).toHaveLength(0);
 
+    await setSessionCapabilities(repo, successor.sessionId, successor.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await joinSession(repo, successor.roomCode, "Alex");
     await lockLobby(repo, successor.sessionId, successor.hostToken);
     const firstOfSuccessor = await startSession(

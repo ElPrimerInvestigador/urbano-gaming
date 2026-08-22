@@ -8,6 +8,7 @@ import {
   EmptyDisplayNameError,
   DisplayNameTooLongError,
   GamingMemberAlreadyInSessionError,
+  SessionCapabilitiesNotDeclaredError,
 } from "@/lib/session/types";
 import { SupabaseGamingRepository } from "@/lib/gaming/db/supabaseGamingRepository";
 import {
@@ -132,6 +133,9 @@ export async function POST(
       return NextResponse.json({ error: err.message }, { status: 404 });
     }
     if (err instanceof LobbyNotOpenError) {
+      return NextResponse.json({ error: err.message }, { status: 409 });
+    }
+    if (err instanceof SessionCapabilitiesNotDeclaredError) {
       return NextResponse.json({ error: err.message }, { status: 409 });
     }
     if (err instanceof DisplayNameTakenError) {

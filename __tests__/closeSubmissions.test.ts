@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
 import { startSession } from "../lib/session/startSession";
@@ -17,6 +18,7 @@ import {
 
 async function setupActiveSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
+  await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
   const participant = await joinSession(repo, session.roomCode, "Alex");
   await lockLobby(repo, session.sessionId, session.hostToken);
   const interaction = await startSession(repo, session.sessionId, session.hostToken, {
@@ -52,6 +54,7 @@ describe("CLOSE_SUBMISSIONS", () => {
   it("rejects closing before any interaction has started (LOBBY_LOCKED)", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(

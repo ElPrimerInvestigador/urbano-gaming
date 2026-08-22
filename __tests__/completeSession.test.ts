@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
 import { getSession } from "../lib/session/getSession";
@@ -16,6 +17,7 @@ describe("COMPLETE_SESSION", () => {
   it("transitions a LOBBY_OPEN session to SESSION_COMPLETE and increments state_version", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const result = await completeSession(repo, session.sessionId, session.hostToken);
 
@@ -27,6 +29,7 @@ describe("COMPLETE_SESSION", () => {
   it("transitions a LOBBY_LOCKED session to SESSION_COMPLETE — Interpretation 2 allows any non-complete source state", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     const result = await completeSession(repo, session.sessionId, session.hostToken);
@@ -38,6 +41,7 @@ describe("COMPLETE_SESSION", () => {
   it("writes a SESSION_COMPLETED event", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await completeSession(repo, session.sessionId, session.hostToken);
     const events = repo._getEventsForSession(session.sessionId);
@@ -48,6 +52,7 @@ describe("COMPLETE_SESSION", () => {
   it("rejects a mismatched host token, leaving state unchanged", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await expect(
       completeSession(repo, session.sessionId, "wrong-token")
@@ -61,6 +66,7 @@ describe("COMPLETE_SESSION", () => {
   it("does not write a SESSION_COMPLETED event on a rejected host-token mismatch", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await expect(
       completeSession(repo, session.sessionId, "wrong-token")
@@ -81,6 +87,7 @@ describe("COMPLETE_SESSION", () => {
   it("rejects completing a session that is already SESSION_COMPLETE", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await completeSession(repo, session.sessionId, session.hostToken);
 
     await expect(
@@ -92,6 +99,7 @@ describe("COMPLETE_SESSION", () => {
     it("in-memory proof: concurrent completion attempts on the same session yield exactly one success", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       const attempts = await Promise.allSettled([
         completeSession(repo, session.sessionId, session.hostToken),
@@ -111,6 +119,7 @@ describe("COMPLETE_SESSION", () => {
     it("in-memory proof: completeSession independently rejects an already-complete session, even when called directly (bypassing the domain fast-path)", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       repo._forceComplete(session.sessionId);
 
       const event = {
@@ -127,6 +136,7 @@ describe("COMPLETE_SESSION", () => {
     it("in-memory proof: completeSession independently rejects a mismatched host token, even when called directly", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       const event = {
         sessionId: session.sessionId,
@@ -155,6 +165,7 @@ describe("COMPLETE_SESSION", () => {
     it("allows a new session to claim a room code once the original session is completed through the real command — no test backdoor", async () => {
       const repo = new InMemorySessionRepository();
       const first = await createSession(repo);
+      await setSessionCapabilities(repo, first.sessionId, first.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       await completeSession(repo, first.sessionId, first.hostToken);
 
@@ -182,6 +193,7 @@ describe("COMPLETE_SESSION", () => {
             predecessorSessionId: null,
             createdAt: now,
             updatedAt: now,
+            declaredCapabilities: [],
           },
           {
             sessionId: reusedSessionId,
@@ -195,6 +207,7 @@ describe("COMPLETE_SESSION", () => {
     it("JOIN_SESSION rejects a room code whose session was completed through the real command", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       await completeSession(repo, session.sessionId, session.hostToken);
 
       await expect(
@@ -205,6 +218,7 @@ describe("COMPLETE_SESSION", () => {
     it("GET_SESSION still returns state and participants after real completion", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       const participant = await joinSession(repo, session.roomCode, "Casey");
       await completeSession(repo, session.sessionId, session.hostToken);
 

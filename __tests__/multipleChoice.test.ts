@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
 import { startSession } from "../lib/session/startSession";
@@ -38,6 +39,7 @@ const ANIMAL_QUESTION = {
 
 async function setupPreparedSession(repo: InMemorySessionRepository) {
   const session = await createSession(repo);
+  await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
   const alex = await joinSession(repo, session.roomCode, "Alex");
   const jordan = await joinSession(repo, session.roomCode, "Jordan");
   await lockLobby(repo, session.sessionId, session.hostToken);
@@ -52,6 +54,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("persists a batch of questions with sequential ordinals starting at 1", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const result = await prepareQuestions(repo, session.sessionId, session.hostToken, [
       PIZZA_QUESTION,
@@ -67,6 +70,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("defaults pointsForCorrect to 10 when points is not supplied", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const result = await prepareQuestions(repo, session.sessionId, session.hostToken, [
       ANIMAL_QUESTION,
@@ -78,6 +82,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("continues ordinals across separate PREPARE_QUESTIONS calls", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await prepareQuestions(repo, session.sessionId, session.hostToken, [PIZZA_QUESTION]);
     const second = await prepareQuestions(repo, session.sessionId, session.hostToken, [
@@ -90,6 +95,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("rejects an empty (post-trim) prompt", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await expect(
       prepareQuestions(repo, session.sessionId, session.hostToken, [
@@ -101,6 +107,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("rejects fewer than two options", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await expect(
       prepareQuestions(repo, session.sessionId, session.hostToken, [
@@ -112,6 +119,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("rejects duplicate options", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await expect(
       prepareQuestions(repo, session.sessionId, session.hostToken, [
@@ -123,6 +131,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("rejects a correctOptionIndex out of bounds", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await expect(
       prepareQuestions(repo, session.sessionId, session.hostToken, [
@@ -134,6 +143,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("rejects a non-positive or excessive points value", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await expect(
       prepareQuestions(repo, session.sessionId, session.hostToken, [
@@ -151,6 +161,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("rejects a mismatched host token", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await expect(
       prepareQuestions(repo, session.sessionId, "wrong-token", [PIZZA_QUESTION])
@@ -173,6 +184,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("rejects preparing questions once the session is complete", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     repo._forceComplete(session.sessionId);
 
     await expect(
@@ -183,6 +195,7 @@ describe("PREPARE_QUESTIONS", () => {
   it("is allowed before the lobby is locked", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const result = await prepareQuestions(repo, session.sessionId, session.hostToken, [
       PIZZA_QUESTION,
@@ -275,6 +288,7 @@ describe("START_SESSION with an explicit preparedQuestionId", () => {
   it("rejects a preparedQuestionId that does not exist", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(
@@ -289,6 +303,7 @@ describe("START_SESSION with an explicit preparedQuestionId", () => {
     const repo = new InMemorySessionRepository();
     const { prepared } = await setupPreparedSession(repo);
     const otherSession = await createSession(repo);
+    await setSessionCapabilities(repo, otherSession.sessionId, otherSession.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, otherSession.sessionId, otherSession.hostToken);
 
     await expect(
@@ -438,6 +453,7 @@ describe("Automatic evaluation and scoring on REVEAL_RESULTS", () => {
   it("leaves Open Response's REVEAL_RESULTS behavior completely unaffected — no point_awards are created", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     const alex = await joinSession(repo, session.roomCode, "Alex");
     await lockLobby(repo, session.sessionId, session.hostToken);
     await startSession(repo, session.sessionId, session.hostToken, {

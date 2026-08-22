@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { lockLobby } from "../lib/session/lockLobby";
 import { completeSession } from "../lib/session/completeSession";
@@ -22,6 +23,7 @@ describe("START_SESSION", () => {
   it("creates a new interaction instance in PROMPT_ACTIVE for a LOBBY_LOCKED session", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     const result = await startSession(
@@ -40,6 +42,7 @@ describe("START_SESSION", () => {
   it("does not change the session's own state or state_version", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await startSession(repo, session.sessionId, session.hostToken, {
@@ -55,6 +58,7 @@ describe("START_SESSION", () => {
   it("writes an INTERACTION_STARTED event with the interaction instance and prompt ids", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     const result = await startSession(repo, session.sessionId, session.hostToken, {
@@ -75,6 +79,7 @@ describe("START_SESSION", () => {
   it("trims the host-supplied prompt text before persisting it", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     const result = await startSession(
@@ -91,6 +96,7 @@ describe("START_SESSION", () => {
   it("rejects an empty (post-trim) prompt", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(
@@ -104,6 +110,7 @@ describe("START_SESSION", () => {
   it("rejects a prompt exceeding 1000 characters after trimming", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(
@@ -117,6 +124,7 @@ describe("START_SESSION", () => {
   it("rejects starting a session that was never locked (still LOBBY_OPEN)", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await expect(
       startSession(repo, session.sessionId, session.hostToken, {
@@ -129,6 +137,7 @@ describe("START_SESSION", () => {
   it("rejects starting again while the current interaction is still PROMPT_ACTIVE", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
     await startSession(repo, session.sessionId, session.hostToken, {
       engineType: "OPEN_RESPONSE",
@@ -146,6 +155,7 @@ describe("START_SESSION", () => {
   it("rejects starting again while the current interaction is SUBMISSIONS_CLOSED", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
     await startSession(repo, session.sessionId, session.hostToken, {
       engineType: "OPEN_RESPONSE",
@@ -164,6 +174,7 @@ describe("START_SESSION", () => {
   it("rejects starting a session that was administratively completed", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
     await completeSession(repo, session.sessionId, session.hostToken);
 
@@ -178,6 +189,7 @@ describe("START_SESSION", () => {
   it("rejects a mismatched host token, leaving state unchanged", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     await lockLobby(repo, session.sessionId, session.hostToken);
 
     await expect(
@@ -207,6 +219,7 @@ describe("START_SESSION", () => {
     it("in-memory proof: concurrent start attempts on the same session yield exactly one success", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       await lockLobby(repo, session.sessionId, session.hostToken);
 
       const attempts = await Promise.allSettled([
@@ -231,6 +244,7 @@ describe("START_SESSION", () => {
     it("in-memory proof: startSession independently rejects a session that is not LOBBY_LOCKED, even when called directly (bypassing the domain fast-path)", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       await expect(
         repo.startSession(session.sessionId, session.hostToken, {
@@ -243,6 +257,7 @@ describe("START_SESSION", () => {
     it("in-memory proof: startSession independently rejects a mismatched host token, even when called directly", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       await lockLobby(repo, session.sessionId, session.hostToken);
 
       await expect(
@@ -269,6 +284,7 @@ describe("START_SESSION", () => {
     it("GET_SESSION returns the created prompt and interactionNumber once started", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       await lockLobby(repo, session.sessionId, session.hostToken);
       const started = await startSession(
         repo,
@@ -289,6 +305,7 @@ describe("START_SESSION", () => {
     it("currentPrompt remains visible after the session is later completed", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       await lockLobby(repo, session.sessionId, session.hostToken);
       const started = await startSession(
         repo,
@@ -308,6 +325,7 @@ describe("START_SESSION", () => {
   it("full integrated sequence: create -> join -> lock -> start -> get reflects the prompt", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     const participant = await joinSession(repo, session.roomCode, "Alex");
     await lockLobby(repo, session.sessionId, session.hostToken);
     await startSession(repo, session.sessionId, session.hostToken, {
@@ -328,6 +346,7 @@ describe("START_SESSION", () => {
     it("allows a second interaction to start once the first has been revealed", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       await lockLobby(repo, session.sessionId, session.hostToken);
 
       const first = await startSession(
@@ -361,6 +380,7 @@ describe("START_SESSION", () => {
     it("GET_SESSION's current interaction is always the most recently started one, and interactionNumber counts all of them", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       await lockLobby(repo, session.sessionId, session.hostToken);
 
       await startSession(repo, session.sessionId, session.hostToken, {
@@ -393,6 +413,7 @@ describe("START_SESSION", () => {
     it("a prior interaction's submissions are not exposed as the current interaction's submissions", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       await lockLobby(repo, session.sessionId, session.hostToken);
 
       await startSession(repo, session.sessionId, session.hostToken, {

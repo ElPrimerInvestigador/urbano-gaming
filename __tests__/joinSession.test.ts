@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createSession } from "../lib/session/createSession";
+import { setSessionCapabilities } from "../lib/session/setSessionCapabilities";
 import { joinSession } from "../lib/session/joinSession";
 import { InMemorySessionRepository } from "../lib/session/db/inMemorySessionRepository";
 import {
@@ -15,6 +16,7 @@ describe("JOIN_SESSION", () => {
   it("allows a participant to join an active LOBBY_OPEN session", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const result = await joinSession(repo, session.roomCode, "Alex");
 
@@ -28,6 +30,7 @@ describe("JOIN_SESSION", () => {
   it("writes a PARTICIPANT_JOINED event on join", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const result = await joinSession(repo, session.roomCode, "Jordan");
     const events = repo._getEventsForSession(session.sessionId);
@@ -43,6 +46,7 @@ describe("JOIN_SESSION", () => {
   it("rejects a duplicate normalized display name within the same session", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     await joinSession(repo, session.roomCode, "Sam");
 
@@ -54,6 +58,7 @@ describe("JOIN_SESSION", () => {
   it("does NOT return the original participant on a repeated request with the same name — this is explicit MVP behavior, not idempotent retry", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const first = await joinSession(repo, session.roomCode, "Riley");
 
@@ -74,7 +79,9 @@ describe("JOIN_SESSION", () => {
   it("allows the same display name in two different sessions", async () => {
     const repo = new InMemorySessionRepository();
     const sessionA = await createSession(repo);
+    await setSessionCapabilities(repo, sessionA.sessionId, sessionA.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     const sessionB = await createSession(repo);
+    await setSessionCapabilities(repo, sessionB.sessionId, sessionB.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
     const a = await joinSession(repo, sessionA.roomCode, "Casey");
     const b = await joinSession(repo, sessionB.roomCode, "Casey");
@@ -94,6 +101,7 @@ describe("JOIN_SESSION", () => {
     it("accepts a lowercase version of the room code", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       const result = await joinSession(
         repo,
@@ -107,6 +115,7 @@ describe("JOIN_SESSION", () => {
     it("accepts a room code with leading/trailing whitespace", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       const result = await joinSession(
         repo,
@@ -120,6 +129,7 @@ describe("JOIN_SESSION", () => {
     it("accepts a room code that is both mixed-case and padded", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       const mangled = ` ${session.roomCode.toLowerCase()} `;
 
       const result = await joinSession(repo, mangled, "Robin");
@@ -131,6 +141,7 @@ describe("JOIN_SESSION", () => {
   it("rejects joining a session that is not LOBBY_OPEN (application-layer pre-check)", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     repo._forceState(session.sessionId, "LOBBY_LOCKED");
 
     await expect(
@@ -141,6 +152,7 @@ describe("JOIN_SESSION", () => {
   it("does not persist a participant or event when the session is not joinable", async () => {
     const repo = new InMemorySessionRepository();
     const session = await createSession(repo);
+    await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
     repo._forceState(session.sessionId, "SESSION_PAUSED");
 
     await expect(joinSession(repo, session.roomCode, "Blocked")).rejects.toThrow();
@@ -154,6 +166,7 @@ describe("JOIN_SESSION", () => {
     it("rejects a display name that is empty after trimming", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       await expect(
         joinSession(repo, session.roomCode, "   ")
@@ -163,6 +176,7 @@ describe("JOIN_SESSION", () => {
     it("rejects a display name that is empty after trimming without touching the repository", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       await expect(joinSession(repo, session.roomCode, "")).rejects.toBeInstanceOf(
         EmptyDisplayNameError
@@ -173,6 +187,7 @@ describe("JOIN_SESSION", () => {
     it("rejects a display name exceeding 40 characters after trimming", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       const tooLong = "A".repeat(41);
 
       await expect(
@@ -183,6 +198,7 @@ describe("JOIN_SESSION", () => {
     it("accepts a display name of exactly 40 characters after trimming", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
       const exactly40 = "B".repeat(40);
 
       const result = await joinSession(repo, session.roomCode, exactly40);
@@ -192,6 +208,7 @@ describe("JOIN_SESSION", () => {
     it("preserves the trimmed display name for presentation while normalizing to lowercase for uniqueness", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       const result = await joinSession(repo, session.roomCode, "  Dana  ");
       expect(result.displayName).toBe("Dana");
@@ -206,6 +223,7 @@ describe("JOIN_SESSION", () => {
     it("allows Unicode and emoji display names within the length rule", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       const result = await joinSession(repo, session.roomCode, "José 🎉");
       expect(result.displayName).toBe("José 🎉");
@@ -216,6 +234,7 @@ describe("JOIN_SESSION", () => {
     it("in-memory proof: joinParticipant independently rejects a session that is no longer LOBBY_OPEN, even if called directly (bypassing joinSession's pre-check)", async () => {
       const repo = new InMemorySessionRepository();
       const session = await createSession(repo);
+      await setSessionCapabilities(repo, session.sessionId, session.hostToken, ["OPEN_RESPONSE", "VOTING", "TRIVIA", "QUIZ"]);
 
       // Simulate the race: state changes after an application-layer lookup
       // would have already passed, then the persistence call happens.

@@ -180,6 +180,19 @@ export interface SessionRecord {
   predecessorSessionId: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Session Capability Architecture v1 (Product/Session_Capability_Architecture.md,
+   * ADR-036). null = LEGACY_UNDECLARED (a session created before this
+   * column existed — its historical Interaction Instance evidence
+   * remains fully authoritative; this field concerns future
+   * authorization only). A non-null array — possibly empty — is the
+   * declared capability snapshot for every session created after this
+   * feature: freely settable via SET_SESSION_CAPABILITIES while no
+   * real participant has ever joined, immutable the instant one does.
+   * Order carries no meaning; the sole write path always stores it
+   * deduplicated and canonically sorted.
+   */
+  declaredCapabilities: string[] | null;
 }
 
 export interface CreateSessionResult {
@@ -188,6 +201,25 @@ export interface CreateSessionResult {
   hostToken: string;
   state: SessionState;
   stateVersion: number;
+}
+
+/**
+ * Session Capability Architecture v1. The Product-approved, ad-hoc-
+ * composable capability catalog for this slice — see
+ * Product/Session_Capability_Architecture.md. MULTIPLE_CHOICE is
+ * deliberately absent: it is an internal Interaction Engine primitive,
+ * never a Product capability. TRIVIA and QUIZ both compose it
+ * internally but are authorized independently of one another.
+ */
+export type SessionCapabilityKey = "OPEN_RESPONSE" | "VOTING" | "TRIVIA" | "QUIZ";
+
+/**
+ * Result of a successful SET_SESSION_CAPABILITIES.
+ */
+export interface SetSessionCapabilitiesResult {
+  sessionId: string;
+  declaredCapabilities: string[];
+  locked: boolean;
 }
 
 /**
@@ -636,6 +668,26 @@ export interface GetSessionResult {
    * host and participant callers.
    */
   currentQuiz: QuizSummary | null;
+  /**
+   * Session Capability Architecture v1. Raw declared set, `[]` for
+   * both "not yet declared" and "declared empty," `[]` also for
+   * legacyUndeclared (see that field for the actual distinction).
+   */
+  declaredCapabilities: string[];
+  /**
+   * Derived, never persisted separately — true the moment this
+   * session has real participant evidence (participants.length > 0
+   * here), computed identically to set_session_capabilities_atomically's
+   * own live check. One source of truth.
+   */
+  capabilitiesLocked: boolean;
+  /**
+   * True only for a session whose declaredCapabilities column is
+   * NULL — created before this feature existed. Distinct from a
+   * freshly created, still-undeclared session (declaredCapabilities
+   * `[]`, legacyUndeclared false).
+   */
+  legacyUndeclared: boolean;
 }
 
 /** Raised when a generated room code collides with an active session. */
@@ -1251,5 +1303,62 @@ export class QuizExpiryNotReachedError extends Error {
       "The Quiz deadline has not passed yet — only the host may close it early."
     );
     this.name = "QuizExpiryNotReachedError";
+  }
+}
+
+/**
+ * Session Capability Architecture v1. Raised by SET_SESSION_CAPABILITIES
+ * when a supplied key is not in the current Product-approved catalog
+ * (SessionCapabilityKey).
+ */
+export class InvalidCapabilityKeyError extends Error {
+  constructor() {
+    super("Must be one of OPEN_RESPONSE, VOTING, TRIVIA, QUIZ.");
+    this.name = "InvalidCapabilityKeyError";
+  }
+}
+
+/**
+ * Session Capability Architecture v1. Raised by SET_SESSION_CAPABILITIES
+ * when this session already has real participant evidence and the
+ * caller supplied a set different from the one already locked in.
+ * Same-value redeclaration is idempotent success, not this error.
+ */
+export class CapabilitiesLockedError extends Error {
+  constructor() {
+    super(
+      "This session already has a real participant and its declared capabilities cannot change."
+    );
+    this.name = "CapabilitiesLockedError";
+  }
+}
+
+/**
+ * Session Capability Architecture v1. Raised by JOIN_SESSION when the
+ * target session has not declared any gameplay capability yet (null
+ * or empty declaredCapabilities) — the evidence-creating precondition
+ * mirroring MATCH_NOT_CLASSIFIED's own established boundary.
+ */
+export class SessionCapabilitiesNotDeclaredError extends Error {
+  constructor() {
+    super("This session has not declared any gameplay capability yet.");
+    this.name = "SessionCapabilitiesNotDeclaredError";
+  }
+}
+
+/**
+ * Session Capability Architecture v1. Raised when a gameplay-
+ * activating command (START_SESSION, START_QUIZ) targets a capability
+ * this session has not declared. Server-authoritative — never
+ * bypassable by a stale UI or a direct API call.
+ */
+export class CapabilityNotAuthorizedError extends Error {
+  constructor(capability?: string) {
+    super(
+      capability
+        ? `This session has not declared the ${capability} capability.`
+        : "This session has not declared the required capability."
+    );
+    this.name = "CapabilityNotAuthorizedError";
   }
 }

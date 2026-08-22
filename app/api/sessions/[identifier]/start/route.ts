@@ -20,6 +20,7 @@ import {
   VotingSourceInteractionNotFoundError,
   VotingSourceInteractionNotEligibleError,
   AmbiguousStartSessionTargetError,
+  CapabilityNotAuthorizedError,
 } from "@/lib/session/types";
 
 /**
@@ -320,6 +321,9 @@ export async function POST(
       return NextResponse.json({ error: err.message }, { status: 404 });
     }
     if (err instanceof HostTokenMismatchError) {
+      return NextResponse.json({ error: err.message }, { status: 403 });
+    }
+    if (err instanceof CapabilityNotAuthorizedError) {
       return NextResponse.json({ error: err.message }, { status: 403 });
     }
     if (err instanceof LobbyNotLockedError) {

@@ -1,5 +1,10 @@
 import type { SessionRepository } from "./db/sessionRepository";
-import type { StartSessionResult, StartTurnConfig, SegmentTarget } from "./types";
+import type {
+  StartSessionResult,
+  StartTurnConfig,
+  SegmentTarget,
+  SessionCapabilityKey,
+} from "./types";
 import {
   SessionNotFoundError,
   HostTokenMismatchError,
@@ -9,6 +14,7 @@ import {
   EmptyPromptTextError,
   PromptTextTooLongError,
   InvalidVotingCandidatesError,
+  CapabilityNotAuthorizedError,
 } from "./types";
 
 const MAX_PROMPT_TEXT_LENGTH = 1000;
@@ -151,6 +157,19 @@ export async function startSession(
 
   if (session.state !== "LOBBY_LOCKED") {
     throw new LobbyNotLockedError(session.state);
+  }
+
+  // Session Capability Architecture v1: fast-path convenience mirroring
+  // every other precondition here — the repository's startSession call
+  // is the authoritative re-check (see 0111's identical guard).
+  const requiredCapability: SessionCapabilityKey =
+    normalizedConfig.engineType === "MULTIPLE_CHOICE"
+      ? "TRIVIA"
+      : normalizedConfig.engineType === "VOTING"
+      ? "VOTING"
+      : "OPEN_RESPONSE";
+  if (!(session.declaredCapabilities ?? []).includes(requiredCapability)) {
+    throw new CapabilityNotAuthorizedError(requiredCapability);
   }
 
   const interactionInstances = await repo.getInteractionInstancesForSession(

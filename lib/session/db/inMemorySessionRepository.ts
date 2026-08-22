@@ -6,6 +6,7 @@ import type {
   VotingResultSummary,
   SegmentTarget,
   StartTurnConfig,
+  SessionCapabilityKey,
 } from "../types";
 import {
   RoomCodeCollisionError,
@@ -42,7 +43,18 @@ import {
   QuizExpiryNotReachedError,
   InvalidOptionSelectionError,
   GamingMemberAlreadyInSessionError,
+  InvalidCapabilityKeyError,
+  CapabilitiesLockedError,
+  SessionCapabilitiesNotDeclaredError,
+  CapabilityNotAuthorizedError,
 } from "../types";
+
+const SESSION_CAPABILITY_KEYS: SessionCapabilityKey[] = [
+  "OPEN_RESPONSE",
+  "VOTING",
+  "TRIVIA",
+  "QUIZ",
+];
 import type {
   SessionEventRecord,
   ParticipantRecord,
@@ -269,6 +281,10 @@ export class InMemorySessionRepository implements SessionRepository {
       throw new LobbyNotOpenError(session.state);
     }
 
+    if ((session.declaredCapabilities ?? []).length === 0) {
+      throw new SessionCapabilitiesNotDeclaredError();
+    }
+
     const nameCollision = [...this.participants.values()].some(
       (participant) =>
         participant.sessionId === record.sessionId &&
@@ -390,6 +406,63 @@ export class InMemorySessionRepository implements SessionRepository {
     return { state: updated.state, stateVersion: updated.stateVersion };
   }
 
+  async setSessionCapabilities(
+    sessionId: string,
+    hostToken: string,
+    capabilities: string[]
+  ): Promise<{ declaredCapabilities: string[]; locked: boolean }> {
+    const session = this.sessions.get(sessionId);
+
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+
+    if (session.hostToken !== hostToken) {
+      throw new HostTokenMismatchError();
+    }
+
+    const normalized = [...new Set(capabilities)].sort();
+
+    if (
+      normalized.some(
+        (key) => !SESSION_CAPABILITY_KEYS.includes(key as SessionCapabilityKey)
+      )
+    ) {
+      throw new InvalidCapabilityKeyError();
+    }
+
+    const hasParticipants = [...this.participants.values()].some(
+      (participant) => participant.sessionId === sessionId
+    );
+
+    if (hasParticipants) {
+      const current = session.declaredCapabilities ?? [];
+      const isSameSet =
+        current.length === normalized.length &&
+        current.every((key, index) => key === normalized[index]);
+
+      if (!isSameSet) {
+        throw new CapabilitiesLockedError();
+      }
+
+      return { declaredCapabilities: current, locked: true };
+    }
+
+    this.sessions.set(sessionId, {
+      ...session,
+      declaredCapabilities: normalized,
+      updatedAt: new Date().toISOString(),
+    });
+
+    this.events.push({
+      sessionId,
+      eventType: "SESSION_CAPABILITIES_DECLARED",
+      payload: { declaredCapabilities: normalized },
+    });
+
+    return { declaredCapabilities: normalized, locked: false };
+  }
+
   async getParticipantsForSession(
     sessionId: string
   ): Promise<ParticipantRecord[]> {
@@ -491,6 +564,21 @@ export class InMemorySessionRepository implements SessionRepository {
 
     if (session.state !== "LOBBY_LOCKED") {
       throw new LobbyNotLockedError(session.state);
+    }
+
+    // Session Capability Architecture v1: mirrors
+    // start_session_atomically's identical guard (0111) — TRIVIA for
+    // the ad-hoc MULTIPLE_CHOICE path, VOTING, or OPEN_RESPONSE. QUIZ
+    // is never reachable here (see startQuiz's own, structurally
+    // separate method below).
+    const requiredCapability: SessionCapabilityKey =
+      config.engineType === "MULTIPLE_CHOICE"
+        ? "TRIVIA"
+        : config.engineType === "VOTING"
+        ? "VOTING"
+        : "OPEN_RESPONSE";
+    if (!(session.declaredCapabilities ?? []).includes(requiredCapability)) {
+      throw new CapabilityNotAuthorizedError(requiredCapability);
     }
 
     // Re-invocable precondition: the session's current interaction
@@ -1057,6 +1145,20 @@ export class InMemorySessionRepository implements SessionRepository {
     }
   }
 
+  /**
+   * Test-only helper simulating a LEGACY_UNDECLARED row (declared_
+   * capabilities null) — the only way such a row can exist is a
+   * session that predates Session Capability Architecture v1, which
+   * this repository has no other way to construct directly.
+   */
+  _setDeclaredCapabilitiesForTest(sessionId: string, capabilities: string[] | null) {
+    const session = this.sessions.get(sessionId);
+
+    if (session) {
+      this.sessions.set(sessionId, { ...session, declaredCapabilities: capabilities });
+    }
+  }
+
   /** Test-only helper to force a session into an arbitrary state directly. */
   _forceState(sessionId: string, state: SessionRecord["state"]) {
     const session = this.sessions.get(sessionId);
@@ -1085,6 +1187,22 @@ export class InMemorySessionRepository implements SessionRepository {
       pointsForCorrect: number;
     }>
   ): Promise<PreparedQuestionRecord[]> {
+    // Session Capability Architecture v1: authoritative re-check,
+    // independent of the domain layer's own fast-path — see
+    // prepareQuestions.ts's comment for why "QUIZ or TRIVIA," not
+    // either alone.
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      throw new SessionNotFoundError();
+    }
+    const declaredCapabilities = session.declaredCapabilities ?? [];
+    if (
+      !declaredCapabilities.includes("QUIZ") &&
+      !declaredCapabilities.includes("TRIVIA")
+    ) {
+      throw new CapabilityNotAuthorizedError("QUIZ or TRIVIA");
+    }
+
     const existing = await this.getPreparedQuestionsForSession(sessionId);
     let nextOrdinal =
       existing.length > 0
@@ -1294,6 +1412,12 @@ export class InMemorySessionRepository implements SessionRepository {
     }
     if (session.state !== "LOBBY_LOCKED") {
       throw new LobbyNotLockedError(session.state);
+    }
+
+    // Session Capability Architecture v1: mirrors start_quiz_atomically's
+    // identical guard (0112).
+    if (!(session.declaredCapabilities ?? []).includes("QUIZ")) {
+      throw new CapabilityNotAuthorizedError("QUIZ");
     }
 
     const previousInteraction = this.getCurrentInteractionInstance(sessionId);
