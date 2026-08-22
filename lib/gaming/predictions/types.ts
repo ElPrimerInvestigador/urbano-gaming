@@ -40,6 +40,18 @@ export interface MatchRecord {
   kickoffAt: string;
   cancelledAt: string | null;
   activityClassification: "TRAINING" | "CASUAL" | "RANKED" | "OFFICIAL" | null;
+  /**
+   * PLAYABLE MATCH != XP-ELIGIBLE MATCH. Independent of, and never
+   * derivable from, activityClassification — a Match may be fully
+   * playable (classified, activated, accepting Predictions) with this
+   * left null indefinitely; Prediction submission has no dependency on
+   * it. null = no eligibility decision made yet; true = declared
+   * eligible for persistent Gaming XP; false = explicitly declared not
+   * eligible. Locked (immutable) the instant Prediction or Result
+   * evidence exists for this Match — see
+   * set_match_xp_eligibility_atomically (0102).
+   */
+  xpEligible: boolean | null;
   createdAt: string;
 }
 
@@ -234,6 +246,13 @@ export class ActivityClassificationLockedError extends Error {
   constructor() {
     super("This match already has Prediction or Result evidence and its Activity Classification cannot change.");
     this.name = "ActivityClassificationLockedError";
+  }
+}
+
+export class XpEligibilityLockedError extends Error {
+  constructor() {
+    super("This match already has Prediction or Result evidence and its XP eligibility cannot change.");
+    this.name = "XpEligibilityLockedError";
   }
 }
 

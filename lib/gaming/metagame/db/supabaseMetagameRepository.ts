@@ -53,6 +53,7 @@ function mapSummary(row: any): ExperienceSummaryRecord {
     evidence: row.evidence ?? {},
     correctDimensionCount: row.correct_dimension_count ?? null,
     correctDimensionKeys: row.correct_dimension_keys ?? null,
+    xpEligible: row.xp_eligible,
     createdAt: row.created_at,
   };
 }
@@ -115,6 +116,7 @@ export class SupabaseMetagameRepository implements MetagameRepository {
       p_evidence: input.evidence,
       p_correct_dimension_count: input.correctDimensionCount ?? null,
       p_correct_dimension_keys: input.correctDimensionKeys ?? null,
+      p_xp_eligible: input.xpEligible ?? false,
     });
 
     if (error) {

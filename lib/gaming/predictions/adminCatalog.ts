@@ -162,6 +162,33 @@ export async function setMatchActivityClassification(
   return repo.setMatchActivityClassification(matchId, activityClassification as ActivityClassificationInput);
 }
 
+/**
+ * SET_MATCH_XP_ELIGIBILITY — declares (or re-declares, while still
+ * free to change) whether Predictions on this Match are eligible to
+ * generate persistent Gaming XP. PLAYABLE MATCH != XP-ELIGIBLE MATCH:
+ * unlike Activity Classification, this has no precondition for
+ * Prediction submission — a Match may be fully playable with this
+ * left undeclared (null) indefinitely. Becomes immutable the moment
+ * Prediction or Result evidence exists (enforced inside
+ * set_match_xp_eligibility_atomically itself), for the same reason
+ * Activity Classification locks: previously non-XP activity must
+ * never be retroactively converted into XP-eligible activity, and a
+ * currently-eligible Match must never be quietly un-curated after
+ * members have already earned real recognition under it.
+ *
+ * No HTTP admin route exists for this, matching Activity
+ * Classification's own established precedent exactly (Phase 1 has no
+ * admin route for that either) — this is the same "test/fixture seam,
+ * called directly" posture, not an oversight.
+ */
+export async function setMatchXpEligibility(
+  repo: PredictionsRepository,
+  matchId: string,
+  xpEligible: boolean
+): Promise<{ matchId: string; xpEligible: boolean; locked: boolean }> {
+  return repo.setMatchXpEligibility(matchId, xpEligible);
+}
+
 export async function createVenue(
   repo: PredictionsRepository,
   input: { name: string; latitude: number; longitude: number; radiusMeters: number }

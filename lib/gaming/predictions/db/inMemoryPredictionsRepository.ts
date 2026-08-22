@@ -23,6 +23,7 @@ import {
   KickoffPassedError,
   MatchNotClassifiedError,
   ActivityClassificationLockedError,
+  XpEligibilityLockedError,
   VenueActivationNotFoundError,
   VenueActivationMatchMismatchError,
   VenueActivationDisabledError,
@@ -163,6 +164,7 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
       kickoffAt: input.kickoffAt,
       cancelledAt: null,
       activityClassification: null,
+      xpEligible: null,
       createdAt: new Date().toISOString(),
     };
     this.matches.set(record.matchId, record);
@@ -207,6 +209,27 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
 
     this.matches.set(matchId, { ...existing, activityClassification });
     return { matchId, activityClassification, locked: false };
+  }
+
+  async setMatchXpEligibility(
+    matchId: string,
+    xpEligible: boolean
+  ): Promise<{ matchId: string; xpEligible: boolean; locked: boolean }> {
+    const existing = this.matches.get(matchId);
+    if (!existing) throw new MatchNotFoundError();
+
+    const hasPredictions = [...this.predictions.values()].some((p) => p.matchId === matchId);
+    const hasResults = [...this.matchResults.values()].some((r) => r.matchId === matchId);
+
+    if (hasPredictions || hasResults) {
+      if (existing.xpEligible !== xpEligible) {
+        throw new XpEligibilityLockedError();
+      }
+      return { matchId, xpEligible: existing.xpEligible!, locked: true };
+    }
+
+    this.matches.set(matchId, { ...existing, xpEligible });
+    return { matchId, xpEligible, locked: false };
   }
 
   async getMatchById(matchId: string): Promise<MatchRecord | null> {
@@ -726,6 +749,7 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
         },
         correctDimensionCount: evaluated.correctDimensionCount,
         correctDimensionKeys: evaluated.correctDimensionKeys,
+        xpEligible: match.xpEligible ?? false,
       });
       await this.metagame.processExperienceSummaryConsequences(experienceSummaryId);
 
@@ -839,6 +863,7 @@ export class InMemoryPredictionsRepository implements PredictionsRepository {
         },
         correctDimensionCount: evaluated.correctDimensionCount,
         correctDimensionKeys: evaluated.correctDimensionKeys,
+        xpEligible: match.xpEligible ?? false,
       });
       await this.metagame.processExperienceSummaryConsequences(newExperienceSummaryId);
 

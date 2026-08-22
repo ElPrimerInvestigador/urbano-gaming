@@ -1,0 +1,44 @@
+-- Migration: 0101_add_xp_eligible_to_matches
+-- Soccer Predictions — XP Eligibility / Calibration Support Slice.
+--
+-- The one bounded gap identified by the XP Activation / Calibration
+-- Classification gate: PLAYABLE MATCH != XP-ELIGIBLE MATCH. Nothing in
+-- the schema before this migration distinguished the two — Activity
+-- Classification only ever separates TRAINING (never XP) from
+-- everything else, and does not, and must not, also encode which of
+-- the non-TRAINING matches belong to the initial curated XP catalog
+-- research calls for (an OFFICIAL match need not yet be curated; the
+-- first curated match need not be OFFICIAL — these are genuinely
+-- different Product concepts, and conflating them would be exactly
+-- the semantic abuse the classification gate warned against).
+-- venue_activations was considered and rejected for the same
+-- structural reason 0082 already rejected it for Activity
+-- Classification: it is a many-rows-per-Match join table, and XP
+-- eligibility — like Activity Classification — belongs to the one
+-- logical Match, never multiplied by how many Venues broadcast it.
+--
+-- Nullable, no default, mirroring activity_classification (0082)
+-- exactly: NULL means "no eligibility decision has been made yet" —
+-- a genuinely distinct state from "explicitly declared not eligible"
+-- (false). A Match may be fully playable (classified, activated,
+-- accepting Predictions) with xp_eligible left NULL indefinitely;
+-- Prediction submission has no dependency on this column at all,
+-- unlike Activity Classification. Locking (immutable once Prediction
+-- or Result evidence exists) is enforced by
+-- set_match_xp_eligibility_atomically (0102), not by a trigger or a
+-- CHECK constraint here, matching this repository's established
+-- convention of enforcing invariants inside atomic functions.
+--
+-- No separate declared_at/declared_by provenance column is added:
+-- matches.created_at plus the immutable evidence trail in
+-- experience_summaries (0102/0103) already gives complete historical
+-- provenance once real evidence exists, and this repository's own
+-- established convention (see official_goal_events' own migration
+-- comment) is to avoid redundant state that is otherwise derivable.
+--
+-- Production holds zero matches rows (independently reconfirmed
+-- immediately before this migration was authored) — this is a clean
+-- additive column, not a backfill.
+
+alter table matches
+  add column xp_eligible boolean null;

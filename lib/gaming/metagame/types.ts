@@ -54,6 +54,19 @@ export interface ExperienceSummaryRecord {
   evidence: Record<string, unknown>;
   correctDimensionCount: number | null;
   correctDimensionKeys: string[] | null;
+  /**
+   * PLAYABLE MATCH (or equivalent, for any future Experience) !=
+   * XP-ELIGIBLE MATCH. Copied by the reporting Experience from its own
+   * governing fact at authorship time — this field is the entire
+   * reason this module never needs to query any Experience's own
+   * runtime tables to decide XP consequences (see
+   * processExperienceSummaryConsequences). Always present, always a
+   * definite boolean: a Summary is only ever authored once real
+   * evidence exists, at which point the governing fact is already
+   * resolved. Consequence processing consumes only this field, never
+   * an Experience-specific eligibility concept.
+   */
+  xpEligible: boolean;
   createdAt: string;
 }
 
@@ -74,6 +87,8 @@ export interface RecordExperienceSummaryInput {
   evidence: Record<string, unknown>;
   correctDimensionCount?: number | null;
   correctDimensionKeys?: string[] | null;
+  /** Defaults to false (fail-closed) when omitted — never silently eligible. */
+  xpEligible?: boolean;
 }
 
 export interface RecordExperienceSummaryResult {

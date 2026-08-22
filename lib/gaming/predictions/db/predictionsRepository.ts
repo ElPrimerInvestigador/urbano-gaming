@@ -56,6 +56,10 @@ export interface PredictionsRepository {
     matchId: string,
     activityClassification: "TRAINING" | "CASUAL" | "RANKED" | "OFFICIAL"
   ): Promise<{ matchId: string; activityClassification: string; locked: boolean }>;
+  setMatchXpEligibility(
+    matchId: string,
+    xpEligible: boolean
+  ): Promise<{ matchId: string; xpEligible: boolean; locked: boolean }>;
 
   // Venues
   createVenue(input: {

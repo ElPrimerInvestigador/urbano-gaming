@@ -24,6 +24,7 @@ import {
   KickoffPassedError,
   MatchNotClassifiedError,
   ActivityClassificationLockedError,
+  XpEligibilityLockedError,
   VenueActivationNotFoundError,
   VenueActivationMatchMismatchError,
   VenueActivationDisabledError,
@@ -68,6 +69,7 @@ function mapMatch(row: any): MatchRecord {
     kickoffAt: row.kickoff_at,
     cancelledAt: row.cancelled_at,
     activityClassification: row.activity_classification,
+    xpEligible: row.xp_eligible,
     createdAt: row.created_at,
   };
 }
@@ -201,6 +203,7 @@ function translateNamedError(error: { code?: string; message?: string }): Error 
     ["MATCH_CANCELLED", () => new MatchCancelledError()],
     ["MATCH_NOT_CLASSIFIED", () => new MatchNotClassifiedError()],
     ["ACTIVITY_CLASSIFICATION_LOCKED", () => new ActivityClassificationLockedError()],
+    ["XP_ELIGIBILITY_LOCKED", () => new XpEligibilityLockedError()],
     ["KICKOFF_PASSED", () => new KickoffPassedError()],
     ["VENUE_ACTIVATION_NOT_FOUND", () => new VenueActivationNotFoundError()],
     ["VENUE_ACTIVATION_MATCH_MISMATCH", () => new VenueActivationMatchMismatchError()],
@@ -393,6 +396,22 @@ export class SupabasePredictionsRepository implements PredictionsRepository {
     }
     const row = data[0];
     return { matchId: row.match_id, activityClassification: row.activity_classification, locked: row.locked };
+  }
+
+  async setMatchXpEligibility(
+    matchId: string,
+    xpEligible: boolean
+  ): Promise<{ matchId: string; xpEligible: boolean; locked: boolean }> {
+    const { data, error } = await this.client.rpc("set_match_xp_eligibility_atomically", {
+      p_match_id: matchId,
+      p_xp_eligible: xpEligible,
+    });
+    if (error) {
+      const translated = translateNamedError(error);
+      throw translated ?? error;
+    }
+    const row = data[0];
+    return { matchId: row.match_id, xpEligible: row.xp_eligible, locked: row.locked };
   }
 
   async getMatchById(matchId: string): Promise<MatchRecord | null> {

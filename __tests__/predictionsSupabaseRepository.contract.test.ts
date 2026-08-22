@@ -12,7 +12,7 @@ import { correctMatchResult } from "../lib/gaming/predictions/correctMatchResult
 import { redeemPrizeQualification } from "../lib/gaming/predictions/redeemPrizeQualification";
 import { requireGamingAdmin } from "../lib/gaming/predictions/httpAuth";
 import { cancelMatch } from "../lib/gaming/predictions/adminCatalog";
-import { InvalidGoalscorerSelectionError, InvalidGoalMinuteError, MatchCancelledError } from "../lib/gaming/predictions/types";
+import { InvalidGoalscorerSelectionError, InvalidGoalMinuteError, MatchCancelledError, XpEligibilityLockedError } from "../lib/gaming/predictions/types";
 
 const env = loadEnv("development", process.cwd(), "");
 const supabaseUrl = env.SUPABASE_URL;
@@ -171,6 +171,11 @@ describe("SupabasePredictionsRepository contract", () => {
     });
     createdMatchIds.push(match.matchId);
     await repo.setMatchActivityClassification(match.matchId, "RANKED");
+    // XP-eligibility gate (Slice: XP Eligibility / Calibration Support):
+    // fixture only, not Product config — without this, the real
+    // finalize/correct RPCs now correctly produce zero XP regardless
+    // of the fixture rules below.
+    await repo.setMatchXpEligibility(match.matchId, true);
 
     const venue = await repo.createVenue({
       name: "Contract Venue",
@@ -621,5 +626,146 @@ describe("SupabasePredictionsRepository contract", () => {
 
     const evaluation = await repo.getEvaluation(prediction.predictionId, draft.matchResultId);
     expect(evaluation).toBeNull();
+  }, 30000);
+
+  // --- XP ELIGIBILITY / CALIBRATION SUPPORT ----------------------------
+
+  it("XP eligibility: declaration succeeds pre-evidence, locks after a Prediction exists, and rejects a change against the real database", async () => {
+    const alex = await createRealGamingMember("ContractXpEligLock");
+    const { home, away } = await createTeamsAndRoster();
+    const match = await repo.createMatch({
+      homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Contract Test", kickoffAt: futureIso(),
+    });
+    createdMatchIds.push(match.matchId);
+    await repo.setMatchActivityClassification(match.matchId, "RANKED");
+
+    const fetchedBeforeDeclaration = await repo.getMatchById(match.matchId);
+    expect(fetchedBeforeDeclaration!.xpEligible).toBeNull();
+
+    const declared = await repo.setMatchXpEligibility(match.matchId, true);
+    expect(declared).toEqual({ matchId: match.matchId, xpEligible: true, locked: false });
+
+    const venue = await repo.createVenue({ name: "V", latitude: 10, longitude: 10, radiusMeters: 100 });
+    createdVenueIds.push(venue.venueId);
+    const activation = await repo.createVenueActivation({ matchId: match.matchId, venueId: venue.venueId });
+
+    await submitPrediction(repo, {
+      matchId: match.matchId, gamingMemberId: alex.gamingMemberId, venueActivationId: activation.venueActivationId,
+      predictedHomeScore: 0, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: null, predictedGoalMinuteRegulation: null, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: null,
+      geo: { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 },
+    });
+
+    // Idempotent redeclaration of the now-locked value succeeds.
+    const redeclared = await repo.setMatchXpEligibility(match.matchId, true);
+    expect(redeclared).toEqual({ matchId: match.matchId, xpEligible: true, locked: true });
+
+    // A change is rejected by the real database.
+    await expect(repo.setMatchXpEligibility(match.matchId, false)).rejects.toBeInstanceOf(XpEligibilityLockedError);
+  }, 30000);
+
+  it("XP eligibility: a non-eligible Match produces zero XP against the real database even with real fixture policy/rules configured; an eligible Match produces the applicable XP, and the Summary round-trips the fact", async () => {
+    await cleanupClient
+      .from("gaming_category_participation_policy")
+      .insert({ category_key: "SOCCER_PREDICTIONS", daily_participation_allowance: 1000 });
+    await cleanupClient
+      .from("gaming_xp_rules")
+      .insert({ category_key: "SOCCER_PREDICTIONS", consequence_class: "PARTICIPATION", performance_band_key: null, points: 5 });
+
+    const admin = await createRealGamingMember("ContractXpEligAdmin");
+    const eligibleMember = await createRealGamingMember("ContractXpEligYes");
+    const noneligibleMember = await createRealGamingMember("ContractXpEligNo");
+    const { home, away, mbappe } = await createTeamsAndRoster();
+
+    async function setupMatch(xpEligible: boolean) {
+      const match = await repo.createMatch({
+        homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Contract Test", kickoffAt: futureIso(),
+      });
+      createdMatchIds.push(match.matchId);
+      await repo.setMatchActivityClassification(match.matchId, "RANKED");
+      await repo.setMatchXpEligibility(match.matchId, xpEligible);
+      const venue = await repo.createVenue({ name: "V", latitude: 10, longitude: 10, radiusMeters: 100 });
+      createdVenueIds.push(venue.venueId);
+      const activation = await repo.createVenueActivation({ matchId: match.matchId, venueId: venue.venueId });
+      return { match, activation };
+    }
+
+    const eligible = await setupMatch(true);
+    const noneligible = await setupMatch(false);
+
+    // Deliberately a fully-wrong (0/4) prediction against a real
+    // scoreless (0-0) Result: this file has other tests that leave
+    // standing PERFORMANCE rule fixtures for CORRECT_3_OF_4/CORRECT_4_OF_4
+    // in this same shared SOCCER_PREDICTIONS category — a correct
+    // prediction here would non-deterministically pick up one of those
+    // and defeat this test's own PARTICIPATION-only point. 0/4 has no
+    // fixture rule anywhere in this file, so only PARTICIPATION (this
+    // test's own rule, 5 points) can possibly fire.
+    const eligiblePrediction = await submitPrediction(repo, {
+      matchId: eligible.match.matchId, gamingMemberId: eligibleMember.gamingMemberId,
+      venueActivationId: eligible.activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME",
+      geo: { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 },
+    });
+    const noneligiblePrediction = await submitPrediction(repo, {
+      matchId: noneligible.match.matchId, gamingMemberId: noneligibleMember.gamingMemberId,
+      venueActivationId: noneligible.activation.venueActivationId,
+      predictedHomeScore: 1, predictedAwayScore: 0,
+      predictedGoalscorerPlayerId: mbappe.playerId, predictedGoalMinuteRegulation: 10, predictedGoalMinuteStoppage: null,
+      predictedFirstTeamToScore: "HOME",
+      geo: { latitude: 10.0001, longitude: 10.0001, accuracyMeters: 5 },
+    });
+
+    const eligibleDraft = await repo.saveDraftMatchResult({
+      matchId: eligible.match.matchId, homeScore: 0, awayScore: 0, officialGoalEvents: [],
+      enteredByGamingMemberId: admin.gamingMemberId,
+    });
+    await finalizeMatchResult(repo, eligibleDraft.matchResultId, admin.gamingMemberId);
+    const noneligibleDraft = await repo.saveDraftMatchResult({
+      matchId: noneligible.match.matchId, homeScore: 0, awayScore: 0, officialGoalEvents: [],
+      enteredByGamingMemberId: admin.gamingMemberId,
+    });
+    await finalizeMatchResult(repo, noneligibleDraft.matchResultId, admin.gamingMemberId);
+
+    const eligibleEvaluation = await repo.getEvaluation(eligiblePrediction.predictionId, eligibleDraft.matchResultId);
+    const eligibleSummary = await cleanupClient
+      .from("experience_summaries")
+      .select("xp_eligible")
+      .eq("experience_key", "SOCCER_PREDICTIONS")
+      .eq("idempotency_key", eligibleEvaluation!.evaluationId)
+      .single();
+    expect(eligibleSummary.data!.xp_eligible).toBe(true);
+
+    const noneligibleEvaluation = await repo.getEvaluation(noneligiblePrediction.predictionId, noneligibleDraft.matchResultId);
+    const noneligibleSummary = await cleanupClient
+      .from("experience_summaries")
+      .select("xp_eligible")
+      .eq("experience_key", "SOCCER_PREDICTIONS")
+      .eq("idempotency_key", noneligibleEvaluation!.evaluationId)
+      .single();
+    expect(noneligibleSummary.data!.xp_eligible).toBe(false);
+
+    const { data: eligibleEvents } = await cleanupClient
+      .from("gaming_xp_events")
+      .select("*")
+      .eq("gaming_member_id", eligibleMember.gamingMemberId);
+    expect(eligibleEvents).toHaveLength(1);
+    expect(eligibleEvents![0].points).toBe(5);
+
+    const { data: noneligibleEvents } = await cleanupClient
+      .from("gaming_xp_events")
+      .select("*")
+      .eq("gaming_member_id", noneligibleMember.gamingMemberId);
+    expect(noneligibleEvents).toHaveLength(0);
+    // gaming_xp_rules / gaming_category_participation_policy for
+    // SOCCER_PREDICTIONS are cleaned up by this file's own shared
+    // afterAll, not here — an earlier test in this same file (the full
+    // settlement pipeline) already inserted its own gaming_xp_events
+    // referencing the same category's rule rows, so deleting those
+    // rules mid-suite would risk a foreign key violation against that
+    // still-standing evidence.
   }, 30000);
 });

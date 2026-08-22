@@ -104,6 +104,7 @@ export class InMemoryMetagameRepository implements MetagameRepository {
       evidence: input.evidence,
       correctDimensionCount,
       correctDimensionKeys,
+      xpEligible: input.xpEligible ?? false,
       createdAt: new Date().toISOString(),
     };
     this.summaries.set(experienceSummaryId, record);
@@ -220,6 +221,17 @@ export class InMemoryMetagameRepository implements MetagameRepository {
     // regardless of what facts the Experience reports — mirrors
     // process_experience_summary_consequences_atomically's own guard.
     if (summary.activityClassification === "TRAINING") {
+      return [];
+    }
+
+    // XP eligibility: a non-eligible Summary produces zero XP,
+    // unconditionally, regardless of any configured policy/rule — the
+    // distinct, orthogonal "curated catalog" gate research requires
+    // alongside (never instead of) Activity Classification. Mirrors
+    // process_experience_summary_consequences_atomically's own guard
+    // (0105) — one early check, not duplicated inside each consequence
+    // block below.
+    if (!summary.xpEligible) {
       return [];
     }
 

@@ -1,0 +1,34 @@
+-- Migration: 0103_add_xp_eligible_to_experience_summaries
+-- Soccer Predictions — XP Eligibility / Calibration Support Slice.
+--
+-- The Finalized Experience Summary must preserve whether the
+-- underlying Experience was XP-eligible, so Metagame consequence
+-- processing (0105) can consume this fact directly and never query
+-- Predictions' own matches table — the identical pattern
+-- activity_classification (nullable on matches, not-null on
+-- experience_summaries) already establishes: richer, nullable
+-- provenance at the source; a single normalized, always-present fact
+-- at the shared Summary boundary.
+--
+-- not null default false: every Summary, from every current and
+-- future Experience adapter, has a definite eligibility fact —
+-- "unknown" is not a meaningful state at this layer the way it is on
+-- matches.xp_eligible (an undeclared Match), since a Summary is only
+-- ever authored once real evidence exists, at which point the
+-- governing Match-level fact is already resolved to a concrete
+-- boolean (via coalesce(matches.xp_eligible, false) at authorship
+-- time — see 0106/0107). Defaulting to false (never true) is the
+-- deliberate fail-closed direction: an Experience adapter that has
+-- not yet been updated to report this fact explicitly produces
+-- non-XP-eligible Summaries, never silently XP-eligible ones.
+--
+-- Generic and Experience-agnostic, exactly like every other column on
+-- this table — this migration adds no Predictions-specific
+-- vocabulary here.
+--
+-- Production holds zero experience_summaries rows (independently
+-- reconfirmed immediately before this migration was authored) — no
+-- backfill.
+
+alter table experience_summaries
+  add column xp_eligible boolean not null default false;

@@ -22,6 +22,7 @@ import {
   saveDraftResult,
   startResultCorrection,
   setMatchActivityClassification,
+  setMatchXpEligibility,
 } from "../lib/gaming/predictions/adminCatalog";
 import { MatchNotClassifiedError, ActivityClassificationLockedError } from "../lib/gaming/predictions/types";
 
@@ -39,6 +40,10 @@ async function setupRankedMatch(repo: InMemoryPredictionsRepository, kickoffAt =
   const striker = await createPlayer(repo, { teamId: home.teamId, name: "Striker" });
   const match = await createMatch(repo, { homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Test Cup", kickoffAt });
   await setMatchActivityClassification(repo, match.matchId, "RANKED");
+  // XP-eligibility gate (Slice: XP Eligibility / Calibration Support) —
+  // fixture only, not Product config; without this, finalize would
+  // silently produce zero XP regardless of the fixture rules below.
+  await setMatchXpEligibility(repo, match.matchId, true);
   await repo.metagameRepository.createCategoryParticipationPolicy({ categoryKey: "SOCCER_PREDICTIONS", dailyParticipationAllowance: 1000 });
   await repo.metagameRepository.createGamingXpRule({ categoryKey: "SOCCER_PREDICTIONS", consequenceClass: "PARTICIPATION", performanceBandKey: null, points: 5 });
   const venue = await createVenue(repo, { name: "Test Venue", latitude: VENUE_LAT, longitude: VENUE_LON, radiusMeters: 100 });
@@ -49,12 +54,15 @@ async function setupRankedMatch(repo: InMemoryPredictionsRepository, kickoffAt =
 // Deliberately configures NO category participation policy and NO XP
 // rules at all — proves the missing-policy boundary correction via
 // the real Predictions finalize path, not just direct Metagame calls.
+// Still declared XP-eligible: this isolates "no policy configured" as
+// the sole cause of zero XP, distinct from "not eligible."
 async function setupRankedMatchNoXpConfig(repo: InMemoryPredictionsRepository, kickoffAt = futureIso()) {
   const home = await createTeam(repo, { name: "Home FC" });
   const away = await createTeam(repo, { name: "Away FC" });
   const striker = await createPlayer(repo, { teamId: home.teamId, name: "Striker" });
   const match = await createMatch(repo, { homeTeamId: home.teamId, awayTeamId: away.teamId, competition: "Test Cup", kickoffAt });
   await setMatchActivityClassification(repo, match.matchId, "RANKED");
+  await setMatchXpEligibility(repo, match.matchId, true);
   const venue = await createVenue(repo, { name: "Test Venue", latitude: VENUE_LAT, longitude: VENUE_LON, radiusMeters: 100 });
   const activation = await createVenueActivation(repo, { matchId: match.matchId, venueId: venue.venueId });
   return { home, away, striker, match, venue, activation };
@@ -73,7 +81,7 @@ describe("Finalized Experience Summary — authorship and idempotency", () => {
       authorityTier: "ADMIN_FINALIZED" as const,
       occurredAt: new Date().toISOString(),
       finalizedAt: new Date().toISOString(),
-      meaningfulParticipation: true,
+      meaningfulParticipation: true, xpEligible: true,
       performanceBandKey: null,
       sourceReference: "eval-1",
       rulesetVersion: "v1",
@@ -488,7 +496,7 @@ describe("TRAINING — zero XP, unconditionally", () => {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "TRAINING", authorityTier: "ADMIN_FINALIZED",
       occurredAt: new Date().toISOString(), finalizedAt: new Date().toISOString(),
-      meaningfulParticipation: true, performanceBandKey: "CORRECT_4_OF_4",
+      meaningfulParticipation: true, xpEligible: true, performanceBandKey: "CORRECT_4_OF_4",
       sourceReference: "eval-training", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "eval-training", evidence: {},
     });
@@ -508,7 +516,7 @@ describe("TRAINING — zero XP, unconditionally", () => {
     const training = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "TRAINING", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "eval-t1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "eval-t1", evidence: {},
     });
@@ -517,7 +525,7 @@ describe("TRAINING — zero XP, unconditionally", () => {
     const ranked = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "eval-r1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "eval-r1", evidence: {},
     });
@@ -539,7 +547,7 @@ describe("Gaming Day — America/Tegucigalpa is authoritative, never device/clie
     const { experienceSummaryId } = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: idempotencyKey, rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey, evidence: {},
     });
@@ -585,7 +593,7 @@ describe("Daily participation allowance — configurable N, never a Product-chos
     const { experienceSummaryId } = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification, authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: key, rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: key, evidence: {},
     });
@@ -630,7 +638,7 @@ describe("Daily participation allowance — configurable N, never a Product-chos
     const { alreadyRecorded } = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt: day, finalizedAt: day, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt: day, finalizedAt: day, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "e2", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e2", evidence: {},
     });
@@ -648,7 +656,7 @@ describe("Daily participation allowance — configurable N, never a Product-chos
     const { experienceSummaryId } = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt: day, finalizedAt: day, meaningfulParticipation: true, performanceBandKey: "CORRECT_4_OF_4",
+      occurredAt: day, finalizedAt: day, meaningfulParticipation: true, xpEligible: true, performanceBandKey: "CORRECT_4_OF_4",
       sourceReference: "e2", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e2", evidence: {},
     });
@@ -708,7 +716,7 @@ describe("Missing-policy boundary — absence of configuration is never an error
     const { experienceSummaryId } = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e1", evidence: {},
     });
@@ -725,7 +733,7 @@ describe("Missing-policy boundary — absence of configuration is never an error
     const { experienceSummaryId } = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: "CORRECT_4_OF_4",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: "CORRECT_4_OF_4",
       sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e1", evidence: {},
     });
@@ -742,7 +750,7 @@ describe("Missing-policy boundary — absence of configuration is never an error
     const { experienceSummaryId } = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: "CORRECT_4_OF_4",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: "CORRECT_4_OF_4",
       sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e1", evidence: {},
     });
@@ -763,7 +771,7 @@ describe("Missing-policy boundary — absence of configuration is never an error
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
       // CORRECT_1_OF_4 has no configured PERFORMANCE rule — only CORRECT_4_OF_4 does.
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: "CORRECT_1_OF_4",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: "CORRECT_1_OF_4",
       sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e1", evidence: {},
     });
@@ -780,7 +788,7 @@ describe("Missing-policy boundary — absence of configuration is never an error
     const original = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: "CORRECT_4_OF_4",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: "CORRECT_4_OF_4",
       sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e1", evidence: {},
     });
@@ -794,7 +802,7 @@ describe("Missing-policy boundary — absence of configuration is never an error
     const correction = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: true, performanceBandKey: "CORRECT_3_OF_4",
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: true, xpEligible: true, performanceBandKey: "CORRECT_3_OF_4",
       sourceReference: "e1-corrected", rulesetVersion: "v1", supersedesExperienceSummaryId: original.experienceSummaryId,
       idempotencyKey: "e1-corrected", evidence: {},
     });
@@ -819,7 +827,7 @@ describe("XP rule versioning and reversal", () => {
     const first = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, performanceBandKey: "CORRECT_4_OF_4",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, xpEligible: true, performanceBandKey: "CORRECT_4_OF_4",
       sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e1", evidence: {},
     });
@@ -835,7 +843,7 @@ describe("XP rule versioning and reversal", () => {
     const second = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, performanceBandKey: "CORRECT_4_OF_4",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, xpEligible: true, performanceBandKey: "CORRECT_4_OF_4",
       sourceReference: "e2", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e2", evidence: {},
     });
@@ -854,7 +862,7 @@ describe("XP rule versioning and reversal", () => {
     const original = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "e1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e1", evidence: {},
     });
@@ -864,7 +872,7 @@ describe("XP rule versioning and reversal", () => {
     const blocked = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "e2", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e2", evidence: {},
     });
@@ -875,7 +883,7 @@ describe("XP rule versioning and reversal", () => {
     const correction = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, performanceBandKey: null,
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, xpEligible: true, performanceBandKey: null,
       sourceReference: "e1-corrected", rulesetVersion: "v1", supersedesExperienceSummaryId: original.experienceSummaryId,
       idempotencyKey: "e1-corrected", evidence: {},
     });
@@ -893,7 +901,7 @@ describe("XP rule versioning and reversal", () => {
     const retry = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "SOCCER_PREDICTIONS", categoryKey: "SOCCER_PREDICTIONS",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "e3", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "e3", evidence: {},
     });
@@ -975,7 +983,7 @@ describe("Global Gaming XP Leaderboard", () => {
       authorityTier: "ADMIN_FINALIZED",
       occurredAt: new Date().toISOString(),
       finalizedAt: new Date().toISOString(),
-      meaningfulParticipation: false,
+      meaningfulParticipation: false, xpEligible: true,
       performanceBandKey: band,
       sourceReference: band,
       rulesetVersion: "v1",
@@ -1074,7 +1082,7 @@ describe("Global Gaming XP Leaderboard", () => {
     const original = await recordExperienceSummary(repo, {
       gamingMemberId: alex, experienceKey: "LB_CORRECTION", categoryKey: "LB_CORRECTION",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, performanceBandKey: "ORIGINAL",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, xpEligible: true, performanceBandKey: "ORIGINAL",
       sourceReference: "lb-corr-1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "lb-corr-1", evidence: {},
     });
@@ -1083,7 +1091,7 @@ describe("Global Gaming XP Leaderboard", () => {
     const correction = await recordExperienceSummary(repo, {
       gamingMemberId: alex, experienceKey: "LB_CORRECTION", categoryKey: "LB_CORRECTION",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, performanceBandKey: "CORRECTED",
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, xpEligible: true, performanceBandKey: "CORRECTED",
       sourceReference: "lb-corr-1-fixed", rulesetVersion: "v1", supersedesExperienceSummaryId: original.experienceSummaryId,
       idempotencyKey: "lb-corr-1-fixed", evidence: {},
     });
@@ -1108,7 +1116,7 @@ describe("Global Gaming XP Leaderboard", () => {
     const original = await recordExperienceSummary(repo, {
       gamingMemberId: alex, experienceKey: "LB_ZERO", categoryKey: "LB_ZERO",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, performanceBandKey: "ORIGINAL",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, xpEligible: true, performanceBandKey: "ORIGINAL",
       sourceReference: "lb-zero-1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "lb-zero-1", evidence: {},
     });
@@ -1118,7 +1126,7 @@ describe("Global Gaming XP Leaderboard", () => {
     const correction = await recordExperienceSummary(repo, {
       gamingMemberId: alex, experienceKey: "LB_ZERO", categoryKey: "LB_ZERO",
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, performanceBandKey: null,
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, xpEligible: true, performanceBandKey: null,
       sourceReference: "lb-zero-1-voided", rulesetVersion: "v1", supersedesExperienceSummaryId: original.experienceSummaryId,
       idempotencyKey: "lb-zero-1-voided", evidence: {},
     });
@@ -1204,7 +1212,7 @@ describe("Global Gaming XP Leaderboard", () => {
         gamingMemberId: alex, experienceKey: categoryKey, categoryKey,
         activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
         occurredAt: new Date().toISOString(), finalizedAt: new Date().toISOString(),
-        meaningfulParticipation: false, performanceBandKey: "BAND",
+        meaningfulParticipation: false, xpEligible: true, performanceBandKey: "BAND",
         sourceReference: categoryKey, rulesetVersion: "v1", supersedesExperienceSummaryId: null,
         idempotencyKey: categoryKey, evidence: {},
       });

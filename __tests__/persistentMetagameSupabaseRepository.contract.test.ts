@@ -61,7 +61,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
       authorityTier: "ADMIN_FINALIZED" as const,
       occurredAt: new Date().toISOString(),
       finalizedAt: new Date().toISOString(),
-      meaningfulParticipation: true,
+      meaningfulParticipation: true, xpEligible: true,
       performanceBandKey: null,
       sourceReference: "idem-1",
       rulesetVersion: "v1",
@@ -86,7 +86,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
       authorityTier: "ADMIN_FINALIZED",
       occurredAt: new Date().toISOString(),
       finalizedAt: new Date().toISOString(),
-      meaningfulParticipation: true,
+      meaningfulParticipation: true, xpEligible: true,
       performanceBandKey: "CORRECT_2_OF_4",
       sourceReference: idempotencyKey,
       rulesetVersion: "predictions-v2",
@@ -113,7 +113,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
         authorityTier: "ADMIN_FINALIZED",
         occurredAt: new Date().toISOString(),
         finalizedAt: new Date().toISOString(),
-        meaningfulParticipation: true,
+        meaningfulParticipation: true, xpEligible: true,
         performanceBandKey: "CORRECT_1_OF_4",
         sourceReference: idempotencyKey,
         rulesetVersion: "predictions-v2",
@@ -139,7 +139,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
       authorityTier: "ADMIN_FINALIZED",
       occurredAt: new Date().toISOString(),
       finalizedAt: new Date().toISOString(),
-      meaningfulParticipation: true,
+      meaningfulParticipation: true, xpEligible: true,
       performanceBandKey: null,
       sourceReference: "nopolicy-1",
       rulesetVersion: "v1",
@@ -165,7 +165,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: category,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
       occurredAt: new Date().toISOString(), finalizedAt: new Date().toISOString(),
-      meaningfulParticipation: true, performanceBandKey: null,
+      meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "policyonly-1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "policyonly-1", evidence: {},
     });
@@ -190,7 +190,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
       occurredAt: "2027-03-10T05:59:00.000Z", finalizedAt: "2027-03-10T05:59:00.000Z",
-      meaningfulParticipation: true, performanceBandKey: null,
+      meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "day-before", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "day-before", evidence: {},
     });
@@ -202,7 +202,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
       occurredAt: "2027-03-10T06:01:00.000Z", finalizedAt: "2027-03-10T06:01:00.000Z",
-      meaningfulParticipation: true, performanceBandKey: null,
+      meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "day-after", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "day-after", evidence: {},
     });
@@ -219,7 +219,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "TRAINING", authorityTier: "ADMIN_FINALIZED",
       occurredAt: new Date().toISOString(), finalizedAt: new Date().toISOString(),
-      meaningfulParticipation: true, performanceBandKey: "MAX_BAND",
+      meaningfulParticipation: true, xpEligible: true, performanceBandKey: "MAX_BAND",
       sourceReference: "training-1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "training-1", evidence: {},
     });
@@ -237,7 +237,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
     const first = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, performanceBandKey: "VERSIONED_BAND",
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, xpEligible: true, performanceBandKey: "VERSIONED_BAND",
       sourceReference: "rv-1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "rv-1", evidence: {},
     });
@@ -266,7 +266,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
     const second = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt: laterOccurredAt, finalizedAt: laterOccurredAt, meaningfulParticipation: false, performanceBandKey: "VERSIONED_BAND",
+      occurredAt: laterOccurredAt, finalizedAt: laterOccurredAt, meaningfulParticipation: false, xpEligible: true, performanceBandKey: "VERSIONED_BAND",
       sourceReference: "rv-2", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "rv-2", evidence: {},
     });
@@ -281,7 +281,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
     const original = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "reversal-1", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "reversal-1", evidence: {},
     });
@@ -290,7 +290,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
     const blocked = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "reversal-2", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "reversal-2", evidence: {},
     });
@@ -299,7 +299,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
     const correction = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, performanceBandKey: null,
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, xpEligible: true, performanceBandKey: null,
       sourceReference: "reversal-1-corrected", rulesetVersion: "v1",
       supersedesExperienceSummaryId: original.experienceSummaryId,
       idempotencyKey: "reversal-1-corrected", evidence: {},
@@ -317,7 +317,7 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
     const retry = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "reversal-3", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "reversal-3", evidence: {},
     });
@@ -338,14 +338,14 @@ describe("SupabaseMetagameRepository contract — real Postgres", () => {
     const summaryA = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "race-a", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "race-a", evidence: {},
     });
     const summaryB = await recordExperienceSummary(repo, {
       gamingMemberId, experienceKey: "METAGAME_CONTRACT", categoryKey: CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, performanceBandKey: null,
+      occurredAt, finalizedAt: occurredAt, meaningfulParticipation: true, xpEligible: true, performanceBandKey: null,
       sourceReference: "race-b", rulesetVersion: "v1", supersedesExperienceSummaryId: null,
       idempotencyKey: "race-b", evidence: {},
     });
@@ -400,7 +400,7 @@ describe("Global Gaming XP Leaderboard — real Postgres, get_global_gaming_xp_l
       const { experienceSummaryId } = await recordExperienceSummary(repo, {
         gamingMemberId, experienceKey: "LB_CONTRACT", categoryKey: LEADERBOARD_CATEGORY,
         activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-        occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, performanceBandKey: band,
+        occurredAt, finalizedAt: occurredAt, meaningfulParticipation: false, xpEligible: true, performanceBandKey: band,
         sourceReference: key, rulesetVersion: "v1", supersedesExperienceSummaryId: null,
         idempotencyKey: key, evidence: {},
       });
@@ -417,7 +417,7 @@ describe("Global Gaming XP Leaderboard — real Postgres, get_global_gaming_xp_l
     const correction = await recordExperienceSummary(repo, {
       gamingMemberId: voidedId, experienceKey: "LB_CONTRACT", categoryKey: LEADERBOARD_CATEGORY,
       activityClassification: "RANKED", authorityTier: "ADMIN_FINALIZED",
-      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, performanceBandKey: null,
+      occurredAt, finalizedAt: new Date().toISOString(), meaningfulParticipation: false, xpEligible: true, performanceBandKey: null,
       sourceReference: `lb-void-corrected-${voidedId}`, rulesetVersion: "v1", supersedesExperienceSummaryId: original,
       idempotencyKey: `lb-void-corrected-${voidedId}`, evidence: {},
     });
