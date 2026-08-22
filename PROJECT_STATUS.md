@@ -230,3 +230,17 @@ Existing Session engines (Open Response, Quiz, Voting) and Guest Poker (create�
 The classification gate (`MATCH_NOT_CLASSIFIED`) and the zero-XP-configuration boundary were proven live at the one point reachable without a real Gaming Member. **`SUPABASE_ANON_KEY` is not configured in production** (`GET /api/gaming/config` returns 500), so no real end-user can complete OTP sign-in and production holds zero Gaming Members — per explicit instruction, none was manufactured to work around this. The full authenticated Prediction→Evaluation→Summary→zero-XP settlement path and the correction case therefore remain genuinely unproven in production, classified pending Auth readiness, not assumed safe.
 
 `gaming_category_participation_policy` and `gaming_xp_rules` remain at **zero rows** in production after this deployment: Phase 1 infrastructure is deployed; Gaming XP is not yet activated. No Product XP values, daily cap values, Global Leaderboard, Category Rating, or Achievements work was begun.
+
+## Global Gaming XP Leaderboard (2026-08-21)
+
+| Phase | What it delivered | Status |
+|---|---|---|
+| Global Gaming XP Leaderboard | `get_global_gaming_xp_leaderboard()` — a read-only SQL function computing competition-ranked, reversal-safe Global Gaming XP entirely server-side (aggregation and ranking never performed application-side, closing a proven PostgREST silent-truncation risk); `GET /api/gaming/leaderboard`, public and unauthenticated; the Global tab of `leaderboards.html` wired to it; the legacy Predictions-specific leaderboard retained unchanged with corrected, non-canonical documentation | **DEPLOYED. FULLY VALIDATED LIVE. GAMING XP NOT ACTIVATED.** See `GLOBAL_LEADERBOARD_IMPLEMENTATION_RECORD.md`'s "Production Deployment" section for full evidence. |
+
+Production migration ceiling: **0093** (was 0092 before this deployment). Commit `bb5f71c` fast-forward pushed to `origin/main` (`2e3cf2f..bb5f71c`) and live at `https://urbano-gaming-playtest.vercel.app`, confirmed via GitHub's Vercel deployment-status check.
+
+Live proving case, all confirmed directly against production: `GET /api/gaming/leaderboard` → `200`, `{"entries":[]}`, no `Authorization` header; `leaderboards.html`'s Global tab renders the honest "No rankings yet" state (screenshot-verified); "By Game" and "My Circles" confirmed still their original static placeholders (screenshot-verified); `/api/gaming/predictions/leaderboard` confirmed still live at its existing URL, unchanged behavior, not called by the new Global UI.
+
+Existing-game regression, each run end-to-end directly against production post-deployment: Guest Session (Open Response), Guest Poker, Voting, and Quiz — **PRODUCTION REGRESSION PASSED**, no regression.
+
+`gaming_xp_events`, `gaming_xp_rules`, `gaming_category_participation_policy`, and `gaming_members` all remain at **zero rows** in production after this deployment — none seeded or manufactured. Gaming XP infrastructure is deployed; the leaderboard is a truthful empty state, not a placeholder awaiting a fix; Gaming XP itself is not yet activated. No authenticated Predictions XP proving was performed. No Category Leaderboard, Achievement, Auth/SMTP, or other Product-value work was begun.
